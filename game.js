@@ -344,7 +344,7 @@ function refreshMenuForMode() {
   const killerGrid = document.getElementById("killerGrid");
   if (killerLbl) killerLbl.style.display = noKiller ? "none" : "";
   if (killerGrid) {
-    killerGrid.style.display = noKiller || isTouchUiEnabled() ? "none" : "grid";
+    killerGrid.style.display = noKiller ? "none" : (isTouchUiEnabled() ? "" : "grid");
   }
   const killerGridLabel = document.getElementById("killerGridLabel");
   if (killerGridLabel) killerGridLabel.style.display = noKiller ? "none" : "";

@@ -44,11 +44,19 @@ export function initMenuWizard(api) {
     ["pickKillerRow", "killerGrid", "killerGridHost", "選擇獵人"],
   ];
   pickMap.forEach(([btnId, gridId, hostId, title]) => {
-    document.getElementById(btnId)?.addEventListener("click", () => {
+    const row = document.getElementById(btnId);
+    if (!row) return;
+    const open = () => {
+      if (row.hidden) return;
       const grid = document.getElementById(gridId);
-      if (!grid || grid.style.display === "none") return;
+      if (!grid || !grid.children.length) return;
       openPicker(title, gridId, hostId);
-    });
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      open();
+    }, { passive: false });
   });
 
   pickerClose?.addEventListener("click", () => closePicker(api));
@@ -91,6 +99,8 @@ function openPicker(title, gridId, hostId) {
   pickerHomeId = hostId;
   if (!grid.dataset.pickerHome) grid.dataset.pickerHome = hostId;
   document.getElementById("pickerTitle").textContent = title;
+  grid.style.removeProperty("display");
+  grid.classList.remove("picker-hidden");
   content.appendChild(grid);
   grid.classList.add("in-picker");
   overlay.classList.add("show");
@@ -103,6 +113,9 @@ function closePicker(api) {
   if (grid && home) {
     home.appendChild(grid);
     grid.classList.remove("in-picker");
+    if (document.body.classList.contains("touch-ui")) {
+      grid.classList.add("picker-hidden");
+    }
   }
   overlay?.classList.remove("show");
   pickerGridId = null;
