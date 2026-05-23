@@ -5,6 +5,23 @@ const IMMERSIVE_KEY = "forsaken_immersive_v1";
 const DEFAULT_MOBILE = { lookSens: 165, stickDead: 22 };
 let missionHighlight = false;
 let immersiveMode = false;
+let tabletTouch = false;
+
+const TABLET_MIN_SIDE = 600;
+
+function updateTabletTouchClass() {
+  if (!enabled) {
+    tabletTouch = false;
+    document.body.classList.remove("tablet-touch");
+    return;
+  }
+  tabletTouch = Math.min(window.innerWidth, window.innerHeight) >= TABLET_MIN_SIDE;
+  document.body.classList.toggle("tablet-touch", tabletTouch);
+}
+
+export function isTabletTouchUi() {
+  return tabletTouch;
+}
 
 let enabled = false;
 let stick = { x: 0, z: 0 };
@@ -342,6 +359,8 @@ export function initTouchControls({ keys, getBindings, getContext }) {
   enabled = true;
   root.hidden = false;
   document.body.classList.add("touch-ui");
+  updateTabletTouchClass();
+  window.addEventListener("resize", updateTabletTouchClass, { passive: true });
 
   const base = document.getElementById("touchStick");
   const knob = document.getElementById("touchStickKnob");

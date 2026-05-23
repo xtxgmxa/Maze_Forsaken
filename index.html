@@ -1636,6 +1636,73 @@
     }
     body.touch-ui #designerCreditHud { display: none !important; }
     body.touch-ui #rolePickSection { display: none !important; }
+    /* ── 平板（iPad 等）：觸控按鈕加大，手機尺寸不變 ── */
+    body.touch-ui.tablet-touch #touchStickWrap {
+      width: 118px;
+      height: 118px;
+      bottom: max(28px, calc(24px + env(safe-area-inset-bottom, 0px)));
+      left: max(14px, calc(12px + env(safe-area-inset-left, 0px)));
+    }
+    body.touch-ui.tablet-touch #touchStickKnob {
+      width: 50px;
+      height: 50px;
+      margin: -25px 0 0 -25px;
+    }
+    body.touch-ui.tablet-touch #touchButtons {
+      bottom: max(14px, calc(12px + env(safe-area-inset-bottom, 0px)));
+      right: max(10px, calc(8px + env(safe-area-inset-right, 0px)));
+      gap: 6px;
+      max-width: min(38vw, 280px);
+    }
+    body.touch-ui.tablet-touch .touch-btn.touch-skill {
+      width: 54px;
+      height: 54px;
+      min-width: 54px;
+      min-height: 54px;
+      padding: 4px;
+    }
+    body.touch-ui.tablet-touch .touch-btn.touch-jump {
+      width: 62px;
+      height: 62px;
+      min-width: 62px;
+      min-height: 62px;
+      font-size: 0.95rem;
+    }
+    body.touch-ui.tablet-touch .touch-btn.touch-sm {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 6px;
+      font-size: 0.68rem;
+    }
+    body.touch-ui.tablet-touch #touchAttack {
+      width: 54px;
+      height: 54px;
+      min-width: 54px;
+      min-height: 54px;
+    }
+    body.touch-ui.tablet-touch #touchAttack .touch-skill-key { font-size: 0.58rem; }
+    body.touch-ui.tablet-touch #touchAttack .touch-skill-name { font-size: 0.5rem; }
+    body.touch-ui.tablet-touch .touch-skill-key { font-size: 0.52rem; }
+    body.touch-ui.tablet-touch .touch-skill-name {
+      font-size: 0.46rem;
+      max-width: 50px;
+    }
+    body.touch-ui.tablet-touch .touch-cluster-actions,
+    body.touch-ui.tablet-touch .touch-cluster-skills { gap: 6px; }
+    body.touch-ui.tablet-touch #touchLookZone { bottom: 42%; }
+    body.touch-ui.tablet-touch #btnTouchSettings {
+      width: 36px;
+      height: 36px;
+      font-size: 0.95rem;
+      right: max(108px, calc(104px + env(safe-area-inset-right, 0px)));
+    }
+    body.touch-ui.tablet-touch #btnHudPause {
+      width: 38px;
+      height: 38px;
+      font-size: 1.05rem;
+      right: max(64px, calc(60px + env(safe-area-inset-right, 0px)));
+    }
+    body.touch-ui.tablet-touch #minimap { width: 60px; height: 60px; }
     body.touch-ui #pausePanel .box { max-width: min(320px, 92vw); padding: 20px 18px; }
     body.touch-ui #pausePanel .pause-touch-hint { font-size: 0.72rem; color: #9988bb; margin-bottom: 12px; }
     body.touch-ui #touchLookZone {
