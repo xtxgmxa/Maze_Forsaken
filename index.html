@@ -232,9 +232,12 @@
       justify-content: flex-start;
     }
     body:not(.touch-ui) .menu-step[data-step="0"] .menu-row,
-    body:not(.touch-ui) .menu-step[data-step="0"] .menu-row-wrap,
     body:not(.touch-ui) .menu-step[data-step="0"] #rolePickSection {
       justify-content: flex-start;
+    }
+    body:not(.touch-ui) .menu-step[data-step="1"] .match-config {
+      margin-top: 8px;
+      margin-bottom: 10px;
     }
     body:not(.touch-ui) .menu-inline-preview {
       grid-column: 1 / -1;
@@ -1221,57 +1224,228 @@
       padding-right: env(safe-area-inset-right, 0);
     }
     body.touch-ui #menu {
-      padding: 6px 8px max(14px, env(safe-area-inset-bottom, 14px));
-      padding-top: max(6px, env(safe-area-inset-top, 6px));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100dvh;
+      max-height: 100dvh;
+      overflow: hidden;
+      padding: max(6px, env(safe-area-inset-top, 6px))
+        max(22px, calc(20px + env(safe-area-inset-right, 0px)))
+        max(4px, env(safe-area-inset-bottom, 4px))
+        max(22px, calc(20px + env(safe-area-inset-left, 0px)));
     }
-    body.touch-ui .menu-head { margin-bottom: 2px; gap: 6px; }
-    body.touch-ui .menu-head h1 { font-size: 0.95rem !important; letter-spacing: 0.08em; }
+    body.touch-ui .menu-head,
+    body.touch-ui .menu-tabs,
+    body.touch-ui #menuStateWarn {
+      flex-shrink: 0;
+    }
+    body.touch-ui .menu-tabs,
+    body.touch-ui .menu-step,
+    body.touch-ui .menu-nav-bar {
+      width: 100%;
+      max-width: min(380px, calc(100vw - 44px));
+    }
+    body.touch-ui .menu-head { margin-bottom: 2px; gap: 4px; width: 100%; max-width: min(380px, calc(100vw - 44px)); }
+    body.touch-ui .menu-head h1 { font-size: 0.9rem !important; letter-spacing: 0.08em; }
     body.touch-ui .designer-credit-inline {
-      font-size: 0.5rem; padding: 1px 5px;
+      font-size: 0.48rem; padding: 1px 5px;
     }
     body.touch-ui .menu-sub { display: none; }
     body.touch-ui #menuStateWarn {
-      font-size: 0.65rem; padding: 4px 8px; margin-bottom: 4px;
+      font-size: 0.62rem; padding: 3px 6px; margin-bottom: 2px;
     }
-    body.touch-ui .menu-tabs { margin-bottom: 2px; gap: 3px; max-width: 100%; }
-    body.touch-ui .menu-tab { padding: 3px 2px; font-size: 0.58rem; border-radius: 6px; }
-    body.touch-ui .menu-step { overflow: visible; padding: 0 2px; }
+    body.touch-ui .menu-tabs { margin-bottom: 4px; gap: 4px; }
+    body.touch-ui .menu-tab {
+      padding: 4px 2px;
+      font-size: 0.56rem;
+      border-radius: 6px;
+      text-align: center;
+    }
+    body.touch-ui .menu-step {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 4px 6px;
+    }
+    body.touch-ui .menu-step[data-step="0"] .step-hint {
+      text-align: center;
+      width: 100%;
+      margin: 4px 0 3px;
+      font-size: 0.58rem;
+    }
+    body.touch-ui .menu-step[data-step="0"] .mode-grid {
+      justify-content: center;
+      max-height: 52px;
+      overflow-y: auto;
+      gap: 4px;
+      margin-bottom: 2px;
+    }
+    body.touch-ui .menu-step[data-step="0"] .menu-row {
+      justify-content: center;
+      gap: 8px;
+    }
+    body.touch-ui .match-config-hint {
+      margin: 6px 0 4px;
+      font-size: 0.56rem;
+      text-align: center;
+      width: 100%;
+    }
+    body.touch-ui .match-config {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      background: #120a1c;
+      border: 1px solid #554466;
+      border-radius: 10px;
+    }
+    body.touch-ui .match-config label {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+      font-size: 0.56rem;
+      color: #ccb8e8;
+      margin: 0;
+      font-weight: bold;
+    }
+    body.touch-ui .match-config select {
+      width: 100%;
+      min-height: 34px;
+      padding: 6px 4px;
+      font-size: 0.72rem;
+      text-align: center;
+      border-radius: 8px;
+      border: 1px solid #665588;
+      background: #1a1028;
+      color: #ffcc66;
+      touch-action: manipulation;
+    }
     body.touch-ui .menu-row, body.touch-ui .menu-row-wrap {
-      font-size: 0.6rem; margin-bottom: 2px; gap: 4px;
+      font-size: 0.58rem; margin-bottom: 3px; gap: 6px;
     }
     body.touch-ui .menu-row select,
     body.touch-ui .menu-row-wrap select {
-      padding: 1px 3px; font-size: 0.58rem;
-    }
-    body.touch-ui .mode-grid {
-      max-height: 56px; overflow-y: auto; gap: 3px;
+      padding: 4px 6px; font-size: 0.62rem;
+      min-height: 30px;
     }
     body.touch-ui .mode-card {
-      flex: 1 1 58px; max-width: 72px; padding: 3px 4px;
+      flex: 0 1 56px; max-width: 68px; padding: 4px 5px;
     }
-    body.touch-ui .mode-card h3 { font-size: 0.58rem; margin-bottom: 0; }
+    body.touch-ui .mode-card h3 { font-size: 0.56rem; margin-bottom: 0; text-align: center; }
     body.touch-ui .mode-card p { display: none; }
     body.touch-ui .pick-row {
-      padding: 4px 6px; margin-bottom: 3px; font-size: 0.62rem;
-      border-width: 1px; border-radius: 6px;
+      min-height: 36px;
+      padding: 7px 10px;
+      margin-bottom: 5px;
+      font-size: 0.62rem;
+      border-width: 1px;
+      border-radius: 8px;
+      touch-action: manipulation;
     }
-    body.touch-ui .pick-label { min-width: 52px; font-size: 0.58rem; }
-    body.touch-ui .pick-value { font-size: 0.62rem; }
-    body.touch-ui .pick-chevron { font-size: 0.55rem; }
-    body.touch-ui .menu-nav-bar {
-      margin-top: 4px;
-      padding-top: 6px;
-      padding-bottom: max(4px, env(safe-area-inset-bottom, 4px));
-      gap: 4px;
+    body.touch-ui .menu-step[data-step="2"] .pick-row {
+      margin-bottom: 4px;
+    }
+    body.touch-ui .pick-label { min-width: 68px; font-size: 0.58rem; flex-shrink: 0; }
+    body.touch-ui .pick-value { font-size: 0.62rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    body.touch-ui .pick-chevron { font-size: 0.52rem; flex-shrink: 0; margin-left: 4px; }
+    body.touch-ui #pickRoleRow { margin-top: 2px; margin-bottom: 0; }
+    body.touch-ui #btnSettings { display: none !important; }
+    body.touch-ui .menu-nav-bar,
+    body.touch-ui .menu-nav-bar.on-final {
+      flex-shrink: 0;
+      margin-top: 3px;
+      padding: 3px 0 max(2px, env(safe-area-inset-bottom, 2px));
+      gap: 3px;
       border-top: 1px solid #332244;
-      flex-wrap: wrap;
+      display: grid !important;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: minmax(0, auto);
+      align-items: center;
+      max-height: none;
     }
-    body.touch-ui .menu-nav-btn {
-      padding: 4px 8px; font-size: 0.62rem; border-radius: 6px;
-    }
+    body.touch-ui .menu-nav-btn,
+    body.touch-ui .menu-nav-btn.primary,
     body.touch-ui .menu-nav-btn.start.is-visible {
-      padding: 5px 12px; font-size: 0.72rem; min-width: 0;
+      display: block !important;
+      box-sizing: border-box;
+      width: 100% !important;
+      max-width: none !important;
+      min-width: 0 !important;
+      flex: none !important;
+      margin: 0;
+      padding: 4px 2px !important;
+      font-size: 0.56rem !important;
+      font-weight: 600;
+      line-height: 1.2 !important;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+      border-radius: 5px;
+      border: 1px solid #665588;
+      background: #2a1840;
+      color: #eeddff;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 0 !important;
+      max-height: 28px;
+      height: 28px;
     }
+    body.touch-ui .menu-nav-btn.start:not(.is-visible) {
+      display: none !important;
+    }
+    body.touch-ui .menu-nav-bar:not(.on-final) .nav-final-only,
+    body.touch-ui .menu-nav-bar:not(.on-final) #btnToggleFullscreenMenu,
+    body.touch-ui .menu-nav-bar:not(.on-final) #btnStart {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      height: 0 !important;
+      max-height: 0 !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      border: none !important;
+      overflow: hidden !important;
+    }
+    body.touch-ui .menu-nav-btn.primary { border-color: #8866aa; }
+    body.touch-ui .menu-nav-btn.start.is-visible {
+      background: linear-gradient(135deg, #cc2244, #881133) !important;
+      border: none !important;
+      color: #fff !important;
+    }
+    body.touch-ui #btnToggleFullscreenMenu {
+      grid-column: 1 / -1;
+      max-height: 24px !important;
+      height: 24px !important;
+      font-size: 0.5rem !important;
+      padding: 2px 4px !important;
+      color: #9988bb;
+      background: #120a1c;
+      border-color: #443360;
+    }
+    body.touch-ui .menu-nav-bar.on-final #btnToggleFullscreenMenu:not([hidden]),
+    body.touch-ui .menu-nav-bar.on-final #btnToggleFullscreenMenu.is-visible {
+      display: block !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+    body.touch-ui #btnToggleFullscreenMenu[hidden] {
+      display: none !important;
+    }
+    body.touch-ui #btnMobileSettings {
+      font-size: 0.56rem !important;
+    }
+    body.touch-ui .menu-nav-btn[style*="display: none"],
+    body.touch-ui .menu-nav-btn.hidden-nav {
+      display: none !important;
+    }
+    body.touch-ui #music-hint { display: none; }
     body.touch-ui .picker-sheet {
       max-height: 94vh;
       padding: 8px 10px max(12px, env(safe-area-inset-bottom, 12px));
@@ -1600,11 +1774,15 @@
           </select>
         </label>
       </div>
-      <button type="button" class="pick-row touch-only" id="pickRoleRow" hidden>
-        <span class="pick-label">扮演身分</span>
-        <span class="pick-value" id="pickRoleLabel">倖存者（逃亡）</span>
-        <span class="pick-chevron">切換</span>
+    </div>
+
+    <div class="menu-step" data-step="1">
+      <button type="button" class="pick-row" id="pickLevelBtn">
+        <span class="pick-label">關卡</span>
+        <span class="pick-value" id="pickLevelLabel">點此選擇</span>
+        <span class="pick-chevron">▾</span>
       </button>
+      <p class="step-hint match-config-hint">人數與時間</p>
       <div class="match-config menu-row-wrap">
         <label>倖存者 <select id="numSurvivors">
           <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
@@ -1617,13 +1795,10 @@
           <option value="300">5分</option><option value="420">7分</option><option value="600">10分</option>
         </select></label>
       </div>
-    </div>
-
-    <div class="menu-step" data-step="1">
-      <button type="button" class="pick-row" id="pickLevelBtn">
-        <span class="pick-label">關卡</span>
-        <span class="pick-value" id="pickLevelLabel">點此選擇</span>
-        <span class="pick-chevron">▾</span>
+      <button type="button" class="pick-row touch-only" id="pickRoleRow" hidden>
+        <span class="pick-label">扮演身分</span>
+        <span class="pick-value" id="pickRoleLabel">倖存者（逃亡）</span>
+        <span class="pick-chevron">切換</span>
       </button>
       <div id="levelGridHost" class="grid-host desktop-only"></div>
       <figure class="menu-inline-preview desktop-only" id="menuInlinePreviewL" hidden>
@@ -1664,12 +1839,12 @@
     <div id="killerGrid" class="char-grid-inner picker-hidden"></div>
 
     <div class="menu-nav-bar">
-      <button type="button" id="menuPrev" class="menu-nav-btn">上一步</button>
-      <button type="button" id="menuNext" class="menu-nav-btn primary">下一步</button>
-      <button type="button" id="btnStart" class="menu-nav-btn start">開始遊戲</button>
+      <button type="button" id="menuPrev" class="menu-nav-btn" data-short="上一步">上一步</button>
+      <button type="button" id="menuNext" class="menu-nav-btn primary" data-short="下一步">下一步</button>
+      <button type="button" id="btnStart" class="menu-nav-btn start nav-final-only" data-short="開始" hidden>開始遊戲</button>
       <button type="button" id="btnSettings" class="menu-nav-btn">按鍵設定</button>
-      <button type="button" id="btnMobileSettings" class="menu-nav-btn touch-only">手機設定</button>
-      <button type="button" id="btnToggleFullscreenMenu" data-fullscreen-toggle class="menu-nav-btn touch-only">全螢幕</button>
+      <button type="button" id="btnMobileSettings" class="menu-nav-btn touch-only" data-short="設定">手機設定</button>
+      <button type="button" id="btnToggleFullscreenMenu" data-fullscreen-toggle class="menu-nav-btn touch-only nav-final-only" data-short="全螢幕" hidden>全螢幕</button>
     </div>
     <p id="music-hint" class="music-hint">背景音樂：<code>assets/music.mp3</code></p>
   </div>

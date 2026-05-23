@@ -515,7 +515,9 @@ export function syncFullscreenButtonLabel() {
   const on = isMobileImmersive();
   const native = isMobileFullscreen();
   document.querySelectorAll("[data-fullscreen-toggle]").forEach((btn) => {
-    btn.textContent = on ? "退出全螢幕" : "進入全螢幕";
+    const touchMenu = btn.id === "btnToggleFullscreenMenu" && document.body.classList.contains("touch-ui");
+    if (touchMenu) btn.textContent = on ? "退出" : "全螢幕";
+    else btn.textContent = on ? "退出全螢幕" : "進入全螢幕";
   });
   const hint = document.getElementById("immersiveHint");
   if (hint) hint.hidden = !on || native;

@@ -12,6 +12,7 @@ export function initMenuWizard(api) {
   const btnPrev = document.getElementById("menuPrev");
   const btnNext = document.getElementById("menuNext");
   const btnStart = document.getElementById("btnStart");
+  const btnFullscreen = document.getElementById("btnToggleFullscreenMenu");
   const overlay = document.getElementById("pickerOverlay");
   const pickerClose = document.getElementById("pickerClose");
   const coopModal = document.getElementById("coopMobileWarn");
@@ -25,7 +26,16 @@ export function initMenuWizard(api) {
     tabs.forEach((t, i) => t.classList.toggle("active", i === menuStep));
     if (btnPrev) btnPrev.style.display = menuStep === 0 ? "none" : "";
     if (btnNext) btnNext.style.display = menuStep >= steps.length - 1 ? "none" : "";
-    if (btnStart) btnStart.classList.toggle("is-visible", menuStep >= steps.length - 1);
+    if (btnStart) {
+      const onFinal = menuStep >= steps.length - 1;
+      btnStart.classList.toggle("is-visible", onFinal);
+      btnStart.hidden = !onFinal;
+    }
+    if (btnFullscreen) {
+      const onFinal = menuStep >= steps.length - 1;
+      btnFullscreen.hidden = !onFinal;
+      btnFullscreen.classList.toggle("is-visible", onFinal);
+    }
     document.querySelector(".menu-nav-bar")?.classList.toggle(
       "on-final",
       menuStep >= steps.length - 1

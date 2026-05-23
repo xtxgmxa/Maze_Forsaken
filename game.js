@@ -3220,6 +3220,9 @@ function boot() {
 function initMobileUi() {
   if (!isTouchUiEnabled()) return;
   document.body.classList.add("mobile-menu");
+  document.querySelectorAll(".menu-nav-btn[data-short]").forEach((btn) => {
+    btn.textContent = btn.dataset.short || btn.textContent;
+  });
   updateCanvasPointerEvents();
   syncTouchButtonBindings(getBindings);
   syncFullscreenButtonLabel();
