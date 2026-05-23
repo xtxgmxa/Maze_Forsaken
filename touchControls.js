@@ -394,18 +394,23 @@ export function touchControlsTick(keys) {
   ctx.updateTouchSkillLabels?.();
 }
 
+export function updateTouchAttackVisibility(show) {
+  const row = document.getElementById("touchRowAttack");
+  if (!row) return;
+  row.classList.toggle("is-visible", !!show);
+}
+
 function refreshTouchButtons(ctx) {
   const rowAb = document.getElementById("touchRowAbilities");
   const rowDoor = document.getElementById("touchRowDoor");
   const rowMove = document.getElementById("touchRowMove");
-  const atk = document.getElementById("touchAttack");
   if (!rowAb || !rowDoor) return;
   const kh = ctx.isKeyHunt?.();
   const killerCtrl = ctx.isHumanKiller?.() ?? false;
   rowAb.hidden = kh;
   rowDoor.hidden = !kh;
   if (rowMove) rowMove.hidden = false;
-  if (atk) atk.hidden = !killerCtrl;
+  updateTouchAttackVisibility(killerCtrl);
 }
 
 export function consumeTouchLook() {

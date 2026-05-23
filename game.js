@@ -30,6 +30,7 @@ import {
   initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults,
   syncTouchButtonBindings, updateTouchSkillLabels, updateTouchAbilityCooldowns,
   syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
+  updateTouchAttackVisibility,
 } from "./touchControls.js";
 import { initMenuWizard, showCoopMobileWarn } from "./menuUI.js";
 
@@ -499,6 +500,21 @@ function initMenu() {
     renderSettingsForm();
   }
 
+  const togglePickRole = () => {
+    const sel = document.getElementById("playerRole");
+    if (!sel) return;
+    sel.value = sel.value === "killer" ? "survivor" : "killer";
+    playerRole = sel.value;
+    updatePickRoleLabel();
+    refreshRoleUI();
+    playSfx("ui");
+  };
+  document.getElementById("pickRoleRow")?.addEventListener("click", togglePickRole);
+  document.getElementById("pickRoleRow")?.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    togglePickRole();
+  }, { passive: false });
+
   menuUiRef = initMenuWizard({
     playSfx,
     getSelectedLevel: () => selectedLevel,
@@ -507,6 +523,7 @@ function initMenu() {
     getSelectedKiller: () => selectedKiller,
     shouldHideKiller: () => isKeyHuntMode() || isPlatformerMode(),
     shouldHideP2: () => gameMode === "solo" || gameMode === "keyhunt" || gameMode === "platformer",
+    updateRoleLabel: updatePickRoleLabel,
   });
 
   const bindPauseBtn = (btn) => {
@@ -544,10 +561,23 @@ function initMenu() {
   });
 }
 
+function updatePickRoleLabel() {
+  const el = document.getElementById("pickRoleLabel");
+  const sel = document.getElementById("playerRole");
+  const v = sel?.value || playerRole || "survivor";
+  if (el) {
+    el.textContent = v === "killer" ? "殺手（有普攻鍵）" : "倖存者（逃亡）";
+  }
+}
+
 function refreshRoleUI() {
   const solo = gameMode === "solo";
   const sec = document.getElementById("rolePickSection");
-  if (sec) sec.style.display = solo && !isKeyHuntMode() ? "block" : "none";
+  const pickRole = document.getElementById("pickRoleRow");
+  const showRole = solo && !isKeyHuntMode() && !isPlatformerMode();
+  if (sec) sec.style.display = showRole && !isTouchUiEnabled() ? "block" : "none";
+  if (pickRole) pickRole.hidden = !showRole || !isTouchUiEnabled();
+  if (showRole && isTouchUiEnabled()) updatePickRoleLabel();
   const asKiller = solo && playerRole === "killer";
   const survLabel = document.getElementById("survivorPickLabel");
   const charGrid = document.getElementById("charGrid");
@@ -1855,7 +1885,10 @@ function abilityCdFillPct(p, ab) {
 }
 
 function isHumanKillerControl() {
-  return playAsKiller || (gameMode === "versus" && killers.some((k) => !k.isAI));
+  const humanKiller = killers.find((k) => !k.isAI);
+  if (!humanKiller) return false;
+  if (isKeyHuntMode() || isPlatformerMode()) return false;
+  return playAsKiller || gameMode === "versus";
 }
 
 function getTouchBindingProfile() {
@@ -1867,6 +1900,7 @@ function getTouchBindingProfile() {
 
 function syncTouchHudFromPlayer() {
   if (!isTouchUiEnabled()) return;
+  updateTouchAttackVisibility(isHumanKillerControl());
   syncTouchButtonBindings(getBindings, getTouchBindingProfile());
   const p = playAsKiller || gameMode === "versus"
     ? killers.find((k) => !k.isAI)

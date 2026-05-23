@@ -136,6 +136,7 @@ export function updatePickLabels(api) {
   set("pickSurvivorLabel", ch ? ch.name : "點此選擇");
   set("pickSurvivor2Label", ch2 ? ch2.name : "點此選擇");
   set("pickKillerLabel", k ? k.name : "點此選擇");
+  api.updateRoleLabel?.();
 
   const killerRow = document.getElementById("pickKillerRow");
   const surv2Row = document.getElementById("pickSurvivor2Row");

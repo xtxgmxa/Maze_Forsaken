@@ -1377,18 +1377,33 @@
       width: 28px; height: 28px; font-size: 0.8rem;
       z-index: 30;
     }
-    body.touch-ui .touch-btn.touch-attack {
-      width: 54px;
-      height: 54px;
-      min-width: 54px;
-      min-height: 54px;
-      border-radius: 50%;
-      border-color: #ff6644;
-      background: linear-gradient(145deg, #442211, #661122);
-      box-shadow: 0 0 14px #ff442266;
+    body.touch-ui #touchRowAttack {
+      display: none;
+      justify-content: flex-end;
+      margin-bottom: 2px;
     }
-    body.touch-ui .touch-btn.touch-attack .touch-skill-key { color: #ffaa88; font-size: 0.55rem; }
-    body.touch-ui .touch-btn.touch-attack .touch-skill-name { color: #ffddcc; font-size: 0.5rem; }
+    body.touch-ui #touchRowAttack.is-visible {
+      display: flex !important;
+    }
+    body.touch-ui #touchAttack {
+      display: flex !important;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 62px;
+      height: 62px;
+      min-width: 62px;
+      min-height: 62px;
+      padding: 4px;
+      border-radius: 50%;
+      border: 2px solid #ff6644;
+      background: linear-gradient(145deg, #552211, #881133);
+      box-shadow: 0 0 18px #ff442288;
+      color: #ffddcc;
+    }
+    body.touch-ui #touchAttack .touch-skill-key { color: #ffcc88; font-size: 0.62rem; }
+    body.touch-ui #touchAttack .touch-skill-name { color: #ffe8d8; font-size: 0.52rem; }
+    body.touch-ui #rolePickSection { display: none !important; }
     body.touch-ui #pausePanel .box { max-width: min(320px, 92vw); padding: 20px 18px; }
     body.touch-ui #pausePanel .pause-touch-hint { font-size: 0.72rem; color: #9988bb; margin-bottom: 12px; }
     body.touch-ui #touchLookZone { left: 42%; }
@@ -1532,6 +1547,11 @@
           </select>
         </label>
       </div>
+      <button type="button" class="pick-row touch-only" id="pickRoleRow" hidden>
+        <span class="pick-label">扮演身分</span>
+        <span class="pick-value" id="pickRoleLabel">倖存者（逃亡）</span>
+        <span class="pick-chevron">切換</span>
+      </button>
       <div class="match-config menu-row-wrap">
         <label>倖存者 <select id="numSurvivors">
           <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
@@ -1699,11 +1719,13 @@
           <span class="touch-skill-name">道具</span>
         </button>
       </div>
-      <div class="touch-row touch-cluster-actions" id="touchRowMove">
-        <button type="button" id="touchAttack" class="touch-btn touch-attack" hidden>
+      <div class="touch-row touch-row-attack" id="touchRowAttack">
+        <button type="button" id="touchAttack" class="touch-btn touch-attack" aria-label="普攻">
           <span class="touch-skill-key">攻</span>
           <span class="touch-skill-name">普攻</span>
         </button>
+      </div>
+      <div class="touch-row touch-cluster-actions" id="touchRowMove">
         <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft">滑壘</button>
         <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space">跳</button>
         <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft">衝刺</button>
