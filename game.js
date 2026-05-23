@@ -29,7 +29,7 @@ import {
 import {
   initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults,
   syncTouchButtonBindings, updateTouchSkillLabels, updateTouchAbilityCooldowns,
-  syncFullscreenButtonLabel, setTouchMissionHighlight,
+  syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
 } from "./touchControls.js";
 import { initMenuWizard, showCoopMobileWarn } from "./menuUI.js";
 
@@ -509,9 +509,32 @@ function initMenu() {
     shouldHideP2: () => gameMode === "solo" || gameMode === "keyhunt" || gameMode === "platformer",
   });
 
-  document.getElementById("btnHudPause")?.addEventListener("click", () => {
-    initAudioEngine();
-    togglePause();
+  const bindPauseBtn = (btn) => {
+    if (!btn) return;
+    let touchHandled = false;
+    const openPause = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      initAudioEngine();
+      togglePause();
+    };
+    btn.addEventListener("touchend", (e) => {
+      touchHandled = true;
+      openPause(e);
+    }, { passive: false });
+    btn.addEventListener("click", (e) => {
+      if (touchHandled) {
+        touchHandled = false;
+        return;
+      }
+      openPause(e);
+    });
+  };
+  bindPauseBtn(document.getElementById("btnHudPause"));
+  document.getElementById("btnPauseMobileSettings")?.addEventListener("click", () => {
+    document.getElementById("pausePanel")?.classList.remove("show");
+    if (gameState === "paused") gameState = "play";
+    openMobileSettingsPanel();
   });
 
   refreshMenuForMode();
@@ -1639,7 +1662,11 @@ async function runStartGame() {
   document.getElementById("hudEscHint")?.classList.add("show");
   if (isTouchUiEnabled()) {
     const cph = document.getElementById("clickPromptHint");
-    if (cph) cph.textContent = "左下搖桿移動 · 右半滑動轉向 · 右下按鈕操作 · 找綠色出口";
+    if (cph) {
+      cph.textContent = isHumanKillerControl()
+        ? "左下搖桿移動 · 右半滑動視角 · 攻擊鍵普攻 · 右上暫停選單"
+        : "左下搖桿移動 · 右半滑動轉向 · 右下按鈕操作 · 右上暫停選單";
+    }
   }
   refreshGameplayHints();
   updateAbilityBar();
@@ -1827,9 +1854,23 @@ function abilityCdFillPct(p, ab) {
   return Math.max(0, Math.min(100, (1 - cd / max) * 100));
 }
 
+function isHumanKillerControl() {
+  return playAsKiller || (gameMode === "versus" && killers.some((k) => !k.isAI));
+}
+
+function getTouchBindingProfile() {
+  if (gameMode === "versus") return "killer";
+  if (playAsKiller) return "p1";
+  const p = getHumanFocus();
+  return p?.profile === "p2" ? "p2" : "p1";
+}
+
 function syncTouchHudFromPlayer() {
   if (!isTouchUiEnabled()) return;
-  const p = playAsKiller ? killers.find((k) => !k.isAI) : getHumanFocus();
+  syncTouchButtonBindings(getBindings, getTouchBindingProfile());
+  const p = playAsKiller || gameMode === "versus"
+    ? killers.find((k) => !k.isAI)
+    : getHumanFocus();
   if (!p?.abilities) return;
   updateTouchSkillLabels(p.abilities);
   const slots = p.abilities.map((ab) => ({
@@ -2059,7 +2100,10 @@ function handleAbilityKeys(code, down) {
     }
   }
   for (const k of killers) {
-    if (!k.isAI) tryProfile(k, playAsKiller ? "p1" : "killer");
+    if (!k.isAI) {
+      const kp = playAsKiller ? "p1" : "killer";
+      tryProfile(k, kp);
+    }
   }
 }
 
@@ -3110,6 +3154,13 @@ function boot() {
       gameState,
       playAsKiller,
       isKeyHunt: isKeyHuntMode,
+      isHumanKiller: isHumanKillerControl,
+      getTouchProfile: getTouchBindingProfile,
+      onKillerAttack: () => {
+        if (gameState !== "play") return;
+        const k = killers.find((kk) => !kk.isAI);
+        if (k) tryKillerBasicAttack(k);
+      },
       updateTouchSkillLabels: () => syncTouchHudFromPlayer(),
       clearJumpHeld: () => {
         survivors.forEach((s) => { s._jumpHeld = false; });
@@ -3144,7 +3195,8 @@ function initMobileUi() {
 }
 
 function initMobileHud() {
-  /* 手機版任務面板預設隱藏，由 CSS 控制 */
+  const pause = document.getElementById("btnHudPause");
+  if (pause) pause.hidden = false;
 }
 
 boot();

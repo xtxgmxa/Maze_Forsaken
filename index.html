@@ -1103,6 +1103,9 @@
     .touch-btn.primary { border-color: #44aa66; }
     .touch-only { display: none !important; }
     body.touch-ui .touch-only:not([hidden]) { display: inline-block !important; }
+    body.touch-ui #pausePanel .touch-only { display: block !important; width: 100%; }
+    body.touch-ui .pause-desktop-hint { display: none !important; }
+    body:not(.touch-ui) .pause-touch-hint { display: none !important; }
     body.touch-ui #btnMobileSettings.touch-only:not([hidden]) { display: inline-block !important; }
     body.touch-ui #btnTouchMission,
     body.touch-ui #touchMissionBanner { display: none !important; }
@@ -1325,12 +1328,20 @@
       display: flex;
       position: fixed;
       top: max(6px, env(safe-area-inset-top, 6px));
-      right: max(72px, calc(68px + env(safe-area-inset-right, 0px)));
-      z-index: 14; width: 36px; height: 36px;
-      align-items: center; justify-content: center;
-      background: #1a1028ee; border: 2px solid #ffaa44;
-      border-radius: 8px; color: #ffe8a8; font-size: 1rem;
-      cursor: pointer; pointer-events: auto;
+      right: max(58px, calc(54px + env(safe-area-inset-right, 0px)));
+      z-index: 30;
+      width: 34px;
+      height: 34px;
+      align-items: center;
+      justify-content: center;
+      background: #1a1028ee;
+      border: 2px solid #ffaa44;
+      border-radius: 8px;
+      color: #ffe8a8;
+      font-size: 1rem;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
     }
     body.touch-ui #abilityBar {
       position: fixed; right: 108px; bottom: 10px; left: auto;
@@ -1348,9 +1359,6 @@
     body.touch-ui #designerCreditHud {
       bottom: auto; top: 58px; left: 2px; font-size: 0.48rem; padding: 1px 5px;
     }
-    body.touch-ui #btnHudPause {
-      width: 30px; height: 30px; font-size: 0.85rem; right: 58px; top: 2px;
-    }
     body.touch-ui #minimap { width: 52px; height: 52px; }
     body.touch-ui #minimap-wrap { top: 2px; right: 2px; padding: 1px 2px; }
     body.touch-ui #touchStickWrap {
@@ -1365,9 +1373,24 @@
     }
     body.touch-ui #btnTouchSettings {
       top: max(6px, env(safe-area-inset-top, 6px));
-      right: max(90px, calc(86px + env(safe-area-inset-right, 0px)));
+      right: max(98px, calc(94px + env(safe-area-inset-right, 0px)));
       width: 28px; height: 28px; font-size: 0.8rem;
+      z-index: 30;
     }
+    body.touch-ui .touch-btn.touch-attack {
+      width: 54px;
+      height: 54px;
+      min-width: 54px;
+      min-height: 54px;
+      border-radius: 50%;
+      border-color: #ff6644;
+      background: linear-gradient(145deg, #442211, #661122);
+      box-shadow: 0 0 14px #ff442266;
+    }
+    body.touch-ui .touch-btn.touch-attack .touch-skill-key { color: #ffaa88; font-size: 0.55rem; }
+    body.touch-ui .touch-btn.touch-attack .touch-skill-name { color: #ffddcc; font-size: 0.5rem; }
+    body.touch-ui #pausePanel .box { max-width: min(320px, 92vw); padding: 20px 18px; }
+    body.touch-ui #pausePanel .pause-touch-hint { font-size: 0.72rem; color: #9988bb; margin-bottom: 12px; }
     body.touch-ui #touchLookZone { left: 42%; }
     body.touch-ui #mathQuiz {
       align-items: flex-end;
@@ -1636,7 +1659,7 @@
   <p id="immersiveHint" hidden aria-live="polite">iOS：請用 Safari「分享 → 加入主畫面」，從主畫面圖示開啟可真正全螢幕</p>
   <div id="designerCreditHud">遊戲設計 by MrBill</div>
   <div id="hudEscHint">按 ESC 暫停 · 回主選單</div>
-  <button type="button" id="btnHudPause" title="暫停">⏸</button>
+  <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
   <p id="touchMissionBanner" class="touch-only" hidden></p>
   <button type="button" id="btnTouchMission" class="touch-only" hidden>⚡ 解任務</button>
   <button type="button" id="btnTouchSettings" class="touch-only" title="手機操作設定" hidden>⚙</button>
@@ -1677,6 +1700,10 @@
         </button>
       </div>
       <div class="touch-row touch-cluster-actions" id="touchRowMove">
+        <button type="button" id="touchAttack" class="touch-btn touch-attack" hidden>
+          <span class="touch-skill-key">攻</span>
+          <span class="touch-skill-name">普攻</span>
+        </button>
         <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft">滑壘</button>
         <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space">跳</button>
         <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft">衝刺</button>
@@ -1728,8 +1755,10 @@
   <div id="pausePanel">
     <div class="box">
       <h2>暫停</h2>
-      <p style="font-size:0.85rem;color:#9988bb;margin-bottom:12px">按 ESC 可開關此選單 · 下方離開回主選單</p>
+      <p class="pause-touch-hint touch-only">可調整手機操作 · 或回主選單重新選角</p>
+      <p class="pause-desktop-hint" style="font-size:0.85rem;color:#9988bb;margin-bottom:12px">按 ESC 可開關此選單 · 下方離開回主選單</p>
       <button type="button" id="btnResume">繼續遊戲</button>
+      <button type="button" id="btnPauseMobileSettings" class="touch-only">手機設定</button>
       <button type="button" id="btnQuitMenu">離開 · 回主選單</button>
     </div>
   </div>

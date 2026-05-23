@@ -109,7 +109,7 @@ function bindLook(zone) {
   let lastX = 0;
   let lastY = 0;
   zone.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".touch-btn, #touchStickWrap, #btnTouchSettings")) return;
+    if (e.target.closest(".touch-btn, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
     const t = e.changedTouches[0];
     if (t.clientX < window.innerWidth * 0.36) return;
     pid = t.identifier;
@@ -142,6 +142,26 @@ function releaseTouchKey(keys, code) {
   if (code === "ControlLeft" || code === "ControlRight") {
     getCtx().clearSlideHeld?.();
   }
+}
+
+function bindAttackButton(btn) {
+  const fire = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    getCtx().onKillerAttack?.();
+    btn.classList.add("pressed");
+  };
+  const up = (e) => {
+    e.preventDefault();
+    btn.classList.remove("pressed");
+  };
+  btn.addEventListener("touchstart", fire, { passive: false });
+  btn.addEventListener("touchend", up, { passive: false });
+  btn.addEventListener("touchcancel", up, { passive: false });
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    getCtx().onKillerAttack?.();
+  });
 }
 
 function bindButton(btn, keys) {
@@ -331,6 +351,8 @@ export function initTouchControls({ keys, getBindings, getContext }) {
   if (lookZone) bindLook(lookZone);
 
   root.querySelectorAll(".touch-btn[data-code]").forEach((btn) => bindButton(btn, keys));
+  const atkBtn = document.getElementById("touchAttack");
+  if (atkBtn) bindAttackButton(atkBtn);
   initMobileSettingsUI();
   loadMobileImmersive();
   const gear = document.getElementById("btnTouchSettings");
@@ -358,7 +380,8 @@ export function touchControlsTick(keys) {
     return;
   }
 
-  const b = bindingsRef?.().p1 || {};
+  const prof = ctx.getTouchProfile?.() || "p1";
+  const b = bindingsRef?.()?.[prof] || bindingsRef?.().p1 || {};
   clearStickKeys(keys);
 
   const dead = getStickDeadzone();
@@ -375,11 +398,14 @@ function refreshTouchButtons(ctx) {
   const rowAb = document.getElementById("touchRowAbilities");
   const rowDoor = document.getElementById("touchRowDoor");
   const rowMove = document.getElementById("touchRowMove");
+  const atk = document.getElementById("touchAttack");
   if (!rowAb || !rowDoor) return;
   const kh = ctx.isKeyHunt?.();
-  rowAb.hidden = kh || ctx.playAsKiller;
+  const killerCtrl = ctx.isHumanKiller?.() ?? false;
+  rowAb.hidden = kh;
   rowDoor.hidden = !kh;
   if (rowMove) rowMove.hidden = false;
+  if (atk) atk.hidden = !killerCtrl;
 }
 
 export function consumeTouchLook() {
@@ -397,9 +423,9 @@ export function isTouchUiEnabled() {
   return enabled;
 }
 
-export function syncTouchButtonBindings(getBindings) {
+export function syncTouchButtonBindings(getBindings, profile = "p1") {
   if (!enabled || !getBindings) return;
-  const b = getBindings().p1 || {};
+  const b = getBindings()[profile] || getBindings().p1 || {};
   const map = [
     ["touchAb1", "ab1"],
     ["touchAb2", "ab2"],
