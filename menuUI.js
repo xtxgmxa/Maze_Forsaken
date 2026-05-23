@@ -1,5 +1,7 @@
 /** 主選單分頁／彈出選擇器 */
 
+const PERF_TIP_KEY = "forsaken_perf_tip_v1";
+
 let menuStep = 0;
 let pickerGridId = null;
 let pickerHomeId = null;
@@ -67,6 +69,37 @@ export function initMenuWizard(api) {
   goStep(0);
   updatePickLabels(api);
   return { goStep, updatePickLabels: () => updatePickLabels(api) };
+}
+
+/** 首頁效能提示（可勾選不再顯示） */
+export function initPerfTipModal() {
+  const modal = document.getElementById("perfTipModal");
+  const btnOk = document.getElementById("perfTipOk");
+  if (!modal || !btnOk) return;
+
+  try {
+    if (localStorage.getItem(PERF_TIP_KEY) === "1") return;
+  } catch { /* ignore */ }
+
+  const close = () => modal.classList.remove("show");
+
+  btnOk.addEventListener("click", () => {
+    const skip = document.getElementById("perfTipDontShow")?.checked;
+    if (skip) {
+      try {
+        localStorage.setItem(PERF_TIP_KEY, "1");
+      } catch { /* ignore */ }
+    }
+    close();
+  });
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) close();
+  });
+
+  requestAnimationFrame(() => {
+    modal.classList.add("show");
+  });
 }
 
 export function showCoopMobileWarn() {

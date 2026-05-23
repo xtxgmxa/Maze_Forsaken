@@ -146,6 +146,28 @@
       border: 1px solid #665588; background: #2a1840; color: #eeddff;
     }
     .modal-actions button.primary { background: #553366; border-color: #ff8866; }
+    .perf-tip-box { text-align: left; max-width: min(380px, 92vw); }
+    .perf-tip-box h3 { text-align: center; }
+    .perf-tip-list {
+      margin: 10px 0 12px;
+      padding-left: 1.1em;
+      font-size: 0.82rem;
+      color: #ccb8e8;
+      line-height: 1.55;
+    }
+    .perf-tip-list li { margin-bottom: 6px; }
+    .perf-tip-skip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.72rem;
+      color: #9988aa;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+    .perf-tip-skip input { accent-color: #ff8866; }
+    body.touch-ui .perf-tip-box { padding: 14px 16px; max-height: 88vh; overflow-y: auto; }
+    body.touch-ui .perf-tip-list { font-size: 0.75rem; }
     body.touch-ui .desktop-only { display: none !important; }
     body.touch-ui .pick-row { display: flex !important; }
     body:not(.touch-ui) .pick-row { display: none; }
@@ -1676,6 +1698,25 @@
         <button type="button" id="btnResetMobileSettings">還原</button>
         <button type="button" id="btnCloseMobileSettings">關閉</button>
         <button type="button" id="btnSaveMobileSettings" class="primary">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="perfTipModal" class="modal-overlay" role="dialog" aria-labelledby="perfTipTitle">
+    <div class="modal-box perf-tip-box">
+      <h3 id="perfTipTitle">流暢度小提示</h3>
+      <ul class="perf-tip-list">
+        <li>若覺得<strong>卡頓、載入慢或發燙</strong>，請先在步驟 ① 不要把「倖存者／獵人」人數調太高。</li>
+        <li>建議先從 <strong>1 倖存 + 1 獵人</strong> 開始，確認順暢後再增加人數。</li>
+        <li>「團隊逃亡」「硬核」等人數較多的模式較吃效能，手機請謹慎調高。</li>
+        <li>手機／平板可選較小關卡，並關閉其他瀏覽器分頁。</li>
+      </ul>
+      <label class="perf-tip-skip">
+        <input type="checkbox" id="perfTipDontShow" />
+        不再顯示此提示
+      </label>
+      <div class="modal-actions">
+        <button type="button" id="perfTipOk" class="primary">我知道了</button>
       </div>
     </div>
   </div>

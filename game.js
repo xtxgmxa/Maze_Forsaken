@@ -32,7 +32,7 @@ import {
   syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
   updateTouchAttackVisibility,
 } from "./touchControls.js";
-import { initMenuWizard, showCoopMobileWarn } from "./menuUI.js";
+import { initMenuWizard, showCoopMobileWarn, initPerfTipModal } from "./menuUI.js";
 
 let menuUiRef = null;
 let gamepadActive = false;
@@ -559,6 +559,7 @@ function initMenu() {
   document.querySelectorAll(".menu-tab, #menuPrev, #menuNext").forEach((el) => {
     el.addEventListener("click", () => requestAnimationFrame(updateMenuPreview));
   });
+  initPerfTipModal();
 }
 
 function updatePickRoleLabel() {
