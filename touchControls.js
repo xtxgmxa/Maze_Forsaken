@@ -109,7 +109,7 @@ function bindLook(zone) {
   let lastX = 0;
   let lastY = 0;
   zone.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".touch-btn, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
+    if (e.target.closest(".touch-btn, #touchButtons, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
     const t = e.changedTouches[0];
     if (t.clientX < window.innerWidth * 0.36) return;
     pid = t.identifier;
@@ -395,9 +395,9 @@ export function touchControlsTick(keys) {
 }
 
 export function updateTouchAttackVisibility(show) {
-  const row = document.getElementById("touchRowAttack");
-  if (!row) return;
-  row.classList.toggle("is-visible", !!show);
+  const atk = document.getElementById("touchAttack");
+  if (!atk) return;
+  atk.classList.toggle("is-visible", !!show);
 }
 
 function refreshTouchButtons(ctx) {
