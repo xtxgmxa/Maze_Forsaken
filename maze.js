@@ -166,15 +166,37 @@ export function worldToCell(ctx, x, z) {
 }
 
 export const AIRY_JUMP_MIN = 0.1;
+export const MAZE_WALL_HEIGHT = 4;
+
+/** 子彈／視線：牆高 4m，僅當射線夠高才可越過矮牆 */
+export function shooterLineBlocked(ctx, maze, x0, z0, y0, x1, z1, y1) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const dy = y1 - y0;
+  const len3 = Math.hypot(dx, dz, dy);
+  if (len3 < 0.05) return false;
+  const steps = Math.max(10, Math.ceil(len3 / (ctx.cell * 0.15)));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const sx = x0 + dx * t;
+    const sz = z0 + dz * t;
+    const sy = y0 + dy * t;
+    if (sy > MAZE_WALL_HEIGHT + 0.2) continue;
+    if (collides(ctx, maze, sx, sz, 0.1, 0, 0, { vaultClear: 99 })) return true;
+  }
+  return false;
+}
 
 export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0, footElev = 0, opts = {}) {
   const jy = jumpY ?? 0;
   const fe = footElev ?? 0;
   const vaultClear = opts.vaultClear ?? 2.6;
   const vaultJumpMin = opts.vaultJumpMin ?? AIRY_JUMP_MIN;
+  const clearH = fe + jy;
+  const overWall = clearH >= MAZE_WALL_HEIGHT - 0.45;
   const airy =
-    jy > vaultJumpMin &&
-    (jy > 0.42 || jy + fe * 0.22 > vaultClear * 0.55);
+    overWall ||
+    (jy > vaultJumpMin && (jy > 0.35 || jy + fe * 0.22 > vaultClear * 0.55));
   const scale = opts.radiusScale ?? 1;
   const r = (airy ? Math.min(radius, 0.14) : radius) * scale;
   const half = ctx.cell / 2 - r - (airy ? 1.1 : 0.18);
@@ -192,7 +214,7 @@ export function moveWithCollision(ctx, maze, pos, vx, vz, dt, jumpY = 0, footEle
   const nx = pos.x + vx * dt;
   const nz = pos.z + vz * dt;
   const clearH = (footElev ?? 0) + (jumpY ?? 0);
-  const rad = clearH > 3.6 ? 0.32 : jumpY > 0.45 ? 0.36 : 0.4;
+  const rad = clearH > MAZE_WALL_HEIGHT ? 0.28 : clearH > 3.6 ? 0.32 : jumpY > 0.45 ? 0.36 : 0.4;
   if (!collides(ctx, maze, nx, pos.z, rad, jumpY, footElev, colOpts)) pos.x = nx;
   if (!collides(ctx, maze, pos.x, nz, rad, jumpY, footElev, colOpts)) pos.z = nz;
   if (jumpY > 0.48 || clearH > 4) {

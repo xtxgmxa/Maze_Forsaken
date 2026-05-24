@@ -31,6 +31,7 @@ import {
   checkShooterWin, onShooterDowned, tickShooterRespawns, SHOOTER_WEAPONS, isShooterHeadshot, getTargetHeadY,
 } from "./shooterMode.js";
 import { getLevelMapSeed, getMapStyle, enrichLevelForMode } from "./mapGen.js";
+import { buildRealmZones, getRealmAt, applyRealmAtmosphere } from "./realmZones.js";
 import {
   ITEM_DEFS, addInventoryItem, useInventoryItem,
   getActiveInventoryList, getPassiveList, applyPassive,
@@ -62,6 +63,7 @@ let quizGp = { x: 0.5, y: 0.5, choice: 0, prev: {} };
 
 const MODE_PREVIEW = {
   solo: "assets/characters/survivors/noob.jpg",
+  classic: "assets/characters/survivors/guest1337.jpg",
   coop: "assets/characters/survivors/builderman.jpg",
   versus: "assets/characters/killers/c00lkidd.jpg",
   keyhunt: "assets/characters/survivors/elliot.jpg",
@@ -75,7 +77,7 @@ import {
   generateMaze, generateMazeSeeded, createSeededRandom, createMazeContext, cellCenter, buildMazeMeshes,
   createExitMarker, moveWithCollision, collides, bfsNextStep, worldToCell, isCellReachable,
   addMazeLoops, applyMapStyle, createTeleporters, buildTeleporterMeshes,
-  spawnWorldItems, buildItemMeshes,
+  spawnWorldItems, buildItemMeshes, shooterLineBlocked,
 } from "./maze.js";
 import {
   createPlayerState, tickCooldowns, tryAbility,
@@ -153,6 +155,8 @@ let puzzleDoorGroup = null;
 let shooterState = null;
 let shooterArenaGroup = null;
 let mazeDecorGroup = null;
+let realmZonesState = null;
+let lastRealmAtmosphereId = null;
 let verticalWorldState = null;
 let bouncePads = [];
 let nearPuzzleDoor = null;
@@ -426,7 +430,7 @@ function refreshMenuForMode() {
     winGoal = "survival";
     if (catEl) catEl.value = "shooter";
     if (winEl) winEl.value = "survival";
-  } else if (gameMode === "solo" || gameMode === "coop" || gameMode === "versus" || gameMode === "practice" || gameMode === "mob" || gameMode === "hardcore") {
+  } else if (gameMode === "solo" || gameMode === "classic" || gameMode === "coop" || gameMode === "versus" || gameMode === "practice" || gameMode === "mob" || gameMode === "hardcore") {
     levelCategory = "chase";
     if (winEl) winGoal = winEl.value;
   } else if (catEl) {
@@ -505,7 +509,8 @@ function initMenu() {
 
   const modeGrid = document.getElementById("modeGrid");
   [
-    { id: "solo", name: "單人", desc: "你 vs AI 獵人 · 滑鼠+WASD" },
+    { id: "solo", name: "單人", desc: "四區域大圖 · 你 vs AI · Rivals 風格", featured: true },
+    { id: "classic", name: "經典迷宮", desc: "簡易平面追逐 · 無高台 · 懷舊版" },
     { id: "puzzle", name: "解題闖關", desc: "謎題門連鎖 · 答對開門 · 無獵人", featured: true },
     { id: "coop", name: "雙人合作", desc: "2 倖存者 vs AI · P2 方向鍵" },
     { id: "versus", name: "雙人對戰", desc: "1 倖存者 vs 1 獵人（玩家）" },
@@ -526,7 +531,7 @@ function initMenu() {
       gameMode = m.id;
       resetCategoryAfterDedicatedMode(prevMode);
       document.getElementById("p2CharSection").style.display =
-        m.id === "solo" || m.id === "keyhunt" || m.id === "platformer" || m.id === "puzzle" || m.id === "shooter" ? "none" : "block";
+        m.id === "solo" || m.id === "classic" || m.id === "keyhunt" || m.id === "platformer" || m.id === "puzzle" || m.id === "shooter" ? "none" : "block";
       refreshMenuForMode();
       updateMenuPreview();
       playSfx("ui");
@@ -1080,10 +1085,10 @@ function ensureGraphics() {
 
 function setupLights() {
   if (!scene) return;
-  scene.add(new THREE.AmbientLight(0xc8d4ff, 1.15));
-  const hemi = new THREE.HemisphereLight(0xb8d8ff, 0x5a6888, 0.75);
+  scene.add(new THREE.AmbientLight(0xd4dcff, 1.28));
+  const hemi = new THREE.HemisphereLight(0xc8e8ff, 0x4e6078, 0.92);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xfff6e8, 0.9);
+  const dir = new THREE.DirectionalLight(0xfff8ee, 1.05);
   dir.position.set(18, 42, 14);
   dir.castShadow = true;
   dir.shadow.mapSize.set(1024, 1024);
@@ -1122,6 +1127,10 @@ function isPuzzleDoorMode() {
 
 function isShooterMode() {
   return gameMode === "shooter" || levelCategory === "shooter";
+}
+
+function isClassicMode() {
+  return gameMode === "classic";
 }
 
 function clampCamPitch(pitch) {
@@ -1269,7 +1278,10 @@ function getCollisionOpts() {
   if (gameMode === "solo" || gameMode === "practice") {
     return { vaultClear: 2.45, vaultJumpMin: 0.26, radiusScale: 0.9 };
   }
-  return { vaultClear: 2.35, vaultJumpMin: 0.28 };
+  if (isClassicMode()) {
+    return { vaultClear: 2.2, vaultJumpMin: 0.3 };
+  }
+  return { vaultClear: 2.5, vaultJumpMin: 0.22, radiusScale: 0.88 };
 }
 
 function applyFallSafety(p) {
@@ -2242,7 +2254,7 @@ async function runStartGame() {
   } else {
     playerRole = document.getElementById("playerRole")?.value || "survivor";
   }
-  playAsKiller = playerRole === "killer" && gameMode === "solo"
+  playAsKiller = playerRole === "killer" && (gameMode === "solo" || gameMode === "classic")
     && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode();
   matchHumanRole = gameMode === "versus" ? "killer" : playAsKiller ? "killer" : "survivor";
   keyHuntState = null;
@@ -2261,6 +2273,7 @@ async function runStartGame() {
 
   if (camera) detachFpGun(camera);
   clearPaintSplats(scene);
+  lastRealmAtmosphereId = null;
   clearScene();
   clearVfxPool();
   scene.background = new THREE.Color(theme.sky);
@@ -2270,11 +2283,13 @@ async function runStartGame() {
   const mapRng = createSeededRandom(mapSeed);
   const mapStyle = getMapStyle(selectedLevel, gameMode);
   maze = generateMazeSeeded(ctx.w, ctx.h, mapSeed);
-  const loopCount = gameMode === "solo" || gameMode === "practice"
-    ? Math.max(ctx.loops ?? 6, Math.floor((ctx.w * ctx.h) / 28))
-    : ctx.loops;
+  const loopCount = isClassicMode()
+    ? Math.min(ctx.loops ?? 4, 4)
+    : gameMode === "solo" || gameMode === "practice"
+      ? Math.max(ctx.loops ?? 6, Math.floor((ctx.w * ctx.h) / 28))
+      : ctx.loops;
   addMazeLoops(maze, ctx.w, ctx.h, loopCount, mapRng);
-  if (gameMode === "solo" || gameMode === "practice") {
+  if (!isClassicMode() && (gameMode === "solo" || gameMode === "practice")) {
     addMazeLoops(maze, ctx.w, ctx.h, Math.floor(loopCount * 0.5), mapRng);
   }
   applyMapStyle(maze, ctx.w, ctx.h, mapStyle, mapRng);
@@ -2305,10 +2320,14 @@ async function runStartGame() {
     level: selectedLevel,
     theme,
     mapStyle,
-    skipHeavy: isShooterMode() || isPuzzleDoorMode() || gameMode === "solo" || (!richMap && selectedLevel.w * selectedLevel.h > 320),
-    soloLight: gameMode === "solo",
+    skipHeavy: isShooterMode() || isPuzzleDoorMode() || isClassicMode() || gameMode === "solo" || (!richMap && selectedLevel.w * selectedLevel.h > 320),
+    soloLight: gameMode === "solo" || isClassicMode(),
   });
   mazeDecorGroup = decor.group;
+  realmZonesState = null;
+  if (gameMode === "solo") {
+    realmZonesState = buildRealmZones(ctx, maze, scene, selectedLevel);
+  }
   if (isShooterMode()) {
     const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
     shooterArenaGroup = arena.group;
@@ -2324,8 +2343,9 @@ async function runStartGame() {
     shooterArenaGroup = null;
     verticalWorldState = buildVerticalWorld(ctx, maze, scene, {
       ...selectedLevel,
-      verticalDensity: isPuzzleDoorMode() ? 9 : (gameMode === "solo" ? 6 : 5),
-      realmTier: selectedLevel.realmTier ?? 0,
+      flatPlay: isClassicMode() || selectedLevel.flatPlay,
+      verticalDensity: isPuzzleDoorMode() ? 9 : isClassicMode() ? 99 : (gameMode === "solo" ? 6 : 5),
+      realmTier: isClassicMode() ? 0 : (selectedLevel.realmTier ?? 0),
     });
     bouncePads = verticalWorldState.bouncePads;
   }
@@ -2335,9 +2355,15 @@ async function runStartGame() {
   gameApi.exitPos = exitPos;
   exitGroup = createExitMarker(scene, exitPos);
 
-  teleporters = createTeleporters(ctx, maze, isKeyHuntMode() ? 0 : ctx.teleporters);
+  teleporters = createTeleporters(ctx, maze, isKeyHuntMode() || isClassicMode() ? 0 : ctx.teleporters);
   buildTeleporterMeshes(scene, teleporters);
-  if ((selectedLevel.realmTier ?? 0) >= 1 && verticalWorldState?.platforms?.length) {
+  if (realmZonesState?.portals?.length) {
+    for (const rp of realmZonesState.portals) {
+      teleporters.push({ a: rp.a, b: rp.b, realm: true });
+    }
+    buildTeleporterMeshes(scene, realmZonesState.portals.map((rp) => ({ a: rp.a, b: rp.b })));
+  }
+  if (!isClassicMode() && (selectedLevel.realmTier ?? 0) >= 1 && verticalWorldState?.platforms?.length) {
     const hiPlats = verticalWorldState.platforms.filter((pl) => pl.y >= 5);
     if (hiPlats.length) {
       const hi = hiPlats[Math.floor(hiPlats.length * 0.5)];
@@ -3679,6 +3705,8 @@ function updateProjectiles(dt) {
       for (const s of survivors) {
         if (s === pr.owner || s.caught || (s.hp ?? 0) <= 0) continue;
         if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
+          const hitY = worldHeight(s) + 1.05;
+          if (shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z)) continue;
           projectiles.splice(i, 1);
           let dmg = pr.damage || 22;
           let headshot = false;
@@ -4165,7 +4193,19 @@ function updateHUD() {
 
   const mapLabel = document.getElementById("hudMapName");
   if (mapLabel && selectedLevel) {
-    mapLabel.textContent = `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
+    if (gameMode === "solo" && realmZonesState && focus) {
+      const realm = getRealmAt(ctx, focus.pos.x, focus.pos.z);
+      mapLabel.textContent = `${realm.name} · ${selectedLevel.name}`.slice(0, 52);
+      if (realm.id !== lastRealmAtmosphereId) {
+        lastRealmAtmosphereId = realm.id;
+        applyRealmAtmosphere(scene, realm, getLevelTheme(selectedLevel).sky);
+        if (!focus.isAI) showToast(`進入 ${realm.name}`, 1200);
+      }
+    } else {
+      mapLabel.textContent = isClassicMode()
+        ? `經典 · ${selectedLevel.name}`
+        : `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
+    }
   }
 
   if (isShooterMode() && shooterState) {

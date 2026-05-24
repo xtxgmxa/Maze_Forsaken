@@ -14,6 +14,7 @@ export function getMapStyle(level, gameMode) {
   if (gameMode === "puzzle") return id % 2 === 0 ? "puzzle" : "sky";
   if (gameMode === "keyhunt") return ["ruins", "dock", "chase", "arena"][id % 4];
   if (gameMode === "platformer") return ["platform", "sky", "arena"][id % 3];
+  if (gameMode === "classic") return "chase";
   return ["chase", "ruins", "arena", "dock", "sky"][v];
 }
 
@@ -24,11 +25,14 @@ export function enrichLevelForMode(level, gameMode = "solo") {
   let modeSalt = 0;
   for (let i = 0; i < gameMode.length; i++) modeSalt = (modeSalt * 31 + gameMode.charCodeAt(i)) >>> 0;
   const realmTier = gameMode === "solo" ? (id % 3) : gameMode === "practice" ? 1 : 0;
+  const playStyle = gameMode === "classic" ? "classic" : gameMode === "solo" ? "realms" : "standard";
   return {
     ...level,
     mapSeed: level.mapSeed ?? (((id * 104729) ^ modeSalt) >>> 0),
     themeId: level.themeId ?? ((id - 1 + modeSalt) % 12),
     mapStyle: getMapStyle(level, gameMode),
     realmTier,
+    playStyle,
+    flatPlay: playStyle === "classic",
   };
 }
