@@ -57,17 +57,17 @@ export function spawnMatch({
   if (gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter") {
     addSurvivor(selectedChar, "p1", true, 0, 0);
     const botTarget = gameMode === "shooter"
-      ? Math.max(4, Math.min(6, numSurvivors + 3))
+      ? Math.max(3, Math.min(12, numSurvivors))
       : Math.max(1, Math.min(numSurvivors, survivorRoster.length));
     let guard = 0;
     while (survivors.length < botTarget && guard < 500) {
       guard++;
       const def = survivorRoster[(survivors.length + guard) % survivorRoster.length];
       const gx = gameMode === "shooter"
-        ? 2 + ((survivors.length * 5) % Math.max(1, ctx.w - 3))
+        ? 1 + ((survivors.length * 5) % Math.max(2, ctx.w - 2))
         : 1 + (survivors.length % Math.max(1, ctx.w - 1));
       const gz = gameMode === "shooter"
-        ? 2 + ((survivors.length * 7) % Math.max(1, ctx.h - 3))
+        ? 1 + ((survivors.length * 7) % Math.max(2, ctx.h - 2))
         : Math.floor(survivors.length / 2) % ctx.h;
       addSurvivor(def, `ai_s${survivors.length}`, false, gx, gz);
     }

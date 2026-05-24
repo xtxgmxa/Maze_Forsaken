@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { plasticPBR, wallPBR } from "./mapTextures.js";
 
 const WALL_H = 4;
 const WALL_THICK = 0.38;
@@ -328,21 +329,32 @@ export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
   const { w, h, cell } = ctx;
   const th = ctx.theme;
   const group = new THREE.Group();
-  const matFloorA = new THREE.MeshLambertMaterial({
-    color: th.floorA, emissive: th.accent || 0x000000, emissiveIntensity: 0.08,
-  });
-  const matFloorB = new THREE.MeshLambertMaterial({
-    color: th.floorB, emissive: th.deco || 0x000000, emissiveIntensity: 0.06,
-  });
-  const matFloorC = new THREE.MeshLambertMaterial({
-    color: th.accent || 0x664488, emissive: th.accent || 0x442266, emissiveIntensity: 0.2,
-  });
-  const matWall = new THREE.MeshLambertMaterial({
-    color: th.wall, emissive: th.accent || 0x554466, emissiveIntensity: 0.35,
-  });
-  const matWallAlt = new THREE.MeshLambertMaterial({
-    color: th.wallAlt || th.wall, emissive: th.deco || th.accent || 0x554466, emissiveIntensity: 0.28,
-  });
+  const usePbr = opts.usePbr !== false;
+  const matFloorA = usePbr
+    ? plasticPBR(th.floorA, th.accent || 0x000000, 0.1)
+    : new THREE.MeshLambertMaterial({
+      color: th.floorA, emissive: th.accent || 0x000000, emissiveIntensity: 0.08,
+    });
+  const matFloorB = usePbr
+    ? plasticPBR(th.floorB, th.deco || 0x000000, 0.08)
+    : new THREE.MeshLambertMaterial({
+      color: th.floorB, emissive: th.deco || 0x000000, emissiveIntensity: 0.06,
+    });
+  const matFloorC = usePbr
+    ? plasticPBR(th.accent || 0x664488, th.accent || 0x442266, 0.18)
+    : new THREE.MeshLambertMaterial({
+      color: th.accent || 0x664488, emissive: th.accent || 0x442266, emissiveIntensity: 0.2,
+    });
+  const matWall = usePbr
+    ? wallPBR(th.wall, th.accent || 0x554466, 0.32)
+    : new THREE.MeshLambertMaterial({
+      color: th.wall, emissive: th.accent || 0x554466, emissiveIntensity: 0.35,
+    });
+  const matWallAlt = usePbr
+    ? wallPBR(th.wallAlt || th.wall, th.deco || th.accent || 0x554466, 0.26)
+    : new THREE.MeshLambertMaterial({
+      color: th.wallAlt || th.wall, emissive: th.deco || th.accent || 0x554466, emissiveIntensity: 0.28,
+    });
   const floorGeo = new THREE.BoxGeometry(cell - 0.12, 0.22, cell - 0.12);
   const wallGeoH = new THREE.BoxGeometry(1, WALL_H, WALL_THICK);
   const wallGeoV = new THREE.BoxGeometry(WALL_THICK, WALL_H, 1);

@@ -36,7 +36,14 @@ import {
   ITEM_DEFS, addInventoryItem, useInventoryItem,
   getActiveInventoryList, getPassiveList, applyPassive,
 } from "./inventory.js";
-import { initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings, setAudioSettings, resetAudioSettings, applyAudioSettings } from "./audio.js";
+import {
+  initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings,
+  setAudioSettings, resetAudioSettings, applyAudioSettings, connectMusicElement, setMusicZoneTint,
+} from "./audio.js";
+import {
+  buildZoneParticles, clearZoneParticles, tickZoneParticles,
+  buildLedgeHints, tickLedgeHints, setCharacterRim, applyPlasticToCharacter,
+} from "./visualEnhance.js";
 import {
   generateMissionQuestion, spawnMissionStations, buildMissionMeshes, tickMissionGlow,
 } from "./missions.js";
@@ -157,6 +164,8 @@ let shooterArenaGroup = null;
 let mazeDecorGroup = null;
 let realmZonesState = null;
 let lastRealmAtmosphereId = null;
+let ledgeHintState = null;
+let zoneParticleGroup = null;
 let verticalWorldState = null;
 let bouncePads = [];
 let nearPuzzleDoor = null;
@@ -402,6 +411,30 @@ function checkMenuUiConsistency() {
   return bad;
 }
 
+function syncPlayerCountOptions() {
+  const ns = document.getElementById("numSurvivors");
+  const nk = document.getElementById("numKillers");
+  const nkLabel = nk?.closest("label");
+  if (!ns) return;
+  const isSh = isShooterMode();
+  const maxS = isSh ? 12 : 4;
+  const cur = Math.min(maxS, Math.max(1, parseInt(ns.value, 10) || (isSh ? 8 : 1)));
+  const label = ns.closest("label");
+  if (label) {
+    const t = label.childNodes[0];
+    if (t?.nodeType === Node.TEXT_NODE) t.textContent = isSh ? "對戰人數 " : "倖存者 ";
+  }
+  ns.innerHTML = "";
+  for (let i = 1; i <= maxS; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = isSh && i >= 9 ? `${i} 人（較吃效能）` : String(i);
+    ns.appendChild(opt);
+  }
+  ns.value = String(isSh ? Math.max(6, cur) : cur);
+  if (nkLabel) nkLabel.style.display = isSh ? "none" : "";
+}
+
 function refreshMenuForMode() {
   const dedicatedKh = gameMode === "keyhunt";
   const dedicatedPf = gameMode === "platformer";
@@ -474,6 +507,7 @@ function refreshMenuForMode() {
     updatePickRoleLabel();
   }
 
+  syncPlayerCountOptions();
   rebuildLevelGrid();
   refreshRoleUI();
   checkMenuUiConsistency();
@@ -519,7 +553,7 @@ function initMenu() {
     { id: "practice", name: "練習模式", desc: "獵人較慢 · 時間較長 · 適合新手" },
     { id: "mob", name: "團隊逃亡", desc: "4 倖存者 · 2 獵人追擊" },
     { id: "hardcore", name: "硬核", desc: "獵人更快 · 任務更少" },
-    { id: "shooter", name: "槍戰模式", desc: "職業對戰 · 十字準心 · 左鍵射擊", featured: true },
+    { id: "shooter", name: "槍戰模式", desc: "最多 12 人混戰 · 漆彈 · 左鍵射擊", featured: true },
   ].forEach((m, i) => {
     const card = document.createElement("div");
     card.className = "mode-card" + (i === 0 ? " selected" : "") + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
@@ -1250,7 +1284,12 @@ function getAliveSurvivors() {
 
 function updatePerfTier() {
   const total = getAliveSurvivors().length + killers.length;
-  perfTier = total >= 9 ? "low" : total >= 6 ? "med" : "high";
+  if (isShooterMode()) {
+    const n = survivors.length;
+    perfTier = n >= 10 ? "low" : n >= 7 ? "med" : "high";
+  } else {
+    perfTier = total >= 9 ? "low" : total >= 6 ? "med" : "high";
+  }
   setVfxBudget(perfTier === "low" ? 16 : perfTier === "med" ? 26 : 38);
 }
 
@@ -2145,8 +2184,13 @@ function readMatchConfig() {
   const sEl = document.getElementById("numSurvivors");
   const kEl = document.getElementById("numKillers");
   const tEl = document.getElementById("matchTime");
-  numSurvivors = sEl ? Math.max(1, Math.min(4, parseInt(sEl.value, 10) || 1)) : selectedLevel.survivorSlots || 1;
-  numKillers = kEl ? Math.max(1, Math.min(3, parseInt(kEl.value, 10) || 1)) : selectedLevel.killerCount || 1;
+  const maxSurv = isShooterMode() ? 12 : 4;
+  numSurvivors = sEl
+    ? Math.max(1, Math.min(maxSurv, parseInt(sEl.value, 10) || (isShooterMode() ? 8 : 1)))
+    : selectedLevel.survivorSlots || 1;
+  numKillers = isShooterMode()
+    ? 0
+    : kEl ? Math.max(1, Math.min(3, parseInt(kEl.value, 10) || 1)) : selectedLevel.killerCount || 1;
   matchTimeSeconds = tEl ? parseInt(tEl.value, 10) : DEFAULT_MATCH_SECONDS;
   killerTimer = matchTimeSeconds;
   if (gameMode === "coop") numSurvivors = Math.max(numSurvivors, 2);
@@ -2274,6 +2318,8 @@ async function runStartGame() {
   if (camera) detachFpGun(camera);
   clearPaintSplats(scene);
   lastRealmAtmosphereId = null;
+  ledgeHintState = null;
+  clearZoneParticles(scene);
   clearScene();
   clearVfxPool();
   scene.background = new THREE.Color(theme.sky);
@@ -2348,6 +2394,11 @@ async function runStartGame() {
       realmTier: isClassicMode() ? 0 : (selectedLevel.realmTier ?? 0),
     });
     bouncePads = verticalWorldState.bouncePads;
+    if (!isClassicMode() && verticalWorldState?.platforms?.length) {
+      ledgeHintState = buildLedgeHints(ctx, verticalWorldState, scene);
+    } else {
+      ledgeHintState = null;
+    }
   }
   await yieldFrame();
 
@@ -2425,6 +2476,19 @@ async function runStartGame() {
   if (!killers.length && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode()) {
     throw new Error("獵人生成失敗");
   }
+  updatePerfTier();
+  for (const s of survivors) {
+    if (s.mesh) {
+      applyPlasticToCharacter(s.mesh, s.charDef?.accent);
+      setCharacterRim(s.mesh, s.charDef?.accent, !s.isAI && perfTier !== "low");
+    }
+  }
+  for (const k of killers) {
+    if (k.mesh) {
+      applyPlasticToCharacter(k.mesh, k.charDef?.accent);
+      setCharacterRim(k.mesh, k.charDef?.accent, !k.isAI && perfTier !== "low");
+    }
+  }
   if (isShooterMode()) {
     survivors.forEach((s, i) => {
       assignPaintColor(s, i);
@@ -2440,7 +2504,10 @@ async function runStartGame() {
     if (mmLabel) mmLabel.textContent = "雷達";
     invalidateMinimapBase();
     drawShooterRadar();
-    showToast(`${selectedLevel.name} · 1~4 換槍 · 左鍵射擊 · 狙擊右鍵開鏡`, 2400);
+    showToast(
+      `${selectedLevel.name} · ${survivors.length} 人對戰 · 目標 ${shooterState?.targetKills ?? 8} 擊殺 · 1~4 換槍`,
+      2600
+    );
     if (!isTouchUiEnabled()) renderer.domElement.requestPointerLock?.();
     const humanShooter = survivors.find((s) => !s.isAI);
     if (camera) {
@@ -2481,6 +2548,7 @@ async function runStartGame() {
   updateKeyHuntBar();
   syncTouchHudFromPlayer();
   setMissionText();
+  initAudioEngine().then(() => connectMusicElement(musicEl));
   musicEl?.play().catch(() => {});
 
   refreshGameplayHints();
@@ -4199,6 +4267,9 @@ function updateHUD() {
       if (realm.id !== lastRealmAtmosphereId) {
         lastRealmAtmosphereId = realm.id;
         applyRealmAtmosphere(scene, realm, getLevelTheme(selectedLevel).sky);
+        setMusicZoneTint(realm.id);
+        if (zoneParticleGroup) clearZoneParticles(scene);
+        zoneParticleGroup = buildZoneParticles(scene, realm);
         if (!focus.isAI) showToast(`進入 ${realm.name}`, 1200);
       }
     } else {
@@ -4335,6 +4406,19 @@ function loop(now) {
     killerTimer -= dt;
     tickMissionGlow(missionStations, animTime);
     updateSurvivors(dt);
+    if (ledgeHintState?.hints?.length && verticalWorldState) {
+      const ledgeFocus = getHumanSurvivor() || survivors[0];
+      if (ledgeFocus) {
+        tickLedgeHints(
+          ledgeFocus, ledgeHintState.hints, ledgeHintState.softDrops,
+          verticalWorldState, dt, (msg, ms) => showToast(msg, ms)
+        );
+      }
+    }
+    if (gameMode === "solo" && zoneParticleGroup) {
+      const pf = getHumanSurvivor() || survivors[0];
+      if (pf) tickZoneParticles(dt, pf.pos.x, pf.pos.z);
+    }
     syncShooterPlayerVisibility();
     handleZoomKeys();
     if (keyHuntState) {

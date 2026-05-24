@@ -5,6 +5,9 @@ const DEFAULT_AUDIO = { music: 0.28, sfx: 1.0 };
 let actx = null;
 let master = null;
 let sfxBus = null;
+let musicFilter = null;
+let musicGain = null;
+let musicConnected = false;
 let unlocked = false;
 let lastSfxTime = {};
 let audioSettings = { ...DEFAULT_AUDIO };
@@ -46,6 +49,46 @@ export function resetAudioSettings(musicEl = null) {
   try {
     localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(audioSettings));
   } catch { /* */ }
+}
+
+/** 將 BGM 接入 Web Audio，供區域色調 EQ */
+export function connectMusicElement(musicEl) {
+  if (!musicEl || musicConnected) return;
+  if (!actx) return;
+  try {
+    const src = actx.createMediaElementSource(musicEl);
+    musicFilter = actx.createBiquadFilter();
+    musicFilter.type = "peaking";
+    musicFilter.frequency.value = 520;
+    musicFilter.Q.value = 1;
+    musicFilter.gain.value = 0;
+    musicGain = actx.createGain();
+    musicGain.gain.value = 1;
+    src.connect(musicFilter);
+    musicFilter.connect(musicGain);
+    musicGain.connect(master);
+    musicConnected = true;
+  } catch (e) {
+    console.warn("BGM 濾鏡", e);
+  }
+}
+
+const ZONE_TINT = {
+  sanctuary: { freq: 280, gain: 3.5 },
+  foundry: { freq: 160, gain: 5 },
+  neon: { freq: 1400, gain: 2.8 },
+  crystal: { freq: 720, gain: 3.2 },
+};
+
+export function setMusicZoneTint(realmId) {
+  if (!musicFilter) return;
+  const p = realmId ? ZONE_TINT[realmId] : null;
+  musicFilter.gain.value = p?.gain ?? 0;
+  if (p) musicFilter.frequency.value = p.freq;
+}
+
+export function resetMusicZoneTint() {
+  setMusicZoneTint(null);
 }
 
 export async function initAudioEngine() {

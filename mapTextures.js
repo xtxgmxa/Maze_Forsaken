@@ -55,3 +55,38 @@ export function lambertStud(hex, emHex, intensity = 0.25) {
     emissiveIntensity: intensity,
   });
 }
+
+const plasticCache = new Map();
+const wallCache = new Map();
+
+/** Roblox 風塑膠材質（共用快取，不增加 draw call） */
+export function plasticPBR(hex, emHex, intensity = 0.18) {
+  const key = `p_${hex}_${emHex}_${intensity}`;
+  if (plasticCache.has(key)) return plasticCache.get(key);
+  const m = new THREE.MeshStandardMaterial({
+    map: makeStudTexture(hex),
+    color: 0xffffff,
+    roughness: 0.58,
+    metalness: 0.06,
+    emissive: new THREE.Color(emHex ?? hex),
+    emissiveIntensity: intensity,
+  });
+  plasticCache.set(key, m);
+  return m;
+}
+
+/** 牆面 PBR（第二階段美術） */
+export function wallPBR(hex, emHex, intensity = 0.22) {
+  const key = `w_${hex}_${emHex}_${intensity}`;
+  if (wallCache.has(key)) return wallCache.get(key);
+  const m = new THREE.MeshStandardMaterial({
+    map: makeStudTexture(hex, false),
+    color: 0xffffff,
+    roughness: 0.82,
+    metalness: 0.03,
+    emissive: new THREE.Color(emHex ?? hex),
+    emissiveIntensity: intensity,
+  });
+  wallCache.set(key, m);
+  return m;
+}

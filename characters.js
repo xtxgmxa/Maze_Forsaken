@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { plasticPBR } from "./mapTextures.js";
 
 /** 肖像檔名對照你提供的「forsaken角色圖」資料夾 */
 const SK = (f) => `assets/characters/survivors/${f}`;
@@ -214,8 +215,10 @@ export const SURVIVORS = [
 export function buildForsakenCharacter(def, scale = 1) {
   const s = (def.scale || 1) * scale;
   const root = new THREE.Group();
-  const mat = (color, emissive = 0x000000, ei = 0) =>
-    new THREE.MeshLambertMaterial({ color, emissive, emissiveIntensity: ei });
+  const mat = (color, emissive = 0x000000, ei = 0.12) => plasticPBR(color, emissive, ei);
+  const limbW = 0.44;
+  const limbH = 0.92;
+  const limbD = 0.44;
 
   const addBox = (parent, w, h, d, material, y, x = 0, z = 0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w * s, h * s, d * s), material);
@@ -231,36 +234,37 @@ export function buildForsakenCharacter(def, scale = 1) {
     return p;
   };
 
-  const hipY = 1.05;
-  const torsoY = 1.55;
+  const hipY = 0.98;
+  const torsoY = 1.48;
   const legMat = mat(def.legs);
   const torsoMat = mat(def.torso);
+  const armMat = mat(def.shirt ?? def.torso);
 
-  addBox(root, 0.95, 0.55, 0.95, legMat, 0.28);
-
-  const leftLeg = pivot(root, -0.88, hipY, 0);
-  const rightLeg = pivot(root, 0.88, hipY, 0);
-  addBox(leftLeg, 0.38, 0.95, 0.38, legMat, -0.475);
-  addBox(rightLeg, 0.38, 0.95, 0.38, legMat, -0.475);
+  const leftLeg = pivot(root, -0.42, hipY, 0);
+  const rightLeg = pivot(root, 0.42, hipY, 0);
+  addBox(leftLeg, limbW, limbH, limbD, legMat, -limbH / 2);
+  addBox(rightLeg, limbW, limbH, limbD, legMat, -limbH / 2);
 
   const torso = pivot(root, 0, torsoY, 0);
-  addBox(torso, 1.25, 1.35, 0.65, torsoMat, 0.675);
-  if (def.shirt != null) addBox(torso, 1.28, 1.0, 0.68, mat(def.shirt), 0.85);
-  if (def.accent) addBox(torso, 1.32, 0.22, 0.7, mat(def.accent, def.accent, 0.45), 1.15);
+  addBox(torso, 1.12, 1.22, 0.52, torsoMat, 0.61);
+  if (def.shirt != null) addBox(torso, 1.14, 0.95, 0.54, mat(def.shirt), 0.78);
+  if (def.accent) addBox(torso, 1.16, 0.18, 0.56, mat(def.accent, def.accent, 0.35), 1.08);
 
-  const leftArm = pivot(torso, -0.88, 1.05, 0);
-  const rightArm = pivot(torso, 0.88, 1.05, 0);
-  addBox(leftArm, 0.38, 0.95, 0.38, legMat, -0.475);
-  addBox(rightArm, 0.38, 0.95, 0.38, legMat, -0.475);
+  const leftArm = pivot(torso, -0.68, 0.92, 0);
+  const rightArm = pivot(torso, 0.68, 0.92, 0);
+  addBox(leftArm, limbW * 0.92, limbH * 0.95, limbD * 0.92, armMat, -limbH * 0.48);
+  addBox(rightArm, limbW * 0.92, limbH * 0.95, limbD * 0.92, armMat, -limbH * 0.48);
   if (def.accent) {
-    addBox(leftArm, 0.42, 0.2, 0.42, mat(def.accent, def.accent, 0.35), -0.35);
-    addBox(rightArm, 0.42, 0.2, 0.42, mat(def.accent, def.accent, 0.35), -0.35);
+    addBox(leftArm, limbW, 0.18, limbD, mat(def.accent, def.accent, 0.28), -0.32);
+    addBox(rightArm, limbW, 0.18, limbD, mat(def.accent, def.accent, 0.28), -0.32);
   }
 
-  const head = pivot(torso, 0, 2.0, 0);
-  addBox(head, 0.95, 0.95, 0.95, mat(def.head), 0.475);
-  addBox(head, 0.22, 0.2, 0.06, mat(0x111111), 0.575, -0.22, 0.46);
-  addBox(head, 0.22, 0.2, 0.06, mat(0x111111), 0.575, 0.22, 0.46);
+  const head = pivot(torso, 0, 1.72, 0);
+  addBox(head, 0.78, 0.78, 0.78, mat(def.head), 0.39);
+  const faceMat = mat(0x111111, 0x000000, 0);
+  addBox(head, 0.16, 0.14, 0.04, faceMat, 0.42, -0.18, 0.38);
+  addBox(head, 0.16, 0.14, 0.04, faceMat, 0.42, 0.18, 0.38);
+  addBox(head, 0.22, 0.06, 0.04, faceMat, 0.28, 0, 0.39);
 
   const ex = def.extras || [];
   if (ex.includes("red_eyes") || ex.includes("red_eye")) {
@@ -298,7 +302,7 @@ export function buildForsakenCharacter(def, scale = 1) {
     rightArm,
     weapon,
     baseTorsoY: torsoY * s,
-    baseHeadY: 2.0 * s,
+    baseHeadY: 1.72 * s,
   };
   root.traverse((c) => {
     if (c.isMesh) {
