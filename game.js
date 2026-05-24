@@ -16,7 +16,7 @@ import {
   ITEM_DEFS, addInventoryItem, useInventoryItem,
   getActiveInventoryList, getPassiveList, applyPassive,
 } from "./inventory.js";
-import { initAudioEngine, playSfx, bindAudioUnlock } from "./audio.js";
+import { initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings, setAudioSettings, resetAudioSettings, applyAudioSettings } from "./audio.js";
 import {
   generateMissionQuestion, spawnMissionStations, buildMissionMeshes, tickMissionGlow,
 } from "./missions.js";
@@ -30,7 +30,7 @@ import {
   initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults,
   syncTouchButtonBindings, updateTouchSkillLabels, updateTouchAbilityCooldowns,
   syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
-  updateTouchAttackVisibility,
+  updateTouchAttackVisibility, bindMobileAudioElement,
 } from "./touchControls.js";
 import { initMenuWizard, showCoopMobileWarn, initPerfTipModal } from "./menuUI.js";
 
@@ -151,11 +151,14 @@ const clickPrompt = document.getElementById("clickPrompt");
 const minimapCanvas = document.getElementById("minimap");
 const abilityBar = document.getElementById("abilityBar");
 
+let spectateIndex = 0;
+
 let musicEl;
 function initAudio() {
+  loadAudioSettings();
   musicEl = new Audio("assets/music.mp3");
   musicEl.loop = true;
-  musicEl.volume = 0.16;
+  applyAudioSettings(musicEl);
 }
 
 const combatCallbacks = {
@@ -475,11 +478,14 @@ function initMenu() {
   document.getElementById("btnSaveControls").onclick = () => saveSettingsFromUI();
   document.getElementById("btnResetControls").onclick = () => {
     resetBindings();
+    resetAudioSettings(musicEl);
     renderSettingsForm();
     syncTouchButtonBindings(getBindings);
   };
   document.getElementById("btnResume")?.addEventListener("click", () => togglePause());
   document.getElementById("btnQuitMenu")?.addEventListener("click", () => returnToMenu());
+  document.getElementById("btnSpectatePrev")?.addEventListener("click", () => cycleSpectate(-1));
+  document.getElementById("btnSpectateNext")?.addEventListener("click", () => cycleSpectate(1));
   document.getElementById("btnCloseQuiz")?.addEventListener("click", () => closeMathQuiz());
   document.getElementById("btnRefreshQuiz")?.addEventListener("click", () => {
     if (activeQuiz) renderQuizQuestion(activeQuiz);
@@ -603,15 +609,78 @@ function updatePlayUiLayout() {
   if (inv) inv.classList.toggle("layout-left", kh && playing);
 }
 
+function getHumanSurvivor() {
+  return survivors.find((s) => !s.isAI && s.profile === "p1")
+    || survivors.find((s) => !s.isAI);
+}
+
+function isSpectating() {
+  if (playAsKiller || gameMode === "versus" || gameState !== "play") return false;
+  const human = getHumanSurvivor();
+  return !!(human && human.caught);
+}
+
+function getSpectateTargets() {
+  return getAliveSurvivors();
+}
+
+function getCameraFocus() {
+  if (isSpectating()) {
+    const targets = getSpectateTargets();
+    if (targets.length) {
+      spectateIndex = ((spectateIndex % targets.length) + targets.length) % targets.length;
+      return targets[spectateIndex];
+    }
+  }
+  return getHumanFocus();
+}
+
+function cycleSpectate(dir) {
+  const targets = getSpectateTargets();
+  if (!targets.length) return;
+  spectateIndex = (spectateIndex + dir + targets.length) % targets.length;
+  const focus = getCameraFocus();
+  if (focus?.yaw != null) camYaw = focus.yaw;
+  updateSpectateBanner();
+  playSfx("ui", 0.08);
+}
+
+function updateSpectateBanner() {
+  const banner = document.getElementById("spectateBanner");
+  const label = document.getElementById("spectateLabel");
+  const focus = getCameraFocus();
+  if (!banner || !label) return;
+  if (!isSpectating() || !focus) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  const idx = getSpectateTargets().indexOf(focus);
+  const total = getSpectateTargets().length;
+  label.textContent = `觀戰：${focus.charDef?.name || "倖存者"}${total > 1 ? ` (${idx + 1}/${total})` : ""}`;
+}
+
+function syncSpectateUi() {
+  const on = isSpectating();
+  document.body.classList.toggle("spectating", on);
+  updateSpectateBanner();
+  const hint = document.getElementById("hudEscHint");
+  if (hint && on) {
+    hint.textContent = "觀戰模式 · [ ] 或 ← → 切換視角 · ESC 暫停";
+  } else if (hint && gameState === "play") {
+    hint.textContent = isTouchUiEnabled()
+      ? "右上暫停 · 回主選單"
+      : "按 ESC 暫停 · 回主選單";
+  }
+}
+
 function getHumanFocus() {
   if (playAsKiller) {
     return killers.find((k) => !k.isAI) || killers[0];
   }
-  return (
-    survivors.find((s) => s.profile === "p1" && !s.caught) ||
-    survivors.find((s) => !s.caught) ||
-    survivors[0]
-  );
+  const human = getHumanSurvivor();
+  if (human) return human.caught ? null : human;
+  return survivors.find((s) => !s.caught) || survivors[0];
 }
 
 function returnToMenu() {
@@ -632,7 +701,7 @@ function returnToMenu() {
   document.exitPointerLock?.();
   clearVfxPool();
   document.getElementById("hudEscHint")?.classList.remove("show");
-  document.body.classList.remove("keyhunt-play", "keyhunt-has-keys");
+  document.body.classList.remove("keyhunt-play", "keyhunt-has-keys", "spectating");
   refreshMenuForMode();
 }
 
@@ -648,6 +717,9 @@ function closeSettings() {
 function renderSettingsForm() {
   const form = document.getElementById("controlsForm");
   const b = getBindings();
+  const audio = getAudioSettings();
+  const musicPct = Math.round((audio.music ?? 0.28) * 100);
+  const sfxPct = Math.round((audio.sfx ?? 1) * 100);
   const profiles = [
     { id: "p1", name: "玩家 1（倖存者）" },
     { id: "p2", name: "玩家 2（合作倖存者）" },
@@ -658,7 +730,23 @@ function renderSettingsForm() {
     ["sprint", "衝刺"], ["jump", "跳躍"], ["slide", "滑壘 Ctrl"], ["ab1", "招式 Q/1"], ["ab2", "招式 E/2"], ["ab3", "招式 F/3"],
     ["zoomIn", "視角拉近 Z"], ["zoomOut", "視角拉遠 X"],
   ];
-  form.innerHTML = profiles
+  form.innerHTML = `
+    <div class="bind-section audio-section">
+      <h4>音量</h4>
+      <label class="vol-row">背景音樂
+        <span class="vol-control">
+          <input type="range" id="setMusicVol" min="0" max="100" value="${musicPct}" />
+          <span id="setMusicVolVal">${musicPct}%</span>
+        </span>
+      </label>
+      <label class="vol-row">音效
+        <span class="vol-control">
+          <input type="range" id="setSfxVol" min="0" max="100" value="${sfxPct}" />
+          <span id="setSfxVolVal">${sfxPct}%</span>
+        </span>
+      </label>
+    </div>
+    ${profiles
     .map(
       (pr) => `
     <div class="bind-section"><h4>${pr.name}</h4>
@@ -674,7 +762,24 @@ function renderSettingsForm() {
       .join("")}
     </div>`
     )
-    .join("");
+    .join("")}`;
+
+  const syncVolLabels = () => {
+    const mv = document.getElementById("setMusicVol");
+    const sv = document.getElementById("setSfxVol");
+    const mvl = document.getElementById("setMusicVolVal");
+    const svl = document.getElementById("setSfxVolVal");
+    if (mvl && mv) mvl.textContent = `${mv.value}%`;
+    if (svl && sv) svl.textContent = `${sv.value}%`;
+  };
+  document.getElementById("setMusicVol")?.addEventListener("input", (e) => {
+    setAudioSettings({ music: Number(e.target.value) / 100 }, musicEl);
+    syncVolLabels();
+  });
+  document.getElementById("setSfxVol")?.addEventListener("input", (e) => {
+    setAudioSettings({ sfx: Number(e.target.value) / 100 }, musicEl);
+    syncVolLabels();
+  });
 
   form.querySelectorAll(".bind-btn").forEach((btn) => {
     btn.onclick = () => {
@@ -691,6 +796,14 @@ function renderSettingsForm() {
 }
 
 function saveSettingsFromUI() {
+  const mv = document.getElementById("setMusicVol");
+  const sv = document.getElementById("setSfxVol");
+  if (mv || sv) {
+    setAudioSettings({
+      music: Number(mv?.value ?? 28) / 100,
+      sfx: Number(sv?.value ?? 100) / 100,
+    }, musicEl);
+  }
   saveBindings();
   syncTouchButtonBindings(getBindings);
   closeSettings();
@@ -814,19 +927,20 @@ function catchSurvivor(target, killer, reason = "近身抓住") {
   target.caught = true;
   target.vel = { x: 0, z: 0 };
   target.velY = 0;
-  if (target.mesh) {
-    target.mesh.traverse((c) => {
-      if (c.material) {
-        c.material.transparent = true;
-        c.material.opacity = 0.25;
-      }
-    });
-  }
+  if (target.mesh) target.mesh.visible = false;
   playSfx("catch");
   spawnHitVfx(scene, target.pos.x, target.pos.z);
   killerTimer += KILLER_TIME_CATCH_BONUS;
   gameApi.showAbilityToast?.(killer, `抓住了 ${target.charDef.name}！+${KILLER_TIME_CATCH_BONUS}s`);
+  const human = getHumanSurvivor();
   checkMatchEnd(`${killer.charDef.name} ${reason}了 ${target.charDef.name}！`);
+  if (target === human && gameState === "play" && getSpectateTargets().length > 0) {
+    spectateIndex = 0;
+    const watch = getCameraFocus();
+    if (watch?.yaw != null) camYaw = watch.yaw;
+    showToast("你已陣亡 · 進入觀戰模式 · [ ] 切換視角", 2400);
+    syncSpectateUi();
+  }
 }
 
 function spawnDamageNumber(wx, wz, amount) {
@@ -1566,6 +1680,8 @@ async function runStartGame() {
   animTime = 0;
   hasMoved = false;
   frameCount = 0;
+  spectateIndex = 0;
+  document.body.classList.remove("spectating");
   camDist = 11;
   projectiles = [];
   minions = [];
@@ -1981,6 +2097,18 @@ function setupInput() {
       }
       return;
     }
+    if (gameState === "play" && isSpectating()) {
+      if (e.code === "BracketLeft" || e.code === "ArrowLeft") {
+        e.preventDefault();
+        cycleSpectate(-1);
+        return;
+      }
+      if (e.code === "BracketRight" || e.code === "ArrowRight") {
+        e.preventDefault();
+        cycleSpectate(1);
+        return;
+      }
+    }
     if (gameState === "play" && BLOCK_KEYS.has(e.code)) e.preventDefault();
     keys[e.code] = true;
 
@@ -2130,7 +2258,7 @@ function handleAbilityKeys(code, down) {
     "solo", "coop", "versus", "mob", "hardcore", "practice",
   ]);
   for (const s of survivors) {
-    if (!s.isAI && !playAsKiller && survivorModes.has(gameMode)) {
+    if (!s.isAI && !s.caught && !playAsKiller && survivorModes.has(gameMode)) {
       tryProfile(s, s.profile === "p2" ? "p2" : "p1");
     }
   }
@@ -2733,7 +2861,7 @@ function updateMinions(dt) {
 }
 
 function isCoopSplitView() {
-  return gameMode === "coop" && !playAsKiller && gameState === "play";
+  return gameMode === "coop" && !playAsKiller && gameState === "play" && !isSpectating();
 }
 
 function ensureCoopCamera() {
@@ -2754,14 +2882,14 @@ function updateCameraForPlayer(cam, focus, yaw, pitch) {
 }
 
 function snapCameraToPlayer() {
-  const focus = getHumanFocus();
+  const focus = getCameraFocus();
   if (!focus || !camera) return;
   updateCameraForPlayer(camera, focus, camYaw, camPitch);
 }
 
 function updateCamera() {
   if (isCoopSplitView()) return;
-  const focus = getHumanFocus();
+  const focus = getCameraFocus();
   if (!focus || !camera) return;
   updateCameraForPlayer(camera, focus, camYaw, camPitch);
 }
@@ -2895,11 +3023,11 @@ function drawMinimap() {
   });
 
   const colors = ["#ffdd44", "#44ddff"];
-  const human = getHumanFocus();
+  const human = getCameraFocus();
   survivors.forEach((s, i) => {
     if (s.caught) return;
     const [px, py] = toMap(s.pos.x, s.pos.z);
-    const isYou = s === human || (s.profile === "p1" && !s.isAI);
+    const isYou = s === human || (!isSpectating() && s.profile === "p1" && !s.isAI);
     ctx2.fillStyle = colors[i] || "#fff";
     ctx2.beginPath();
     ctx2.arc(px, py, isYou ? 4 : 3, 0, Math.PI * 2);
@@ -2934,7 +3062,8 @@ function drawMinimap() {
 }
 
 function updateHUD() {
-  const focus = getHumanFocus();
+  syncSpectateUi();
+  const focus = isSpectating() ? getCameraFocus() : getHumanFocus();
   if (!focus || !exitPos) return;
 
   const hp = Math.round(focus.hp ?? 100);
@@ -3173,6 +3302,7 @@ function loop(now) {
 
 function boot() {
   initAudio();
+  bindMobileAudioElement(musicEl);
   bindAudioUnlock();
   initMenu();
   try {

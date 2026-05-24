@@ -671,6 +671,46 @@
       border: 1px solid #554466; color: #eeddff;
       border-radius: 4px; cursor: pointer; min-width: 48px;
     }
+    .audio-section .vol-row {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; margin-bottom: 10px;
+    }
+    .audio-section .vol-control {
+      display: flex; align-items: center; gap: 8px; min-width: 180px;
+    }
+    .audio-section input[type="range"] { width: 140px; accent-color: #ff8899; }
+    .audio-section .vol-control span { min-width: 38px; text-align: right; color: #ccb8e8; font-size: 0.78rem; }
+    #spectateBanner {
+      position: fixed;
+      top: max(46px, calc(42px + env(safe-area-inset-top, 0px)));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 28;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: #0c0814e6;
+      border: 1px solid #8866cc;
+      border-radius: 999px;
+      color: #ddccff;
+      font-size: 0.82rem;
+      pointer-events: auto;
+      box-shadow: 0 0 16px #6644aa44;
+    }
+    #spectateBanner[hidden] { display: none !important; }
+    #spectateBanner .spectate-eye { font-size: 1rem; }
+    #spectateBanner button {
+      width: 28px; height: 28px; padding: 0;
+      background: #221830; color: #eeddff;
+      border: 1px solid #665588; border-radius: 6px;
+      cursor: pointer; font-size: 1.1rem; line-height: 1;
+    }
+    body.spectating #touchControls,
+    body.spectating #abilityBar,
+    body.spectating #inventoryBar,
+    body.spectating #keyHuntBar { display: none !important; }
+    body.spectating #hud .hud-block { opacity: 0.85; }
     #abilityBar {
       position: fixed; bottom: 48px; left: 50%;
       transform: translateX(-50%);
@@ -1935,6 +1975,12 @@
       <label for="mobileStickDead">搖桿死區</label>
       <div class="mobile-settings-val" id="mobileStickDeadVal">22%</div>
       <input type="range" id="mobileStickDead" min="12" max="38" value="22" step="1" />
+      <label for="mobileMusicVol">背景音樂</label>
+      <div class="mobile-settings-val" id="mobileMusicVolVal">28%</div>
+      <input type="range" id="mobileMusicVol" min="0" max="100" value="28" step="1" />
+      <label for="mobileSfxVol">音效</label>
+      <div class="mobile-settings-val" id="mobileSfxVolVal">100%</div>
+      <input type="range" id="mobileSfxVol" min="0" max="100" value="100" step="1" />
       <p class="mobile-settings-hint">任務：走近發電站 → 技2 會變「任務」，點擊答題</p>
       <div class="modal-actions">
         <button type="button" id="btnResetMobileSettings">還原</button>
@@ -1977,7 +2023,7 @@
 
   <div id="settingsPanel">
     <div class="settings-inner">
-      <h2 style="color:#ff6688;margin-bottom:12px">按鍵／手把設定</h2>
+      <h2 style="color:#ff6688;margin-bottom:12px">按鍵／音量設定</h2>
       <p style="font-size:0.8rem;color:#8878a0;margin-bottom:16px">
         單人預設：WASD + 滑鼠 + Q E F。手把：插上手把後自動偵測（玩家1=手把0，玩家2=手把1）。
       </p>
@@ -1993,6 +2039,12 @@
   <p id="immersiveHint" hidden aria-live="polite">iOS：請用 Safari「分享 → 加入主畫面」，從主畫面圖示開啟可真正全螢幕</p>
   <div id="designerCreditHud">遊戲設計 by MrBill</div>
   <div id="hudEscHint">按 ESC 暫停 · 回主選單</div>
+  <div id="spectateBanner" hidden>
+    <span class="spectate-eye" aria-hidden="true">👁</span>
+    <span id="spectateLabel">觀戰模式</span>
+    <button type="button" id="btnSpectatePrev" title="上一個視角" aria-label="上一個視角">‹</button>
+    <button type="button" id="btnSpectateNext" title="下一個視角" aria-label="下一個視角">›</button>
+  </div>
   <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
   <p id="touchMissionBanner" class="touch-only" hidden></p>
   <button type="button" id="btnTouchMission" class="touch-only" hidden>⚡ 解任務</button>

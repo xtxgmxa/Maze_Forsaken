@@ -1,9 +1,52 @@
 /** 程式化音效 — 音量高於背景音樂 */
+const AUDIO_SETTINGS_KEY = "forsaken_audio_v1";
+const DEFAULT_AUDIO = { music: 0.28, sfx: 1.0 };
+
 let actx = null;
 let master = null;
 let sfxBus = null;
 let unlocked = false;
 let lastSfxTime = {};
+let audioSettings = { ...DEFAULT_AUDIO };
+
+export function loadAudioSettings() {
+  audioSettings = { ...DEFAULT_AUDIO };
+  try {
+    const raw = localStorage.getItem(AUDIO_SETTINGS_KEY);
+    if (!raw) return audioSettings;
+    const saved = JSON.parse(raw);
+    if (typeof saved.music === "number") audioSettings.music = saved.music;
+    if (typeof saved.sfx === "number") audioSettings.sfx = saved.sfx;
+  } catch {
+    audioSettings = { ...DEFAULT_AUDIO };
+  }
+  return audioSettings;
+}
+
+export function getAudioSettings() {
+  return audioSettings;
+}
+
+export function applyAudioSettings(musicEl = null) {
+  if (musicEl) musicEl.volume = Math.max(0, Math.min(1, audioSettings.music));
+  if (sfxBus) sfxBus.gain.value = 1.2 * Math.max(0, Math.min(2, audioSettings.sfx));
+}
+
+export function setAudioSettings(partial, musicEl = null) {
+  audioSettings = { ...audioSettings, ...partial };
+  applyAudioSettings(musicEl);
+  try {
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(audioSettings));
+  } catch { /* */ }
+}
+
+export function resetAudioSettings(musicEl = null) {
+  audioSettings = { ...DEFAULT_AUDIO };
+  applyAudioSettings(musicEl);
+  try {
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(audioSettings));
+  } catch { /* */ }
+}
 
 export async function initAudioEngine() {
   try {
@@ -12,8 +55,8 @@ export async function initAudioEngine() {
       master = actx.createGain();
       master.gain.value = 1;
       sfxBus = actx.createGain();
-      sfxBus.gain.value = 1.2;
       sfxBus.connect(master);
+      applyAudioSettings();
       master.connect(actx.destination);
     }
     if (actx.state === "suspended") await actx.resume();

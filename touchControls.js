@@ -1,8 +1,17 @@
 /** 觸控操作（僅在觸控／粗指標裝置啟用，不影響一般電腦滑鼠鍵盤） */
 
+import { getAudioSettings, setAudioSettings, resetAudioSettings } from "./audio.js";
+
 const MOBILE_SETTINGS_KEY = "forsaken_mobile_v1";
 const IMMERSIVE_KEY = "forsaken_immersive_v1";
 const DEFAULT_MOBILE = { lookSens: 165, stickDead: 22 };
+
+let musicElRef = null;
+
+export function bindMobileAudioElement(el) {
+  musicElRef = el;
+}
+
 let missionHighlight = false;
 let immersiveMode = false;
 let tabletTouch = false;
@@ -262,8 +271,13 @@ export function openMobileSettingsPanel() {
   if (!panel) return;
   const sens = document.getElementById("mobileLookSens");
   const dead = document.getElementById("mobileStickDead");
+  const music = document.getElementById("mobileMusicVol");
+  const sfx = document.getElementById("mobileSfxVol");
+  const audio = getAudioSettings();
   if (sens) sens.value = String(mobileSettings.lookSens ?? DEFAULT_MOBILE.lookSens);
   if (dead) dead.value = String(mobileSettings.stickDead ?? DEFAULT_MOBILE.stickDead);
+  if (music) music.value = String(Math.round((audio.music ?? 0.28) * 100));
+  if (sfx) sfx.value = String(Math.round((audio.sfx ?? 1) * 100));
   syncMobileSettingsLabels();
   panel.classList.add("show");
 }
@@ -275,10 +289,16 @@ export function closeMobileSettingsPanel() {
 function syncMobileSettingsLabels() {
   const sens = document.getElementById("mobileLookSens");
   const dead = document.getElementById("mobileStickDead");
+  const music = document.getElementById("mobileMusicVol");
+  const sfx = document.getElementById("mobileSfxVol");
   const sensVal = document.getElementById("mobileLookSensVal");
   const deadVal = document.getElementById("mobileStickDeadVal");
+  const musicVal = document.getElementById("mobileMusicVolVal");
+  const sfxVal = document.getElementById("mobileSfxVolVal");
   if (sensVal && sens) sensVal.textContent = `${(Number(sens.value) / 100).toFixed(2)}×`;
   if (deadVal && dead) deadVal.textContent = `${Number(dead.value)}%`;
+  if (musicVal && music) musicVal.textContent = `${music.value}%`;
+  if (sfxVal && sfx) sfxVal.textContent = `${sfx.value}%`;
 }
 
 export function initMobileSettingsUI() {
@@ -288,16 +308,24 @@ export function initMobileSettingsUI() {
   const panel = document.getElementById("mobileSettingsPanel");
   const sens = document.getElementById("mobileLookSens");
   const dead = document.getElementById("mobileStickDead");
+  const music = document.getElementById("mobileMusicVol");
+  const sfx = document.getElementById("mobileSfxVol");
 
   const apply = () => {
     mobileSettings.lookSens = Number(sens?.value ?? DEFAULT_MOBILE.lookSens);
     mobileSettings.stickDead = Number(dead?.value ?? DEFAULT_MOBILE.stickDead);
     saveMobileSettings();
+    setAudioSettings({
+      music: Number(music?.value ?? 28) / 100,
+      sfx: Number(sfx?.value ?? 100) / 100,
+    }, musicElRef);
     syncMobileSettingsLabels();
   };
 
   sens?.addEventListener("input", apply);
   dead?.addEventListener("input", apply);
+  music?.addEventListener("input", apply);
+  sfx?.addEventListener("input", apply);
 
   document.getElementById("btnCloseMobileSettings")?.addEventListener("click", () => {
     apply();
@@ -322,8 +350,12 @@ export function initMobileSettingsUI() {
   document.getElementById("btnResetMobileSettings")?.addEventListener("click", () => {
     mobileSettings = { ...DEFAULT_MOBILE };
     saveMobileSettings();
+    resetAudioSettings(musicElRef);
+    const audio = getAudioSettings();
     if (sens) sens.value = String(DEFAULT_MOBILE.lookSens);
     if (dead) dead.value = String(DEFAULT_MOBILE.stickDead);
+    if (music) music.value = String(Math.round(audio.music * 100));
+    if (sfx) sfx.value = String(Math.round(audio.sfx * 100));
     syncMobileSettingsLabels();
   });
   panel?.addEventListener("click", (e) => {
