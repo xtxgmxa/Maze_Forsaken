@@ -353,6 +353,13 @@ function refreshMenuForMode() {
   const killerGridLabel = document.getElementById("killerGridLabel");
   if (killerGridLabel) killerGridLabel.style.display = noKiller ? "none" : "";
 
+  if (noKiller) {
+    playerRole = "survivor";
+    const roleEl = document.getElementById("playerRole");
+    if (roleEl) roleEl.value = "survivor";
+    updatePickRoleLabel();
+  }
+
   rebuildLevelGrid();
   refreshRoleUI();
   checkMenuUiConsistency();
@@ -507,6 +514,7 @@ function initMenu() {
   }
 
   const togglePickRole = () => {
+    if (isKeyHuntMode() || isPlatformerMode()) return;
     const sel = document.getElementById("playerRole");
     if (!sel) return;
     sel.value = sel.value === "killer" ? "survivor" : "killer";
@@ -658,20 +666,70 @@ function updateSpectateBanner() {
   const idx = getSpectateTargets().indexOf(focus);
   const total = getSpectateTargets().length;
   label.textContent = `觀戰：${focus.charDef?.name || "倖存者"}${total > 1 ? ` (${idx + 1}/${total})` : ""}`;
+  const sub = document.getElementById("spectateHint");
+  if (sub) {
+    sub.textContent = total > 1
+      ? (isTouchUiEnabled() ? "點 ‹ › 切換視角" : "[ ] 或 ← → 切換視角")
+      : "觀戰中 · ESC 暫停";
+  }
 }
 
 function syncSpectateUi() {
   const on = isSpectating();
   document.body.classList.toggle("spectating", on);
   updateSpectateBanner();
-  const hint = document.getElementById("hudEscHint");
-  if (hint && on) {
-    hint.textContent = "觀戰模式 · [ ] 或 ← → 切換視角 · ESC 暫停";
-  } else if (hint && gameState === "play") {
-    hint.textContent = isTouchUiEnabled()
-      ? "右上暫停 · 回主選單"
-      : "按 ESC 暫停 · 回主選單";
+}
+
+function getNearestKiller(s) {
+  let best = null;
+  let bestD = Infinity;
+  for (const k of killers) {
+    const d = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
+    if (d < bestD) { bestD = d; best = k; }
   }
+  return { killer: best, dist: bestD };
+}
+
+function aiSurvivorIndex(s) {
+  const alive = getAliveSurvivors();
+  const idx = alive.indexOf(s);
+  return idx >= 0 ? idx : 0;
+}
+
+function pickAiRoamTarget(s) {
+  const seed = String(s.profile || s.charDef?.id || "ai")
+    .split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const gx = 1 + ((seed * 13 + Math.floor(elapsed * 0.4)) % Math.max(1, ctx.w - 2));
+  const gz = 1 + ((seed * 17 + Math.floor(elapsed * 0.27)) % Math.max(1, ctx.h - 2));
+  const c = cellCenter(ctx, gx, gz);
+  return { x: c.x, z: c.z };
+}
+
+function aiSpreadGoal(s, baseX, baseZ, ring = 11) {
+  const n = Math.max(1, getAliveSurvivors().length);
+  const idx = aiSurvivorIndex(s);
+  const angle = (idx / n) * Math.PI * 2 + elapsed * 0.08;
+  return {
+    x: baseX + Math.cos(angle) * ring,
+    z: baseZ + Math.sin(angle) * ring,
+  };
+}
+
+function aiSeparationBias(s) {
+  let sx = 0;
+  let sz = 0;
+  for (const other of survivors) {
+    if (other === s || other.caught) continue;
+    const dx = s.pos.x - other.pos.x;
+    const dz = s.pos.z - other.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 5 && d > 0.05) {
+      const push = (5 - d) * 0.45;
+      sx += (dx / d) * push;
+      sz += (dz / d) * push;
+    }
+  }
+  return { x: sx, z: sz };
 }
 
 function getHumanFocus() {
@@ -1700,8 +1758,15 @@ async function runStartGame() {
   if (gameMode === "hardcore") matchTimeSeconds = Math.min(matchTimeSeconds, 150);
   if (isKeyHuntMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 300);
   if (isPlatformerMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 240);
-  playerRole = document.getElementById("playerRole")?.value || "survivor";
-  playAsKiller = playerRole === "killer" && gameMode === "solo" && !isKeyHuntMode();
+  if (isKeyHuntMode() || isPlatformerMode()) {
+    playerRole = "survivor";
+    const roleEl = document.getElementById("playerRole");
+    if (roleEl) roleEl.value = "survivor";
+  } else {
+    playerRole = document.getElementById("playerRole")?.value || "survivor";
+  }
+  playAsKiller = playerRole === "killer" && gameMode === "solo"
+    && !isKeyHuntMode() && !isPlatformerMode();
   matchHumanRole = gameMode === "versus" ? "killer" : playAsKiller ? "killer" : "survivor";
   keyHuntState = null;
   keyHuntGroup = null;
@@ -2542,17 +2607,47 @@ function updateAISurvivor(s, dt) {
     updateAISurvivorPlatformer(s, dt);
     return;
   }
-  const k = killers[0];
+  const { killer: k, dist: distK } = getNearestKiller(s);
   if (!k) return;
-  const distK = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
-  let tx = exitPos.x;
-  let tz = exitPos.z;
-  if (distK < 14) {
-    tx = s.pos.x + (s.pos.x - k.pos.x) * 2;
-    tz = s.pos.z + (s.pos.z - k.pos.z) * 2;
+
+  let tx;
+  let tz;
+  const survivalMode = !usesExitWin();
+
+  if (s._aiRoamTimer == null) s._aiRoamTimer = 0;
+
+  if (distK < 15) {
+    tx = s.pos.x + (s.pos.x - k.pos.x) * 2.5;
+    tz = s.pos.z + (s.pos.z - k.pos.z) * 2.5;
+    s._aiRoamTimer = 0;
+  } else if (survivalMode) {
+    s._aiRoamTimer -= dt;
+    if (!s._aiRoam || s._aiRoamTimer <= 0
+      || Math.hypot(s.pos.x - s._aiRoam.x, s.pos.z - s._aiRoam.z) < 4) {
+      s._aiRoam = pickAiRoamTarget(s);
+      s._aiRoamTimer = 7 + (aiSurvivorIndex(s) % 4) * 2;
+    }
+    tx = s._aiRoam.x;
+    tz = s._aiRoam.z;
+  } else {
+    const distExit = Math.hypot(s.pos.x - exitPos.x, s.pos.z - exitPos.z);
+    if (distExit > 14) {
+      const spread = aiSpreadGoal(s, exitPos.x, exitPos.z, 10 + (aiSurvivorIndex(s) % 3) * 3);
+      tx = spread.x;
+      tz = spread.z;
+    } else {
+      tx = exitPos.x;
+      tz = exitPos.z;
+    }
   }
+
+  const sep = aiSeparationBias(s);
+  tx += sep.x * 3;
+  tz += sep.z * 3;
+
   const step = bfsNextStep(ctx, maze, s.pos.x, s.pos.z, tx, tz);
-  let mx = 0, mz = 0;
+  let mx = 0;
+  let mz = 0;
   if (step) {
     mx = step.x - s.pos.x;
     mz = step.z - s.pos.z;
@@ -2561,7 +2656,7 @@ function updateAISurvivor(s, dt) {
     mz = tz - s.pos.z;
   }
   const len = Math.hypot(mx, mz) || 1;
-  const sprint = distK < 11 && s.sprintMeter > 15;
+  const sprint = distK < 12 && s.sprintMeter > 15;
   updateEntity(s, dt, { x: mx / len, z: mz / len, sprint });
   const abChance = perfTier === "low" ? 0.00035 : perfTier === "med" ? 0.0008 : 0.0015;
   if (Math.random() < abChance) tryAbility(s, Math.floor(Math.random() * 3), ctx, gameApi);

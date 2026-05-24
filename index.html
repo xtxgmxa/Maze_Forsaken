@@ -682,24 +682,35 @@
     .audio-section .vol-control span { min-width: 38px; text-align: right; color: #ccb8e8; font-size: 0.78rem; }
     #spectateBanner {
       position: fixed;
-      top: max(46px, calc(42px + env(safe-area-inset-top, 0px)));
+      top: auto;
       left: 50%;
+      bottom: max(78px, calc(72px + env(safe-area-inset-bottom, 0px)));
       transform: translateX(-50%);
       z-index: 28;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
+      justify-content: center;
+      gap: 6px 8px;
+      padding: 8px 14px;
       background: #0c0814e6;
       border: 1px solid #8866cc;
-      border-radius: 999px;
+      border-radius: 12px;
       color: #ddccff;
       font-size: 0.82rem;
       pointer-events: auto;
       box-shadow: 0 0 16px #6644aa44;
+      max-width: min(92vw, 420px);
     }
     #spectateBanner[hidden] { display: none !important; }
     #spectateBanner .spectate-eye { font-size: 1rem; }
+    #spectateBanner .spectate-hint {
+      flex: 0 0 100%;
+      text-align: center;
+      font-size: 0.72rem;
+      color: #aa99cc;
+      margin-top: 2px;
+    }
     #spectateBanner button {
       width: 28px; height: 28px; padding: 0;
       background: #221830; color: #eeddff;
@@ -711,6 +722,9 @@
     body.spectating #inventoryBar,
     body.spectating #keyHuntBar { display: none !important; }
     body.spectating #hud .hud-block { opacity: 0.85; }
+    body.spectating #spectateBanner {
+      bottom: max(22px, calc(18px + env(safe-area-inset-bottom, 0px)));
+    }
     #abilityBar {
       position: fixed; bottom: 48px; left: 50%;
       transform: translateX(-50%);
@@ -2044,6 +2058,7 @@
     <span id="spectateLabel">觀戰模式</span>
     <button type="button" id="btnSpectatePrev" title="上一個視角" aria-label="上一個視角">‹</button>
     <button type="button" id="btnSpectateNext" title="下一個視角" aria-label="下一個視角">›</button>
+    <span id="spectateHint" class="spectate-hint">[ ] 或 ← → 切換視角</span>
   </div>
   <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
   <p id="touchMissionBanner" class="touch-only" hidden></p>
