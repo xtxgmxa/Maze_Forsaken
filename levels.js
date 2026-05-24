@@ -38,7 +38,7 @@ export const LEVELS = [
 
     w: 11, h: 11, cellSize: 9, killerSpeed: 8.5,
 
-    fogNear: 35, fogFar: 120, loops: 4, teleporters: 1, items: 5,
+    fogNear: 35, fogFar: 120, loops: 4, teleporters: 1, items: 5, bouncePads: 3,
 
     killerCount: 1, survivorSlots: 1, missions: 6,
 
@@ -199,12 +199,51 @@ export const PLATFORMER_LEVELS = [
     enemies: 11, fires: 8, rocks: 6, oneWays: 5, items: 8, missions: 8, killerCount: 0 },
 ];
 
-export const ALL_LEVELS = [...LEVELS, ...KEY_HUNT_LEVELS, ...PLATFORMER_LEVELS];
+/** 解題闖關 — 連鎖謎題門，答對才開，無獵人 */
+export const PUZZLE_LEVELS = [
+  { id: 301, name: "謎門試煉", desc: "15×15 · 10 謎題門 · 三層平台", category: "puzzle",
+    w: 15, h: 15, cellSize: 10, fogNear: 48, fogFar: 165, loops: 22,
+    puzzleDoors: 10, bouncePads: 5, teleporters: 2, items: 5, missions: 0, killerCount: 0 },
+  { id: 302, name: "迴廊密碼", desc: "19×19 · 12 謎題門 · 天橋路線", category: "puzzle",
+    w: 19, h: 19, cellSize: 10, fogNear: 55, fogFar: 185, loops: 28,
+    puzzleDoors: 12, bouncePads: 6, teleporters: 2, items: 6, missions: 0, killerCount: 0 },
+  { id: 303, name: "雙層迷城", desc: "23×23 · 14 謎題門 · 彈跳捷徑", category: "puzzle",
+    w: 23, h: 23, cellSize: 10, fogNear: 58, fogFar: 200, loops: 32,
+    puzzleDoors: 14, bouncePads: 7, teleporters: 3, items: 7, missions: 0, killerCount: 0 },
+  { id: 304, name: "終極闖關", desc: "25×25 · 16 謎題門 · 多層迷宮", category: "puzzle",
+    w: 25, h: 25, cellSize: 10, fogNear: 62, fogFar: 215, loops: 36,
+    puzzleDoors: 16, bouncePads: 8, teleporters: 3, items: 8, missions: 0, killerCount: 0 },
+  { id: 305, name: "高塔迴廊", desc: "27×27 · 18 謎題門 · 三樓平台", category: "puzzle",
+    w: 27, h: 27, cellSize: 10, fogNear: 65, fogFar: 225, loops: 40,
+    puzzleDoors: 18, bouncePads: 9, teleporters: 4, items: 9, missions: 0, killerCount: 0 },
+  { id: 306, name: "天空迷城", desc: "29×29 · 20 謎題門 · 彈跳跨層", category: "puzzle",
+    w: 29, h: 29, cellSize: 10, fogNear: 68, fogFar: 240, loops: 44,
+    puzzleDoors: 20, bouncePads: 10, teleporters: 4, items: 10, missions: 0, killerCount: 0 },
+];
+
+/** 槍戰 — 職業對戰、十字準心射擊 */
+export const SHOOTER_LEVELS = [
+  { id: 401, name: "競技場", desc: "17×17 開闊競技 · 1/2/3 換槍", category: "shooter",
+    mapStyle: "arena", mapSeed: 40101, themeId: 4,
+    w: 17, h: 17, cellSize: 10, fogNear: 50, fogFar: 175, loops: 22,
+    shooterKills: 10, bouncePads: 2, teleporters: 0, items: 0, missions: 0, killerCount: 0 },
+  { id: 402, name: "貨櫃碼頭", desc: "21×21 貨櫃掩體 · 碼頭色調", category: "shooter",
+    mapStyle: "dock", mapSeed: 40202, themeId: 2,
+    w: 21, h: 21, cellSize: 10, fogNear: 55, fogFar: 195, loops: 28,
+    shooterKills: 12, bouncePads: 2, teleporters: 0, items: 0, missions: 0, killerCount: 0 },
+  { id: 403, name: "天空擂台", desc: "25×25 高台對射 · 霓虹天空", category: "shooter",
+    mapStyle: "sky", mapSeed: 40303, themeId: 7,
+    w: 25, h: 25, cellSize: 10, fogNear: 60, fogFar: 220, loops: 34,
+    shooterKills: 15, bouncePads: 3, teleporters: 0, items: 0, missions: 0, killerCount: 0 },
+];
+
+export const ALL_LEVELS = [...LEVELS, ...KEY_HUNT_LEVELS, ...PLATFORMER_LEVELS, ...PUZZLE_LEVELS, ...SHOOTER_LEVELS];
 
 export function getLevelTheme(level) {
-
+  if (level.themeId != null) {
+    return LEVEL_THEMES[level.themeId % LEVEL_THEMES.length];
+  }
   return LEVEL_THEMES[(level.id - 1) % LEVEL_THEMES.length];
-
 }
 
 

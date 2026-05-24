@@ -300,5 +300,11 @@ export function buildForsakenCharacter(def, scale = 1) {
     baseTorsoY: torsoY * s,
     baseHeadY: 2.0 * s,
   };
+  root.traverse((c) => {
+    if (c.isMesh) {
+      c.castShadow = true;
+      c.receiveShadow = true;
+    }
+  });
   return root;
 }

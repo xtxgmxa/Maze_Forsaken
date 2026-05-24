@@ -111,7 +111,11 @@ const SFX = {
   jump: () => tone(380, 0.1, "sine", 0.22),
   mission: () => { tone(523, 0.1, "sine", 0.24); tone(784, 0.16, "sine", 0.22); tone(988, 0.22, "sine", 0.2); },
   mission_fail: () => { tone(220, 0.16, "square", 0.22); tone(160, 0.22, "sawtooth", 0.18); },
-  projectile: () => tone(520, 0.05, "triangle", 0.2),
+  shoot: () => { noiseBurst(0.05, 0.38); tone(200, 0.05, "square", 0.42); tone(95, 0.08, "sawtooth", 0.28); },
+  shoot_hit: () => { noiseBurst(0.06, 0.45); tone(280, 0.06, "square", 0.48); tone(140, 0.1, "sawtooth", 0.32); },
+  headshot: () => { noiseBurst(0.08, 0.5); tone(520, 0.08, "square", 0.5); tone(260, 0.14, "sawtooth", 0.38); },
+  footstep: () => { noiseBurst(0.035, 0.14); tone(70 + Math.random() * 35, 0.05, "triangle", 0.16); },
+  projectile: () => { tone(520, 0.05, "triangle", 0.2); },
   aoe: () => { noiseBurst(0.1, 0.24); tone(80, 0.22, "sawtooth", 0.24); },
   item: () => { tone(800, 0.1, "sine", 0.22); tone(1000, 0.12, "sine", 0.2); },
   teleport: () => {
@@ -149,16 +153,28 @@ const SFX = {
     tone(95, 0.18, "square", 0.24);
     noiseBurst(0.06, 0.15);
   },
+  kill: () => {
+    noiseBurst(0.1, 0.38);
+    tone(180, 0.06, "square", 0.42);
+    tone(90, 0.14, "sawtooth", 0.4);
+    tone(520, 0.2, "sine", 0.35);
+    tone(780, 0.12, "triangle", 0.28);
+  },
 };
 
 export function playSfx(name, minGap = 0.04) {
   const now = performance.now();
   if (lastSfxTime[name] && now - lastSfxTime[name] < minGap * 1000) return;
   lastSfxTime[name] = now;
-  initAudioEngine().then((ok) => {
-    if (!ok) return;
+  const play = () => {
     try { (SFX[name] || SFX.ui)(); } catch { /* */ }
-  });
+  };
+  if (unlocked && actx) {
+    if (actx.state === "suspended") actx.resume().catch(() => {});
+    play();
+    return;
+  }
+  initAudioEngine().then((ok) => { if (ok) play(); });
 }
 
 export function bindAudioUnlock() {

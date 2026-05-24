@@ -135,7 +135,7 @@ function bindLook(zone) {
   let lastX = 0;
   let lastY = 0;
   zone.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".touch-btn, #touchButtons, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
+    if (e.target.closest(".touch-btn, #touchButtons, #touchShooterBar, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
     const t = e.changedTouches[0];
     if (t.clientX < window.innerWidth * 0.36) return;
     pid = t.identifier;
@@ -171,23 +171,69 @@ function releaseTouchKey(keys, code) {
 }
 
 function bindAttackButton(btn) {
+  let holdTimer = null;
   const fire = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    getCtx().onKillerAttack?.();
+    const ctx = getCtx();
+    if (ctx.isShooterMode?.()) ctx.onShooterFire?.();
+    else ctx.onKillerAttack?.();
     btn.classList.add("pressed");
+    if (ctx.isShooterMode?.()) {
+      holdTimer = setInterval(() => ctx.onShooterFire?.(), 120);
+    }
   };
   const up = (e) => {
     e.preventDefault();
     btn.classList.remove("pressed");
+    if (holdTimer) {
+      clearInterval(holdTimer);
+      holdTimer = null;
+    }
   };
   btn.addEventListener("touchstart", fire, { passive: false });
   btn.addEventListener("touchend", up, { passive: false });
   btn.addEventListener("touchcancel", up, { passive: false });
   btn.addEventListener("click", (e) => {
     e.preventDefault();
-    getCtx().onKillerAttack?.();
+    const ctx = getCtx();
+    if (ctx.isShooterMode?.()) ctx.onShooterFire?.();
+    else ctx.onKillerAttack?.();
   });
+}
+
+function bindShooterTouchUi() {
+  for (let slot = 1; slot <= 4; slot++) {
+    const btn = document.getElementById(`touchGun${slot}`);
+    if (!btn) continue;
+    const pick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      getCtx().onShooterWeapon?.(slot);
+      updateTouchGunHighlight(slot);
+    };
+    btn.addEventListener("touchstart", pick, { passive: false });
+    btn.addEventListener("click", pick);
+  }
+  const scope = document.getElementById("touchScope");
+  if (scope) {
+    const toggle = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      getCtx().onShooterScope?.();
+    };
+    scope.addEventListener("touchstart", toggle, { passive: false });
+    scope.addEventListener("click", toggle);
+  }
+}
+
+export function updateTouchGunHighlight(activeSlot = 2) {
+  for (let slot = 1; slot <= 4; slot++) {
+    const btn = document.getElementById(`touchGun${slot}`);
+    if (btn) btn.classList.toggle("active-gun", slot === activeSlot);
+  }
+  const scope = document.getElementById("touchScope");
+  if (scope) scope.classList.toggle("active", !!document.body.classList.contains("shooter-ads"));
 }
 
 function bindButton(btn, keys) {
@@ -246,6 +292,8 @@ export function setTouchMissionHighlight(active) {
   missionHighlight = !!active;
   const ab2 = document.getElementById("touchAb2");
   if (ab2) ab2.classList.toggle("mission-ready", missionHighlight);
+  const touchOpen = document.getElementById("touchOpen");
+  if (touchOpen) touchOpen.classList.toggle("mission-ready", missionHighlight);
   getCtx().updateTouchSkillLabels?.();
 }
 
@@ -404,6 +452,7 @@ export function initTouchControls({ keys, getBindings, getContext }) {
   root.querySelectorAll(".touch-btn[data-code]").forEach((btn) => bindButton(btn, keys));
   const atkBtn = document.getElementById("touchAttack");
   if (atkBtn) bindAttackButton(atkBtn);
+  bindShooterTouchUi();
   initMobileSettingsUI();
   loadMobileImmersive();
   const gear = document.getElementById("btnTouchSettings");
@@ -455,11 +504,62 @@ function refreshTouchButtons(ctx) {
   const rowAb = document.getElementById("touchRowAbilities");
   const rowDoor = document.getElementById("touchRowDoor");
   const rowMove = document.getElementById("touchRowMove");
+  const rowShooter = document.getElementById("touchRowShooter");
   if (!rowAb || !rowDoor) return;
+  const shooter = ctx.isShooterMode?.();
+  const shooterBar = document.getElementById("touchShooterBar");
+  const touchScope = document.getElementById("touchScope");
+  if (shooter) {
+    rowAb.hidden = true;
+    rowDoor.hidden = true;
+    const touchItem = document.getElementById("touchItem");
+    const touchOpen = document.getElementById("touchOpen");
+    if (touchItem) touchItem.style.display = "none";
+    if (touchOpen) touchOpen.style.display = "none";
+    if (rowShooter) rowShooter.hidden = true;
+    if (shooterBar) shooterBar.hidden = false;
+    if (touchScope) touchScope.hidden = false;
+    if (rowMove) rowMove.hidden = false;
+    updateTouchAttackVisibility(true);
+    updateTouchGunHighlight(ctx.getShooterWeaponSlot?.() ?? 2);
+    const atk = document.getElementById("touchAttack");
+    if (atk) {
+      const nameEl = atk.querySelector(".touch-skill-name");
+      if (nameEl) nameEl.textContent = "開火";
+      const keyEl = atk.querySelector(".touch-skill-key");
+      if (keyEl) keyEl.textContent = "射";
+    }
+    return;
+  }
+  if (rowShooter) rowShooter.hidden = true;
+  if (shooterBar) shooterBar.hidden = true;
+  if (touchScope) touchScope.hidden = true;
+  const touchItem = document.getElementById("touchItem");
+  const touchOpen = document.getElementById("touchOpen");
+  if (touchItem) touchItem.style.display = "";
+  if (touchOpen) touchOpen.style.display = "";
   const kh = ctx.isKeyHunt?.();
+  const puzzle = ctx.isPuzzleDoorMode?.();
   const killerCtrl = ctx.isHumanKiller?.() ?? false;
+  if (puzzle) {
+    rowAb.hidden = true;
+    rowDoor.hidden = false;
+    if (touchItem) touchItem.style.display = "none";
+    if (touchOpen) {
+      touchOpen.style.display = "";
+      touchOpen.dataset.code = "KeyE";
+      const kn = touchOpen.querySelector(".touch-skill-key");
+      const nm = touchOpen.querySelector(".touch-skill-name");
+      if (kn) kn.textContent = "謎";
+      if (nm) nm.textContent = "解題";
+    }
+    if (rowMove) rowMove.hidden = false;
+    updateTouchAttackVisibility(false);
+    return;
+  }
   rowAb.hidden = kh;
   rowDoor.hidden = !kh;
+  if (touchOpen) touchOpen.dataset.code = "KeyG";
   if (rowMove) rowMove.hidden = false;
   updateTouchAttackVisibility(killerCtrl);
 }

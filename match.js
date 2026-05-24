@@ -32,6 +32,7 @@ export function spawnMatch({
     p.caught = false;
     p.hp = 100;
     p.maxHp = 100;
+    p.elev = 0;
     p._jumpY = 0;
     p.mesh = buildForsakenCharacter(def);
     p.mesh.position.set(c.x, 0, c.z);
@@ -45,6 +46,7 @@ export function spawnMatch({
     const k = createPlayerState(def, "killer", profile, human);
     k.isAI = !human;
     k.pos = { x: c.x, z: c.z };
+    k.elev = 0;
     k._jumpY = 0;
     k.mesh = buildForsakenCharacter(def);
     k.mesh.position.set(c.x, 0, c.z);
@@ -52,15 +54,21 @@ export function spawnMatch({
     killers.push(k);
   };
 
-  if (gameMode === "keyhunt" || gameMode === "platformer") {
+  if (gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter") {
     addSurvivor(selectedChar, "p1", true, 0, 0);
-    const target = Math.max(1, Math.min(numSurvivors, survivorRoster.length));
+    const botTarget = gameMode === "shooter"
+      ? Math.max(4, Math.min(6, numSurvivors + 3))
+      : Math.max(1, Math.min(numSurvivors, survivorRoster.length));
     let guard = 0;
-    while (survivors.length < target && guard < 500) {
+    while (survivors.length < botTarget && guard < 500) {
       guard++;
       const def = survivorRoster[(survivors.length + guard) % survivorRoster.length];
-      const gx = 1 + (survivors.length % Math.max(1, ctx.w - 1));
-      const gz = Math.floor(survivors.length / 2) % ctx.h;
+      const gx = gameMode === "shooter"
+        ? 2 + ((survivors.length * 5) % Math.max(1, ctx.w - 3))
+        : 1 + (survivors.length % Math.max(1, ctx.w - 1));
+      const gz = gameMode === "shooter"
+        ? 2 + ((survivors.length * 7) % Math.max(1, ctx.h - 3))
+        : Math.floor(survivors.length / 2) % ctx.h;
       addSurvivor(def, `ai_s${survivors.length}`, false, gx, gz);
     }
   } else if (playAsKiller) {
@@ -105,6 +113,6 @@ export function spawnMatch({
   return {
     survivors,
     killers,
-    playAsKiller: playAsKiller && gameMode !== "keyhunt" && gameMode !== "platformer",
+    playAsKiller: playAsKiller && gameMode !== "keyhunt" && gameMode !== "platformer" && gameMode !== "puzzle",
   };
 }

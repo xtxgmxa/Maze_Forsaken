@@ -117,6 +117,7 @@ export function createPlayerState(charDef, role, profile, isHuman = false) {
     isHuman,
     isAI: !isHuman,
     pos: { x: 0, z: 0 },
+    elev: 0,
     vel: { x: 0, z: 0 },
     stamina: 100,
     sprintMeter: 100,
@@ -162,6 +163,7 @@ export function tickCooldowns(p, dt) {
   if (p.invuln > 0) p.invuln -= dt;
   if (p.sprintBoost > 0) p.sprintBoost -= dt;
   if ((p._lastVfxT ?? 0) > 0) p._lastVfxT -= dt;
+  if ((p._lastVfxCd ?? 0) > 0) p._lastVfxCd -= dt;
 }
 
 export function tryAbility(p, abIndex, ctx, game) {

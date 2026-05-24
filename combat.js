@@ -103,7 +103,7 @@ export function updateKillerCombat(killer, dt, ctx, maze, callbacks) {
       a.phase = "lunge";
       a.t = 0;
       playSfx("slash", 0.04);
-      playAbilityVfx(callbacks.scene, killer, a.abId);
+      playAbilityVfx(callbacks.scene, killer, a.abId, { lite: true });
     }
     return true;
   }

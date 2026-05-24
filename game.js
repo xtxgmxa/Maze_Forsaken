@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { SURVIVORS, KILLERS, buildForsakenCharacter } from "./characters.js";
-import { LEVELS, KEY_HUNT_LEVELS, PLATFORMER_LEVELS, getLevelTheme } from "./levels.js";
+import {
+  LEVELS, KEY_HUNT_LEVELS, PLATFORMER_LEVELS, PUZZLE_LEVELS, SHOOTER_LEVELS, getLevelTheme,
+} from "./levels.js";
 import {
   setupKeyHuntLevel, buildKeyHuntMeshes, updateKeyHunt,
   allDoorsOpen, keysRemaining, doorsRemaining,
@@ -12,6 +14,23 @@ import {
   setupPlatformerLevel, buildPlatformerMeshes, updatePlatformer,
   platformerBlocksMove,
 } from "./platformer.js";
+import { buildMazeDecor } from "./mazeDecor.js";
+import {
+  buildVerticalWorld, updateVerticalPhysics, updateBouncePads, worldHeight,
+} from "./verticalWorld.js";
+import {
+  setupPuzzleDoorLevel, buildPuzzleDoorMeshes, getNearPuzzleDoor,
+  getLockedPuzzleDoorHint, solvePuzzleDoor, allPuzzleDoorsOpen, puzzleDoorsRemaining,
+  getDoorApproach, getDoorMapPos, getNextPuzzleDoor,
+  isPuzzleDoorUnlocked,
+} from "./puzzleDoorMode.js";
+import {
+  applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState,
+  canShooterFire, fireShooterWeapon, updateShooterBots, buildShooterArena,
+  attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
+  checkShooterWin, onShooterDowned, tickShooterRespawns, SHOOTER_WEAPONS, isShooterHeadshot, getTargetHeadY,
+} from "./shooterMode.js";
+import { getLevelMapSeed, getMapStyle, enrichLevelForMode } from "./mapGen.js";
 import {
   ITEM_DEFS, addInventoryItem, useInventoryItem,
   getActiveInventoryList, getPassiveList, applyPassive,
@@ -27,11 +46,14 @@ import {
   tickGamepadPresence,
 } from "./controls.js";
 import {
-  initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults,
+  initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults, updateTouchGunHighlight,
   syncTouchButtonBindings, updateTouchSkillLabels, updateTouchAbilityCooldowns,
   syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
   updateTouchAttackVisibility, bindMobileAudioElement,
 } from "./touchControls.js";
+import {
+  assignPaintColor, spawnPaintSplat, spawnPaintAtHit, spawnPaintFromAim, spawnPaintOnBody, clearPaintSplats,
+} from "./paintballSplats.js";
 import { initMenuWizard, showCoopMobileWarn, initPerfTipModal } from "./menuUI.js";
 
 let menuUiRef = null;
@@ -44,14 +66,15 @@ const MODE_PREVIEW = {
   versus: "assets/characters/killers/c00lkidd.jpg",
   keyhunt: "assets/characters/survivors/elliot.jpg",
   platformer: "assets/characters/survivors/chance.jpg",
+  puzzle: "assets/characters/survivors/elliot.jpg",
   practice: "assets/characters/survivors/guest1337.jpg",
   mob: "assets/characters/survivors/dusekkar.jpg",
   hardcore: "assets/characters/killers/slasher.jpg",
 };
 import {
-  generateMaze, createMazeContext, cellCenter, buildMazeMeshes,
-  createExitMarker, moveWithCollision, collides, bfsNextStep, worldToCell,
-  addMazeLoops, createTeleporters, buildTeleporterMeshes,
+  generateMaze, generateMazeSeeded, createSeededRandom, createMazeContext, cellCenter, buildMazeMeshes,
+  createExitMarker, moveWithCollision, collides, bfsNextStep, worldToCell, isCellReachable,
+  addMazeLoops, applyMapStyle, createTeleporters, buildTeleporterMeshes,
   spawnWorldItems, buildItemMeshes,
 } from "./maze.js";
 import {
@@ -85,8 +108,33 @@ const DEFAULT_MATCH_SECONDS = 180;
 const EXIT_RADIUS = 6.5;
 const PROJECTILE_DAMAGE = 38;
 const ABILITY_HIT_DAMAGE = 36;
-const CAM_PITCH_MIN = -0.15;
-const CAM_PITCH_MAX = 1.48;
+const CAM_PITCH_MIN = -0.2;
+const CAM_PITCH_MAX = 2.45;
+const SHOOTER_PITCH_MIN = -1.58;
+const SHOOTER_PITCH_MAX = 1.58;
+const SHOOTER_SETTINGS_KEY = "forsaken_shooter";
+
+function loadShooterSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SHOOTER_SETTINGS_KEY) || "{}");
+    return {
+      fov: Math.max(70, Math.min(115, s.fov ?? 94)),
+      scopeFov: Math.max(28, Math.min(65, s.scopeFov ?? 44)),
+      invertY: !!s.invertY,
+    };
+  } catch {
+    return { fov: 94, scopeFov: 44, invertY: false };
+  }
+}
+
+function saveShooterSettings() {
+  try {
+    localStorage.setItem(SHOOTER_SETTINGS_KEY, JSON.stringify(shooterSettings));
+  } catch { /* */ }
+}
+
+let shooterSettings = loadShooterSettings();
+let shooterAds = false;
 
 let selectedChar = SURVIVORS[0];
 let selectedChar2 = SURVIVORS[1];
@@ -100,6 +148,14 @@ let keyHuntState = null;
 let keyHuntGroup = null;
 let platformerState = null;
 let platformerGroup = null;
+let puzzleDoorState = null;
+let puzzleDoorGroup = null;
+let shooterState = null;
+let shooterArenaGroup = null;
+let mazeDecorGroup = null;
+let verticalWorldState = null;
+let bouncePads = [];
+let nearPuzzleDoor = null;
 let playAsKiller = false;
 let gameState = "menu";
 let nearMissionStation = null;
@@ -132,6 +188,7 @@ let hasMoved = false;
 let frameCount = 0;
 let perfTier = "high"; // high | med | low
 let minimapDirty = true;
+let minimapBaseCanvas = null;
 let killerTimer = DEFAULT_MATCH_SECONDS;
 let matchTimeSeconds = DEFAULT_MATCH_SECONDS;
 let missionStations = [];
@@ -174,21 +231,28 @@ const combatCallbacks = {
 
 function syncKillerMesh(k) {
   if (!k?.mesh) return;
-  k.mesh.position.set(k.pos.x, k._jumpY ?? 0, k.pos.z);
+  k.mesh.position.set(k.pos.x, worldHeight(k), k.pos.z);
   k.mesh.rotation.y = k.yaw ?? Math.atan2(k.vel?.x || 0, k.vel?.z || 1);
 }
 
 function updateCrosshair() {
   const ch = document.getElementById("crosshair");
+  const scopeOv = document.getElementById("scopeOverlay");
   if (!ch) return;
   const hk = killers.find((k) => !k.isAI);
   const prof = playAsKiller ? "p1" : "killer";
-  const aim = !!(
+  const killerAim = !!(
     hk && gameState === "play" &&
     (playAsKiller || gameMode === "versus") &&
     keyDown(keys, prof, "slide")
   );
-  ch.classList.toggle("show", aim);
+  const shooterAim = isShooterMode() && gameState === "play" && !isSpectating();
+  ch.classList.toggle("show", killerAim || shooterAim);
+  const human = getHumanSurvivor();
+  const sniper = shooterAim && getShooterWeapon(human?.weaponId)?.id === "sniper";
+  ch.classList.toggle("sniper", sniper);
+  ch.classList.toggle("sniper-scope", sniper && shooterAds);
+  if (scopeOv) scopeOv.classList.toggle("show", sniper && shooterAds);
 }
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
@@ -228,6 +292,8 @@ function makeCharCard(def, gridSelector, onSelect, selectedId, playerSlot = "p1"
 function getLevelsForMenu() {
   if (gameMode === "keyhunt" || levelCategory === "keyhunt") return KEY_HUNT_LEVELS;
   if (gameMode === "platformer" || levelCategory === "platformer") return PLATFORMER_LEVELS;
+  if (gameMode === "puzzle") return PUZZLE_LEVELS;
+  if (gameMode === "shooter") return SHOOTER_LEVELS;
   return LEVELS;
 }
 
@@ -259,16 +325,43 @@ function rebuildLevelGrid() {
 }
 
 function isDedicatedSpecialMode() {
-  return gameMode === "keyhunt" || gameMode === "platformer";
+  return gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter";
+}
+
+function getMapMoveScale() {
+  if (!ctx) return 1;
+  if (isShooterMode()) return 1;
+  const area = ctx.w * ctx.h;
+  if (area >= 676) return 1.32;
+  if (area >= 529) return 1.22;
+  if (area >= 400) return 1.14;
+  return 1;
+}
+
+function getKillerAITarget(k) {
+  const candidates = [];
+  for (const s of survivors) {
+    if (s.caught || isInvisibleToKiller(s)) continue;
+    const d = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
+    candidates.push({ entity: s, x: s.pos.x, z: s.pos.z, d, isClone: false });
+    if (s.cloneMesh && (s._cloneUntil ?? 0) > elapsed) {
+      const cx = s.cloneMesh.position.x;
+      const cz = s.cloneMesh.position.z;
+      const dc = Math.hypot(cx - k.pos.x, cz - k.pos.z);
+      candidates.push({ entity: s, x: cx, z: cz, d: dc * 0.82, isClone: true });
+    }
+  }
+  candidates.sort((a, b) => a.d - b.d);
+  return candidates[0] || null;
 }
 
 function resetCategoryAfterDedicatedMode(prevMode) {
   if (
-    (prevMode === "keyhunt" || prevMode === "platformer") &&
+    (prevMode === "keyhunt" || prevMode === "platformer" || prevMode === "puzzle" || prevMode === "shooter") &&
     !isDedicatedSpecialMode()
   ) {
     const catEl = document.getElementById("levelCategory");
-    if (catEl && (catEl.value === "keyhunt" || catEl.value === "platformer")) {
+    if (catEl && (catEl.value === "keyhunt" || catEl.value === "platformer" || catEl.value === "puzzle" || catEl.value === "shooter")) {
       catEl.value = "chase";
       levelCategory = "chase";
     }
@@ -284,11 +377,11 @@ function checkMenuUiConsistency() {
   }
   const dedicated = isDedicatedSpecialMode();
   const catSec = document.getElementById("levelCategorySection");
-  const noKiller = isKeyHuntMode() || isPlatformerMode();
+  const noKiller = isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || isShooterMode();
   const touch = isTouchUiEnabled();
   const catShown = catSec && catSec.style.display !== "none";
-  const shouldShowCat = !dedicated;
-  const categoryMismatch = dedicated && levelCategory !== gameMode;
+  const shouldShowCat = false;
+  const categoryMismatch = false;
 
   let killerOk = true;
   if (touch) {
@@ -308,6 +401,8 @@ function checkMenuUiConsistency() {
 function refreshMenuForMode() {
   const dedicatedKh = gameMode === "keyhunt";
   const dedicatedPf = gameMode === "platformer";
+  const dedicatedPuzzle = gameMode === "puzzle";
+  const dedicatedShooter = gameMode === "shooter";
   const catEl = document.getElementById("levelCategory");
   const winEl = document.getElementById("winGoal");
 
@@ -321,6 +416,19 @@ function refreshMenuForMode() {
     winGoal = "exit";
     if (catEl) catEl.value = "platformer";
     if (winEl) winEl.value = "exit";
+  } else if (dedicatedPuzzle) {
+    levelCategory = "puzzle";
+    winGoal = "exit";
+    if (catEl) catEl.value = "puzzle";
+    if (winEl) winEl.value = "exit";
+  } else if (dedicatedShooter) {
+    levelCategory = "shooter";
+    winGoal = "survival";
+    if (catEl) catEl.value = "shooter";
+    if (winEl) winEl.value = "survival";
+  } else if (gameMode === "solo" || gameMode === "coop" || gameMode === "versus" || gameMode === "practice" || gameMode === "mob" || gameMode === "hardcore") {
+    levelCategory = "chase";
+    if (winEl) winGoal = winEl.value;
   } else if (catEl) {
     levelCategory = catEl.value;
     if (levelCategory === "keyhunt" || levelCategory === "platformer") {
@@ -331,8 +439,8 @@ function refreshMenuForMode() {
     }
   }
 
-  const noKiller = isKeyHuntMode() || isPlatformerMode();
-  const hideCatDropdown = dedicatedKh || dedicatedPf;
+  const noKiller = isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || isShooterMode();
+  const hideCatDropdown = true;
   const hideWinDropdown =
     hideCatDropdown || levelCategory === "keyhunt" || levelCategory === "platformer";
 
@@ -352,6 +460,8 @@ function refreshMenuForMode() {
   }
   const killerGridLabel = document.getElementById("killerGridLabel");
   if (killerGridLabel) killerGridLabel.style.display = noKiller ? "none" : "";
+  const roleSec = document.getElementById("rolePickSection");
+  if (roleSec) roleSec.style.display = noKiller ? "none" : "";
 
   if (noKiller) {
     playerRole = "survivor";
@@ -396,6 +506,7 @@ function initMenu() {
   const modeGrid = document.getElementById("modeGrid");
   [
     { id: "solo", name: "單人", desc: "你 vs AI 獵人 · 滑鼠+WASD" },
+    { id: "puzzle", name: "解題闖關", desc: "謎題門連鎖 · 答對開門 · 無獵人", featured: true },
     { id: "coop", name: "雙人合作", desc: "2 倖存者 vs AI · P2 方向鍵" },
     { id: "versus", name: "雙人對戰", desc: "1 倖存者 vs 1 獵人（玩家）" },
     { id: "keyhunt", name: "鑰匙逃脫", desc: "無獵人 · 找鑰匙開門 · 陷阱與尖刺" },
@@ -403,10 +514,11 @@ function initMenu() {
     { id: "practice", name: "練習模式", desc: "獵人較慢 · 時間較長 · 適合新手" },
     { id: "mob", name: "團隊逃亡", desc: "4 倖存者 · 2 獵人追擊" },
     { id: "hardcore", name: "硬核", desc: "獵人更快 · 任務更少" },
+    { id: "shooter", name: "槍戰模式", desc: "職業對戰 · 十字準心 · 左鍵射擊", featured: true },
   ].forEach((m, i) => {
     const card = document.createElement("div");
-    card.className = "mode-card" + (i === 0 ? " selected" : "");
-    card.innerHTML = `<h3>${m.name}</h3><p>${m.desc}</p>`;
+    card.className = "mode-card" + (i === 0 ? " selected" : "") + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
+    card.innerHTML = `<h3>${m.name}${m.wip ? " <span class='wip-tag'>開發中</span>" : ""}</h3><p>${m.desc}</p>`;
     card.onclick = () => {
       document.querySelectorAll(".mode-card").forEach((c) => c.classList.remove("selected"));
       card.classList.add("selected");
@@ -414,7 +526,7 @@ function initMenu() {
       gameMode = m.id;
       resetCategoryAfterDedicatedMode(prevMode);
       document.getElementById("p2CharSection").style.display =
-        m.id === "solo" || m.id === "keyhunt" || m.id === "platformer" ? "none" : "block";
+        m.id === "solo" || m.id === "keyhunt" || m.id === "platformer" || m.id === "puzzle" || m.id === "shooter" ? "none" : "block";
       refreshMenuForMode();
       updateMenuPreview();
       playSfx("ui");
@@ -514,7 +626,7 @@ function initMenu() {
   }
 
   const togglePickRole = () => {
-    if (isKeyHuntMode() || isPlatformerMode()) return;
+    if (isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || isShooterMode()) return;
     const sel = document.getElementById("playerRole");
     if (!sel) return;
     sel.value = sel.value === "killer" ? "survivor" : "killer";
@@ -535,8 +647,8 @@ function initMenu() {
     getSelectedChar: () => selectedChar,
     getSelectedChar2: () => selectedChar2,
     getSelectedKiller: () => selectedKiller,
-    shouldHideKiller: () => isKeyHuntMode() || isPlatformerMode(),
-    shouldHideP2: () => gameMode === "solo" || gameMode === "keyhunt" || gameMode === "platformer",
+    shouldHideKiller: () => isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || isShooterMode(),
+    shouldHideP2: () => gameMode === "solo" || gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter",
     updateRoleLabel: updatePickRoleLabel,
   });
 
@@ -589,7 +701,7 @@ function refreshRoleUI() {
   const solo = gameMode === "solo";
   const sec = document.getElementById("rolePickSection");
   const pickRole = document.getElementById("pickRoleRow");
-  const showRole = solo && !isKeyHuntMode() && !isPlatformerMode();
+  const showRole = solo && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode();
   if (sec) sec.style.display = showRole && !isTouchUiEnabled() ? "block" : "none";
   if (pickRole) pickRole.hidden = !showRole || !isTouchUiEnabled();
   if (showRole && isTouchUiEnabled()) updatePickRoleLabel();
@@ -748,6 +860,14 @@ function returnToMenu() {
   keyHuntGroup = null;
   platformerState = null;
   platformerGroup = null;
+  puzzleDoorState = null;
+  puzzleDoorGroup = null;
+  shooterState = null;
+  shooterArenaGroup = null;
+  verticalWorldState = null;
+  mazeDecorGroup = null;
+  bouncePads = [];
+  nearPuzzleDoor = null;
   document.getElementById("keyHuntBar")?.style.setProperty("display", "none");
   document.getElementById("pausePanel")?.classList.remove("show");
   overlay.classList.remove("show", "win", "lose");
@@ -759,7 +879,7 @@ function returnToMenu() {
   document.exitPointerLock?.();
   clearVfxPool();
   document.getElementById("hudEscHint")?.classList.remove("show");
-  document.body.classList.remove("keyhunt-play", "keyhunt-has-keys", "spectating");
+  document.body.classList.remove("keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play");
   refreshMenuForMode();
 }
 
@@ -804,6 +924,25 @@ function renderSettingsForm() {
         </span>
       </label>
     </div>
+    <div class="bind-section">
+      <h4>槍戰視野</h4>
+      <label class="vol-row">視野寬度 (FOV)
+        <span class="vol-control">
+          <input type="range" id="setShooterFov" min="75" max="110" value="${shooterSettings.fov}" />
+          <span id="setShooterFovVal">${shooterSettings.fov}°</span>
+        </span>
+      </label>
+      <label class="vol-row">狙擊開鏡視野
+        <span class="vol-control">
+          <input type="range" id="setScopeFov" min="30" max="60" value="${shooterSettings.scopeFov}" />
+          <span id="setScopeFovVal">${shooterSettings.scopeFov}°</span>
+        </span>
+      </label>
+      <label class="vol-row" style="margin-top:8px">
+        <input type="checkbox" id="setInvertY" ${shooterSettings.invertY ? "checked" : ""} />
+        反轉上下視角（滑鼠／觸控）
+      </label>
+    </div>
     ${profiles
     .map(
       (pr) => `
@@ -837,6 +976,32 @@ function renderSettingsForm() {
   document.getElementById("setSfxVol")?.addEventListener("input", (e) => {
     setAudioSettings({ sfx: Number(e.target.value) / 100 }, musicEl);
     syncVolLabels();
+  });
+
+  const sf = document.getElementById("setShooterFov");
+  const ss = document.getElementById("setScopeFov");
+  const inv = document.getElementById("setInvertY");
+  const syncShooterLabels = () => {
+    const sfl = document.getElementById("setShooterFovVal");
+    const ssl = document.getElementById("setScopeFovVal");
+    if (sfl && sf) sfl.textContent = `${sf.value}°`;
+    if (ssl && ss) ssl.textContent = `${ss.value}°`;
+  };
+  sf?.addEventListener("input", (e) => {
+    shooterSettings.fov = Number(e.target.value);
+    saveShooterSettings();
+    syncShooterLabels();
+    updateShooterFov();
+  });
+  ss?.addEventListener("input", (e) => {
+    shooterSettings.scopeFov = Number(e.target.value);
+    saveShooterSettings();
+    syncShooterLabels();
+    updateShooterFov();
+  });
+  inv?.addEventListener("change", (e) => {
+    shooterSettings.invertY = e.target.checked;
+    saveShooterSettings();
   });
 
   form.querySelectorAll(".bind-btn").forEach((btn) => {
@@ -880,7 +1045,8 @@ function initRenderer() {
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
-    renderer.shadowMap.enabled = false;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (!renderer.domElement.parentElement) {
       document.body.appendChild(renderer.domElement);
     }
@@ -914,12 +1080,25 @@ function ensureGraphics() {
 
 function setupLights() {
   if (!scene) return;
-  scene.add(new THREE.AmbientLight(0xbbafd0, 1.15));
-  const hemi = new THREE.HemisphereLight(0xddd0f0, 0x443355, 0.65);
+  scene.add(new THREE.AmbientLight(0xc8d4ff, 1.15));
+  const hemi = new THREE.HemisphereLight(0xb8d8ff, 0x5a6888, 0.75);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.65);
-  dir.position.set(15, 40, 12);
+  const dir = new THREE.DirectionalLight(0xfff6e8, 0.9);
+  dir.position.set(18, 42, 14);
+  dir.castShadow = true;
+  dir.shadow.mapSize.set(1024, 1024);
+  dir.shadow.camera.near = 2;
+  dir.shadow.camera.far = 90;
+  const sh = 38;
+  dir.shadow.camera.left = -sh;
+  dir.shadow.camera.right = sh;
+  dir.shadow.camera.top = sh;
+  dir.shadow.camera.bottom = -sh;
+  dir.shadow.bias = -0.0008;
+  dir.target.position.set(0, 0, 0);
   scene.add(dir);
+  scene.add(dir.target);
+  scene.userData.shadowLight = dir;
 }
 
 function clearScene() {
@@ -937,8 +1116,123 @@ function isPlatformerMode() {
   return gameMode === "platformer" || levelCategory === "platformer";
 }
 
+function isPuzzleDoorMode() {
+  return gameMode === "puzzle" || levelCategory === "puzzle";
+}
+
+function isShooterMode() {
+  return gameMode === "shooter" || levelCategory === "shooter";
+}
+
+function clampCamPitch(pitch) {
+  let min = isShooterMode() ? SHOOTER_PITCH_MIN : CAM_PITCH_MIN;
+  let max = isShooterMode() ? SHOOTER_PITCH_MAX : CAM_PITCH_MAX;
+  if (!isShooterMode()) {
+    const focus = getHumanSurvivor() || getCameraFocus();
+    const eh = focus ? worldHeight(focus) : 0;
+    max = Math.max(max, 2.55 + Math.min(0.35, eh * 0.04));
+    min = Math.min(min, -0.12);
+  }
+  return Math.max(min, Math.min(max, pitch));
+}
+
+function applyLookPitch(delta, sens = 0.0022) {
+  const mul = isShooterMode()
+    ? (shooterSettings.invertY ? 1 : -1)
+    : 1;
+  camPitch = clampCamPitch(camPitch + mul * delta * sens);
+}
+
+function getShooterActiveFov() {
+  const p = getHumanSurvivor();
+  const w = getShooterWeapon(p?.weaponId);
+  if (w.id === "sniper" && shooterAds) return shooterSettings.scopeFov;
+  return shooterSettings.fov;
+}
+
+function updateShooterFov() {
+  if (!camera || !isShooterMode()) return;
+  const fov = getShooterActiveFov();
+  if (Math.abs(camera.fov - fov) > 0.05) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+}
+
+function getShooterAimYaw() {
+  if (!camera) return camYaw;
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  return Math.atan2(dir.x, dir.z);
+}
+
+function getShooterAimDir() {
+  if (!camera) {
+    const cosP = Math.cos(camPitch);
+    return new THREE.Vector3(Math.sin(camYaw) * cosP, Math.sin(camPitch), Math.cos(camYaw) * cosP).normalize();
+  }
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  return dir.normalize();
+}
+
+function syncShooterPlayerVisibility() {
+  if (!isShooterMode()) return;
+  const human = getHumanSurvivor();
+  const spectating = isSpectating();
+  const showFp = human && !spectating && !human.caught && (human.hp ?? 0) > 0;
+  setFpGunVisible(showFp);
+  for (const s of survivors) {
+    if (!s.mesh) continue;
+    if (s === human && !spectating) s.mesh.visible = false;
+    else s.mesh.visible = !s.caught && (s.hp ?? 0) > 0;
+  }
+}
+
+function showHitMarker() {
+  const ch = document.getElementById("crosshair");
+  if (!ch) return;
+  ch.classList.add("hit");
+  clearTimeout(showHitMarker._t);
+  showHitMarker._t = setTimeout(() => ch.classList.remove("hit"), 120);
+}
+
+function invalidateMinimapBase() {
+  minimapBaseCanvas = null;
+  minimapDirty = true;
+}
+
+function rebuildMinimapBase() {
+  if (!minimapCanvas || !maze) return;
+  minimapBaseCanvas = document.createElement("canvas");
+  minimapBaseCanvas.width = minimapCanvas.width;
+  minimapBaseCanvas.height = minimapCanvas.height;
+  const ctx2 = minimapBaseCanvas.getContext("2d");
+  const w = minimapBaseCanvas.width;
+  const h = minimapBaseCanvas.height;
+  const pad = 3;
+  const cellPx = (w - pad * 2) / ctx.w;
+  ctx2.fillStyle = "#0c0814";
+  ctx2.fillRect(0, 0, w, h);
+  for (let gz = 0; gz < ctx.h; gz++) {
+    for (let gx = 0; gx < ctx.w; gx++) {
+      const cell = maze[gz][gx];
+      const px = pad + gx * cellPx;
+      const py = pad + gz * cellPx;
+      ctx2.fillStyle = ((gx + gz) % 3 === 0) ? "#3a4860" : "#3a3050";
+      ctx2.fillRect(px, py, cellPx, cellPx);
+      ctx2.strokeStyle = "#6a5888";
+      ctx2.lineWidth = 0.5;
+      if (cell.top) { ctx2.beginPath(); ctx2.moveTo(px, py); ctx2.lineTo(px + cellPx, py); ctx2.stroke(); }
+      if (cell.left) { ctx2.beginPath(); ctx2.moveTo(px, py); ctx2.lineTo(px, py + cellPx); ctx2.stroke(); }
+    }
+  }
+  minimapDirty = false;
+}
+
 function usesExitWin() {
-  return isKeyHuntMode() || isPlatformerMode() || winGoal === "exit";
+  if (isShooterMode()) return false;
+  return isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || winGoal === "exit";
 }
 
 function getAliveSurvivors() {
@@ -962,20 +1256,62 @@ function getWinSurvivors() {
   return survivors.filter((s) => !s.caught && (s.hp ?? 100) > 0);
 }
 
-function playerMove(pos, vx, vz, dt, jumpY = 0) {
+function getCollisionOpts() {
+  if (isShooterMode()) {
+    return { vaultClear: 1.65, vaultJumpMin: 0.22 };
+  }
+  if (isPlatformerMode()) {
+    return { vaultClear: 2.0, vaultJumpMin: 0.32 };
+  }
+  if (isPuzzleDoorMode()) {
+    return { vaultClear: 2.55, vaultJumpMin: 0.22, radiusScale: 0.82 };
+  }
+  if (gameMode === "solo" || gameMode === "practice") {
+    return { vaultClear: 2.45, vaultJumpMin: 0.26, radiusScale: 0.9 };
+  }
+  return { vaultClear: 2.35, vaultJumpMin: 0.28 };
+}
+
+function applyFallSafety(p) {
+  if (!p || p.caught) return;
+  const wh = worldHeight(p);
+  if (wh >= -3) {
+    if (p.onGround) {
+      p._safeX = p.pos.x;
+      p._safeZ = p.pos.z;
+      p._safeElev = p.elev ?? 0;
+    }
+    return;
+  }
+  const sx = p._safeX ?? cellCenter(ctx, 0, 0).x;
+  const sz = p._safeZ ?? cellCenter(ctx, 0, 0).z;
+  p.pos.x = sx;
+  p.pos.z = sz;
+  p.elev = p._safeElev ?? 0;
+  p._jumpY = 0;
+  p.velY = 0;
+  p.onGround = true;
+  p._bounceArc = null;
+  if (!p.isAI) showToast("掉出平台，已送回安全位置", 1400);
+}
+
+function playerMove(pos, vx, vz, dt, jumpY = 0, footElev = 0) {
   const jy = jumpY ?? 0;
+  const fe = footElev ?? 0;
   if (keyHuntState?.doors) {
     moveWithDoorCollision(ctx, maze, keyHuntState.doors, pos, vx, vz, dt, jy);
+  } else if (puzzleDoorState?.doors) {
+    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, getCollisionOpts());
   } else {
-    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy);
+    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, getCollisionOpts());
   }
   if (platformerState?.oneWays?.length) {
     const r = jy > 0.75 ? 0.3 : 0.45;
-    if (platformerBlocksMove(platformerState.oneWays, pos.x, pos.z, vx, vz, r)) {
+    if (platformerBlocksMove(platformerState.oneWays, pos.x, pos.z, vx, vz, r, jy)) {
       const nx = pos.x - vx * dt;
       const nz = pos.z - vz * dt;
-      if (!platformerBlocksMove(platformerState.oneWays, nx, pos.z, 0, 0, r)) pos.x = nx;
-      if (!platformerBlocksMove(platformerState.oneWays, pos.x, nz, 0, 0, r)) pos.z = nz;
+      if (!platformerBlocksMove(platformerState.oneWays, nx, pos.z, 0, 0, r, jy)) pos.x = nx;
+      if (!platformerBlocksMove(platformerState.oneWays, pos.x, nz, 0, 0, r, jy)) pos.z = nz;
     }
   }
 }
@@ -986,8 +1322,9 @@ function catchSurvivor(target, killer, reason = "近身抓住") {
   target.vel = { x: 0, z: 0 };
   target.velY = 0;
   if (target.mesh) target.mesh.visible = false;
-  playSfx("catch");
+  playSfx("kill", 0.12);
   spawnHitVfx(scene, target.pos.x, target.pos.z);
+  spawnKillPopup(target.pos.x, target.pos.z, target.charDef?.name);
   killerTimer += KILLER_TIME_CATCH_BONUS;
   gameApi.showAbilityToast?.(killer, `抓住了 ${target.charDef.name}！+${KILLER_TIME_CATCH_BONUS}s`);
   const human = getHumanSurvivor();
@@ -1001,22 +1338,53 @@ function catchSurvivor(target, killer, reason = "近身抓住") {
   }
 }
 
-function spawnDamageNumber(wx, wz, amount) {
+function spawnDamageNumber(wx, wz, amount, opts = {}) {
   if (!camera || !renderer) return;
   const layer = document.getElementById("damageLayer");
   if (!layer) return;
-  const v = new THREE.Vector3(wx, 2.4, wz);
+  const v = new THREE.Vector3(wx, opts.y ?? 2.35, wz);
   v.project(camera);
   if (v.z > 1) return;
   const el = document.createElement("div");
-  el.className = "dmg-num";
-  el.textContent = `-${amount}`;
+  let cls = "dmg-num";
+  if (opts.headshot) cls += " dmg-head";
+  if (opts.onYou) cls += " dmg-you";
+  if (opts.onEnemy && !opts.onYou) cls += " dmg-enemy";
+  el.className = cls;
+  el.textContent = opts.headshot ? `爆頭 -${amount}` : `-${Math.round(amount)}`;
   const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
   const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
   el.style.left = `${sx}px`;
   el.style.top = `${sy}px`;
   layer.appendChild(el);
-  setTimeout(() => el.remove(), 1000);
+  setTimeout(() => el.remove(), opts.headshot ? 1400 : 1100);
+}
+
+function spawnKillPopup(wx, wz, victimName) {
+  if (!camera || !renderer) return;
+  const layer = document.getElementById("damageLayer");
+  if (layer) {
+    const v = new THREE.Vector3(wx, 2.8, wz);
+    v.project(camera);
+    if (v.z <= 1) {
+      const el = document.createElement("div");
+      el.className = "kill-popup";
+      el.innerHTML = `<span class="kill-main">KILL</span><span class="kill-sub">${victimName || ""}</span>`;
+      el.style.left = `${(v.x * 0.5 + 0.5) * window.innerWidth}px`;
+      el.style.top = `${(-v.y * 0.5 + 0.5) * window.innerHeight}px`;
+      layer.appendChild(el);
+      setTimeout(() => el.remove(), 1100);
+    }
+  }
+  if (playAsKiller || gameMode === "versus") {
+    const banner = document.getElementById("killBanner");
+    if (banner) {
+      banner.classList.remove("show");
+      void banner.offsetWidth;
+      banner.classList.add("show");
+      setTimeout(() => banner.classList.remove("show"), 1100);
+    }
+  }
 }
 
 function tryKillerMeleeAttack(killer, target, amount = KILLER_MELEE_DAMAGE, abId = "slash") {
@@ -1033,11 +1401,21 @@ function tryKillerBasicAttack(killer) {
   return startKillerAttack(killer, target, scene, combatCallbacks, { damage: KILLER_MELEE_DAMAGE, abId: "slash" });
 }
 
-function damageSurvivor(target, killer, amount) {
+function damageSurvivor(target, killer, amount, opts = {}) {
   if (!target || target.caught || elapsed < MATCH_START_GRACE) return;
   if ((target.invuln ?? 0) > 0.05) return;
+  const headshot = !!opts.headshot;
   const envKiller = killer || { charDef: { name: "環境" }, pos: target.pos };
-  playSfx("hit", 0.06);
+  if (isShooterMode()) {
+    playSfx(headshot ? "headshot" : "shoot_hit", 0.05);
+    spawnHitVfx(scene, target.pos.x, target.pos.z);
+    if (killer && !killer.isAI) {
+      showHitMarker();
+      if (headshot) showToast("爆頭！", 700, "default");
+    }
+  } else {
+    playSfx("hit", 0.06);
+  }
   if (!target.isAI) {
     playSfx("hurt", 0.12);
     target._hitFlash = 0.35;
@@ -1055,8 +1433,29 @@ function damageSurvivor(target, killer, amount) {
     return;
   }
   target.hp = Math.max(0, (target.hp ?? 100) - amount);
-  spawnDamageNumber(target.pos.x, target.pos.z, amount);
+  if (isShooterMode()) {
+    spawnDamageNumber(target.pos.x, target.pos.z, amount, {
+      headshot,
+      onYou: !target.isAI,
+      onEnemy: target.isAI,
+      y: getTargetHeadY(target),
+    });
+  } else {
+    spawnDamageNumber(target.pos.x, target.pos.z, amount);
+  }
   if (target.hp <= 0) {
+    if (isShooterMode() && shooterState) {
+      const toastMsg = onShooterDowned(killer, target, shooterState, elapsed);
+      if (toastMsg && !target.isAI) showToast(toastMsg, 1100);
+      if (!killer?.isAI || killer === target) { /* kill credit above */ }
+      const human = survivors.find((s) => !s.isAI);
+      const win = checkShooterWin(shooterState, human);
+      if (win) {
+        playSfx("exit");
+        endGame(win.won, win.msg);
+      }
+      return;
+    }
     if (isKeyHuntMode()) {
       target.caught = true;
       const human = survivors.find((s) => !s.isAI);
@@ -1081,7 +1480,7 @@ function updateMenuPreview() {
 
   const names = {
     solo: "單人追擊", coop: "雙人合作", versus: "雙人對戰", keyhunt: "鑰匙逃脫",
-    platformer: "平台冒險", practice: "練習", mob: "團隊逃亡", hardcore: "硬核",
+    platformer: "平台冒險", puzzle: "解題闖關", shooter: "槍戰模式", practice: "練習", mob: "團隊逃亡", hardcore: "硬核",
   };
   let src = "";
   let caption = "";
@@ -1134,6 +1533,8 @@ function refreshGameplayHints() {
         hint.textContent =
           `手把：${gpl.move}移動 · ${gpl.look}視角 · ${gpl.jump}跳 · ${gpl.slide}滑壘 · ${gpl.sprint}衝刺 · ${gpl.ab1}/${gpl.ab2}/${gpl.ab3}招式 · ${gpl.interact}任務`;
       }
+    } else if (isShooterMode()) {
+      hint.textContent = "槍戰：WASD · 滑鼠瞄準 · 左鍵射擊 · 1~4 換槍 · 狙擊右鍵開鏡 · ESC 暫停";
     } else if (isKeyHuntMode()) {
       hint.textContent = "鑰匙逃脫：撿鑰匙(左下顯示) · G 開門 · R 道具 · 全員到出口";
     } else if (playAsKiller) {
@@ -1158,7 +1559,7 @@ function applyGamepadCamera(dt) {
   if (!gp?.lookX && !gp?.lookY) return;
   const sens = 2.4 * dt;
   camYaw -= gp.lookX * sens;
-  camPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, camPitch + gp.lookY * sens));
+  applyLookPitch(gp.lookY, sens);
 }
 
 function updateQuizGamepad() {
@@ -1326,6 +1727,7 @@ function checkExitWin() {
   }
 
   if (isKeyHuntMode() && keyHuntState && !allDoorsOpen(keyHuntState.doors)) return;
+  if (isPuzzleDoorMode() && puzzleDoorState && !allPuzzleDoorsOpen(puzzleDoorState.doors)) return;
 
   const need = getWinSurvivors();
   if (need.length && need.every(isAtExit)) {
@@ -1333,7 +1735,9 @@ function checkExitWin() {
     spawnHitVfx(scene, exitPos.x, exitPos.z);
     const msg = isKeyHuntMode()
       ? `${selectedLevel.name} 通關！開啟所有門且全員抵達出口！`
-      : need.length > 1
+      : isPuzzleDoorMode()
+        ? `${selectedLevel.name} 闖關成功！解開所有謎題門並抵達出口！`
+        : need.length > 1
         ? `通關！全部 ${need.length} 名倖存者都到達出口！`
         : `${selectedLevel.name} 通關！你到達綠色出口了！`;
     endGame(true, msg);
@@ -1341,6 +1745,24 @@ function checkExitWin() {
 }
 
 function checkMatchEnd(msgIfLose) {
+  if (isShooterMode() && shooterState) {
+    const human = survivors.find((s) => !s.isAI);
+    const win = checkShooterWin(shooterState, human);
+    if (win) {
+      endGame(win.won, win.msg);
+      return;
+    }
+    if (killerTimer <= 0) {
+      const k = shooterState.humanKills || 0;
+      const need = shooterState.targetKills || 10;
+      endGame(
+        k >= need,
+        k >= need ? `時間到！達成 ${k} 擊殺，勝利！` : `時間到！擊殺 ${k}/${need}，再接再厲`
+      );
+      return;
+    }
+    return;
+  }
   const alive = getAliveSurvivors();
   if (alive.length === 0) {
     if (playAsKiller) {
@@ -1386,7 +1808,9 @@ function renderQuizQuestion(station) {
   station._answer = q.answer;
   const subjZh = subject === "english" ? "英文" : "數學";
   const diffZh = difficulty === "middle" ? "國中" : "國小高年級";
-  document.getElementById("mathQuestion").textContent = `[${subjZh}·${diffZh}] ${q.text}`;
+  document.getElementById("mathQuestion").textContent = station._isPuzzleDoor
+    ? `[謎門 #${station.label}] ${q.text}`
+    : `[${subjZh}·${diffZh}] ${q.text}`;
   const box = document.getElementById("mathChoices");
   box.innerHTML = "";
   q.choices.forEach((c) => {
@@ -1395,12 +1819,19 @@ function renderQuizQuestion(station) {
     btn.onclick = () => {
       const ok = String(c) === String(station._answer);
       if (ok) {
-        station.done = true;
-        if (station.mesh) station.mesh.visible = false;
-        killerTimer = Math.max(0, killerTimer - KILLER_TIME_MISSION_CUT);
-        missionsDone++;
-        playSfx("mission");
-        showToast(`答對了！獵人時間 -${KILLER_TIME_MISSION_CUT} 秒`, 900);
+        if (station._isPuzzleDoor) {
+          solvePuzzleDoor(station, maze, ctx);
+          if (station.mesh) station.mesh.visible = false;
+          playSfx("mission");
+          showToast(`解鎖 #${station.label} 號謎門！`, 900);
+        } else {
+          station.done = true;
+          if (station.mesh) station.mesh.visible = false;
+          killerTimer = Math.max(0, killerTimer - KILLER_TIME_MISSION_CUT);
+          missionsDone++;
+          playSfx("mission");
+          showToast(`答對了！獵人時間 -${KILLER_TIME_MISSION_CUT} 秒`, 900);
+        }
       } else {
         playSfx("mission_fail");
         showToast("答錯了，再試一題！", 800);
@@ -1413,13 +1844,16 @@ function renderQuizQuestion(station) {
 }
 
 function openMathQuiz(station) {
-  if (station.done || activeQuiz || gameState !== "play") return;
+  if ((station.done && !station._isPuzzleDoor) || (station._isPuzzleDoor && station.open) || activeQuiz || gameState !== "play") return;
+  if (station._isPuzzleDoor && !isPuzzleDoorUnlocked(station, puzzleDoorState?.doors)) return;
   activeQuiz = station;
   playSfx("quiz_open");
   document.exitPointerLock?.();
   pointerLocked = false;
   clickPrompt.classList.remove("show");
   quizGp = { x: 0.5, y: 0.72, choice: 0, prev: {} };
+  const title = document.querySelector("#mathQuiz h3");
+  if (title) title.textContent = station._isPuzzleDoor ? `🔐 謎題門 #${station.label}` : "⚡ 發電任務";
   renderQuizQuestion(station);
   document.getElementById("mathQuiz").classList.add("show");
 }
@@ -1430,6 +1864,7 @@ function closeMathQuiz() {
   if (qptr) qptr.style.display = "none";
   activeQuiz = null;
   nearMissionStation = null;
+  nearPuzzleDoor = null;
   if (isTouchUiEnabled()) setTouchMissionHighlight(false);
 }
 
@@ -1459,6 +1894,47 @@ function canUseAirJump(p) {
   return hasDoubleJumpPassive(p) && p._airJumpReady && elapsed >= (p._djRechargeUntil ?? 0);
 }
 
+function tryShooterFire(p) {
+  if (!p || !isShooterMode() || !canShooterFire(p, elapsed)) return;
+  if (camera) updateCameraForPlayer(camera, p, camYaw, camPitch);
+  const aimDir = getShooterAimDir();
+  p._lastFireDir = aimDir.clone();
+  const yaw = Math.atan2(aimDir.x, aimDir.z);
+  const eyeY = 1.52 + worldHeight(p);
+  spawnPaintFromAim(
+    scene, ctx, maze,
+    p.pos.x + aimDir.x * 0.85,
+    eyeY + aimDir.y * 0.85,
+    p.pos.z + aimDir.z * 0.85,
+    aimDir.x, aimDir.y, aimDir.z,
+    p.paintColor ?? p._shooterColor,
+    p.mesh
+  );
+  for (const pr of fireShooterWeapon(p, yaw, aimDir)) {
+    pr.color = p.paintColor ?? pr.color;
+    projectiles.push(pr);
+  }
+  playSfx("shoot", 0.03);
+  muzzleFlash(p);
+  if (!p.isAI && camera) syncFpGunVisual(camera, p.weaponId, 1);
+  p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
+}
+
+function tryShooterWeaponSwitch(slot) {
+  const p = getHumanFocus();
+  if (!p || !isShooterMode()) return;
+  const w = SHOOTER_WEAPONS.find((x) => x.slot === slot);
+  if (!w || p.weaponId === w.id) return;
+  if (w.id !== "sniper") shooterAds = false;
+  document.body.classList.toggle("shooter-ads", shooterAds);
+  applyShooterLoadout(p, w.id);
+  syncGunVisual(p);
+  if (!p.isAI && camera) syncFpGunVisual(camera, w.id);
+  if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
+  playSfx("ui");
+  showToast(`裝備：${w.name}`, 450);
+}
+
 function tryJump(p, profile, gp = null) {
   if (!p || p.caught || p.role === "killer" || p.sliding) return;
   const jumpDown = keyDown(keys, profile, "jump") || !!gp?.jump;
@@ -1466,13 +1942,13 @@ function tryJump(p, profile, gp = null) {
   if (p._jumpHeld) return;
   p._jumpHeld = true;
   if (p.onGround) {
-    p.velY = 16;
+    p.velY = isShooterMode() ? 19 : verticalWorldState ? 24 : 16;
     p.onGround = false;
     p.jumpsUsed = 1;
     p._airJumpReady = hasDoubleJumpPassive(p) && elapsed >= (p._djRechargeUntil ?? 0);
     playSfx("jump");
   } else if (canUseAirJump(p) && (p.jumpsUsed ?? 0) < 2) {
-    p.velY = 17;
+    p.velY = verticalWorldState ? 19 : 17;
     p.jumpsUsed = 2;
     p._airJumpReady = false;
     p._djRechargeUntil = elapsed + DOUBLE_JUMP_RECHARGE;
@@ -1507,7 +1983,7 @@ function applySlideInput(p, profile, move, dt, gp = null) {
   if (p.slideCd == null) p.slideCd = 0;
 
   const SLIDE_DUR = 0.52;
-  const SLIDE_SPEED = 19;
+  const SLIDE_SPEED = 19 * getMapMoveScale();
 
   if (p.slideTimer > 0) {
     p.slideTimer = Math.max(0, p.slideTimer - dt);
@@ -1571,11 +2047,9 @@ const gameApi = {
   spawnClone(p) {
     if (p.cloneMesh) scene.remove(p.cloneMesh);
     p.cloneMesh = buildForsakenCharacter(p.charDef);
-    p.cloneMesh.position.set(p.pos.x + 2, 0, p.pos.z);
+    p.cloneMesh.position.set(p.pos.x + 2.8, worldHeight(p), p.pos.z + 1.2);
     scene.add(p.cloneMesh);
-    setTimeout(() => {
-      if (p.cloneMesh) { scene.remove(p.cloneMesh); p.cloneMesh = null; }
-    }, 8000);
+    p._cloneUntil = elapsed + 8;
   },
   healNearby(p, range) {
     for (const s of survivors) {
@@ -1752,13 +2226,16 @@ async function runStartGame() {
   gameApi.minions = minions;
 
   readMatchConfig();
+  selectedLevel = enrichLevelForMode(selectedLevel, gameMode);
   winGoal = document.getElementById("winGoal")?.value || "exit";
   if (isKeyHuntMode() || isPlatformerMode()) winGoal = "exit";
   if (gameMode === "practice") matchTimeSeconds = Math.max(matchTimeSeconds, 240);
   if (gameMode === "hardcore") matchTimeSeconds = Math.min(matchTimeSeconds, 150);
   if (isKeyHuntMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 300);
   if (isPlatformerMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 240);
-  if (isKeyHuntMode() || isPlatformerMode()) {
+  if (isPuzzleDoorMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 360);
+  if (isShooterMode()) matchTimeSeconds = Math.max(matchTimeSeconds, 300);
+  if (isKeyHuntMode() || isPlatformerMode() || isPuzzleDoorMode() || isShooterMode()) {
     playerRole = "survivor";
     const roleEl = document.getElementById("playerRole");
     if (roleEl) roleEl.value = "survivor";
@@ -1766,7 +2243,7 @@ async function runStartGame() {
     playerRole = document.getElementById("playerRole")?.value || "survivor";
   }
   playAsKiller = playerRole === "killer" && gameMode === "solo"
-    && !isKeyHuntMode() && !isPlatformerMode();
+    && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode();
   matchHumanRole = gameMode === "versus" ? "killer" : playAsKiller ? "killer" : "survivor";
   keyHuntState = null;
   keyHuntGroup = null;
@@ -1776,30 +2253,82 @@ async function runStartGame() {
   killerTimer = matchTimeSeconds;
   missionsDone = 0;
   camYaw = Math.PI;
-  camPitch = 0.42;
+  camPitch = isShooterMode() ? 0 : 0.42;
+  camDist = isShooterMode() ? 0 : 11;
   const mobileCam = applyMobileCameraDefaults();
-  if (mobileCam != null) camDist = mobileCam;
+  if (mobileCam != null && !isShooterMode()) camDist = mobileCam;
+  if (isShooterMode()) perfTier = "high";
 
+  if (camera) detachFpGun(camera);
+  clearPaintSplats(scene);
   clearScene();
   clearVfxPool();
   scene.background = new THREE.Color(theme.sky);
-  scene.fog = new THREE.Fog(theme.sky, ctx.fogNear * 1.1, ctx.fogFar * 1.6);
+  scene.fog = new THREE.Fog(theme.sky, ctx.fogNear * 0.95, ctx.fogFar * 1.85);
 
-  maze = generateMaze(ctx.w, ctx.h);
-  addMazeLoops(maze, ctx.w, ctx.h, ctx.loops);
+  const mapSeed = getLevelMapSeed(selectedLevel, gameMode);
+  const mapRng = createSeededRandom(mapSeed);
+  const mapStyle = getMapStyle(selectedLevel, gameMode);
+  maze = generateMazeSeeded(ctx.w, ctx.h, mapSeed);
+  const loopCount = gameMode === "solo" || gameMode === "practice"
+    ? Math.max(ctx.loops ?? 6, Math.floor((ctx.w * ctx.h) / 28))
+    : ctx.loops;
+  addMazeLoops(maze, ctx.w, ctx.h, loopCount, mapRng);
+  if (gameMode === "solo" || gameMode === "practice") {
+    addMazeLoops(maze, ctx.w, ctx.h, Math.floor(loopCount * 0.5), mapRng);
+  }
+  applyMapStyle(maze, ctx.w, ctx.h, mapStyle, mapRng);
+  invalidateMinimapBase();
   gameApi.maze = maze;
   keyHuntState = null;
   platformerState = null;
+  puzzleDoorState = null;
+  shooterState = null;
   if (isKeyHuntMode()) {
     keyHuntState = setupKeyHuntLevel(ctx, maze, selectedLevel);
   }
   if (isPlatformerMode()) {
     platformerState = setupPlatformerLevel(ctx, maze, selectedLevel);
   }
+  if (isPuzzleDoorMode()) {
+    puzzleDoorState = setupPuzzleDoorLevel(ctx, maze, selectedLevel);
+  }
+  if (isShooterMode()) {
+    shooterState = createShooterState(selectedLevel);
+  }
   await yieldFrame();
   buildMazeMeshes(ctx, maze, scene, {
-    doorWalls: keyHuntState?.doors || [],
+    doorWalls: keyHuntState?.doors || puzzleDoorState?.doors || [],
   });
+  const richMap = isPuzzleDoorMode() || isShooterMode() || selectedLevel.w * selectedLevel.h >= 400;
+  const decor = buildMazeDecor(ctx, maze, scene, {
+    level: selectedLevel,
+    theme,
+    mapStyle,
+    skipHeavy: isShooterMode() || isPuzzleDoorMode() || gameMode === "solo" || (!richMap && selectedLevel.w * selectedLevel.h > 320),
+    soloLight: gameMode === "solo",
+  });
+  mazeDecorGroup = decor.group;
+  if (isShooterMode()) {
+    const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
+    shooterArenaGroup = arena.group;
+    verticalWorldState = {
+      group: arena.group,
+      platforms: arena.covers,
+      stairs: [],
+      bridges: [],
+      bouncePads: [],
+    };
+    bouncePads = [];
+  } else {
+    shooterArenaGroup = null;
+    verticalWorldState = buildVerticalWorld(ctx, maze, scene, {
+      ...selectedLevel,
+      verticalDensity: isPuzzleDoorMode() ? 9 : (gameMode === "solo" ? 6 : 5),
+      realmTier: selectedLevel.realmTier ?? 0,
+    });
+    bouncePads = verticalWorldState.bouncePads;
+  }
   await yieldFrame();
 
   exitPos = cellCenter(ctx, ctx.w - 1, ctx.h - 1);
@@ -1808,6 +2337,17 @@ async function runStartGame() {
 
   teleporters = createTeleporters(ctx, maze, isKeyHuntMode() ? 0 : ctx.teleporters);
   buildTeleporterMeshes(scene, teleporters);
+  if ((selectedLevel.realmTier ?? 0) >= 1 && verticalWorldState?.platforms?.length) {
+    const hiPlats = verticalWorldState.platforms.filter((pl) => pl.y >= 5);
+    if (hiPlats.length) {
+      const hi = hiPlats[Math.floor(hiPlats.length * 0.5)];
+      const mid = cellCenter(ctx, Math.floor(ctx.w / 2), Math.floor(ctx.h / 2));
+      const realmPair = { a: mid, b: { x: hi.x, z: hi.z }, id: teleporters.length, realm: true };
+      teleporters.push(realmPair);
+      buildTeleporterMeshes(scene, [realmPair]);
+      showToast("傳送門可前往高層領域（Rivals 風格）", 2200);
+    }
+  }
   worldItems = spawnWorldItems(ctx, maze, ctx.items);
   buildItemMeshes(scene, worldItems);
   if (isKeyHuntMode()) {
@@ -1818,6 +2358,14 @@ async function runStartGame() {
     platformerGroup = buildPlatformerMeshes(scene, platformerState, ctx.cell);
     missionStations = spawnMissionStations(ctx, maze, ctx.missions ?? 4);
     missionGroup = buildMissionMeshes(scene, missionStations, { compact: isTouchUiEnabled() });
+  } else if (isPuzzleDoorMode()) {
+    puzzleDoorGroup = buildPuzzleDoorMeshes(scene, puzzleDoorState, ctx.cell, ctx);
+    missionStations = [];
+    missionGroup = null;
+  } else if (isShooterMode()) {
+    missionStations = [];
+    missionGroup = null;
+    puzzleDoorGroup = null;
   } else {
     missionStations = spawnMissionStations(ctx, maze, ctx.missions);
     missionGroup = buildMissionMeshes(scene, missionStations, { compact: isTouchUiEnabled() });
@@ -1842,8 +2390,51 @@ async function runStartGame() {
   survivors = spawned.survivors;
   killers = spawned.killers;
   playAsKiller = !!spawned.playAsKiller;
+  for (const s of survivors) {
+    s._safeX = s.pos.x;
+    s._safeZ = s.pos.z;
+    s._safeElev = s.elev ?? 0;
+  }
   if (!survivors.length) throw new Error("倖存者生成失敗");
-  if (!killers.length && !isKeyHuntMode() && !isPlatformerMode()) throw new Error("獵人生成失敗");
+  if (!killers.length && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode()) {
+    throw new Error("獵人生成失敗");
+  }
+  if (isShooterMode()) {
+    survivors.forEach((s, i) => {
+      assignPaintColor(s, i);
+      const startGun = !s.isAI ? "rifle" : ["smg", "rifle", "shotgun", "sniper"][i % 4];
+      applyShooterLoadout(s, startGun);
+      attachShooterGun(s);
+      if (s.mesh) s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
+    });
+    document.body.classList.add("shooter-play");
+    const touchAb = document.getElementById("touchRowAbilities");
+    if (touchAb) touchAb.hidden = true;
+    const mmLabel = document.querySelector("#minimap-wrap label");
+    if (mmLabel) mmLabel.textContent = "雷達";
+    invalidateMinimapBase();
+    drawShooterRadar();
+    showToast(`${selectedLevel.name} · 1~4 換槍 · 左鍵射擊 · 狙擊右鍵開鏡`, 2400);
+    if (!isTouchUiEnabled()) renderer.domElement.requestPointerLock?.();
+    const humanShooter = survivors.find((s) => !s.isAI);
+    if (camera) {
+      camera.fov = shooterSettings.fov;
+      camera.near = 0.08;
+      camera.updateProjectionMatrix();
+    }
+    if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
+  } else {
+    if (camera) {
+      camera.fov = 68;
+      camera.near = 0.1;
+      camera.updateProjectionMatrix();
+    }
+    document.body.classList.remove("shooter-play", "shooter-ads");
+    shooterAds = false;
+    const touchAb = document.getElementById("touchRowAbilities");
+    if (touchAb) touchAb.hidden = false;
+    if (camera) detachFpGun(camera);
+  }
   gameApi.survivors = survivors;
 
   if (isKeyHuntMode()) {
@@ -1869,7 +2460,7 @@ async function runStartGame() {
   refreshGameplayHints();
   if (exitGroup) exitGroup.visible = usesExitWin();
   const khBar = document.getElementById("keyHuntBar");
-  if (khBar) khBar.style.display = isKeyHuntMode() ? "flex" : "none";
+  if (khBar) khBar.style.display = isKeyHuntMode() || isPuzzleDoorMode() ? "flex" : "none";
   updatePlayUiLayout();
   document.getElementById("hudEscHint")?.classList.add("show");
   if (isTouchUiEnabled()) {
@@ -1950,6 +2541,16 @@ function updateKeyHuntBar() {
   const bar = document.getElementById("keyHuntBar");
   const held = document.getElementById("heldKeysHud");
   const btn = document.getElementById("btnOpenDoor");
+  if (isPuzzleDoorMode() && puzzleDoorState && bar) {
+    bar.style.display = "flex";
+    const left = puzzleDoorsRemaining(puzzleDoorState.doors);
+    const total = puzzleDoorState.doors.length;
+    if (held) {
+      held.textContent = `謎題門 ${total - left}/${total} 已解鎖 · 按順序解題 · E 答題開門 · 綠色彈跳床可捷徑`;
+    }
+    if (btn) btn.style.display = "none";
+    return;
+  }
   if (!bar || !isKeyHuntMode()) return;
   const p = getHumanFocus();
   if (held && p) {
@@ -2030,9 +2631,19 @@ function setMissionText() {
     rules = `
     <li>門 ${kh ? doorsRemaining(kh.doors) : "?"} · 鑰匙 ${kh ? keysRemaining(kh.keys) : "?"} · 編號需對應 · 破門撬可開一扇</li>
     <li>限時 ${Math.round(matchTimeSeconds / 60)} 分 · 陷阱 · 尖刺 · HP 歸零失敗</li>`;
+  } else if (isPuzzleDoorMode()) {
+    const pd = puzzleDoorState;
+    modeText = "解題闖關：依序解開謎題門 · 答對才開 · 綠色彈跳床可捷徑";
+    rules = `
+    <li>謎門 ${pd ? puzzleDoorsRemaining(pd.doors) : "?"} 扇待解 · 須先解開前一扇才能挑戰下一扇</li>
+    <li>無獵人 · 全員抵達綠色出口通關 · 彩色地面／貨櫃／二～三樓平台與天橋可走</li>`;
   } else if (isPlatformerMode()) {
     modeText = "平台冒險：踩綠色小怪 · 躲噴火與落石 · 藍色箭頭為單向門";
     rules = `<li>空白鍵二段跳可越過矮牆 · 無獵人 · 到達出口通關</li>`;
+  } else if (isShooterMode()) {
+    const need = shooterState?.targetKills ?? 10;
+    modeText = `槍戰：左鍵射擊 · 達成 ${need} 擊殺 · 全員相同三種槍（1/2/3）`;
+    rules = `<li>平地競技 · 肩後視角 · 滑壘＋衝刺 · 被擊倒數秒重生</li>`;
   } else if (playAsKiller) {
     modeText = `扮演 ${selectedKiller?.name}：擊倒所有倖存者`;
     rules = `<li>無終點模式：時間到仍有倖存者則你輸</li>`;
@@ -2098,7 +2709,7 @@ function syncTouchHudFromPlayer() {
 
 function updateAbilityBar() {
   if (!abilityBar) return;
-  if (isKeyHuntMode() || isTouchUiEnabled()) {
+  if (isKeyHuntMode() || isTouchUiEnabled() || isShooterMode()) {
     abilityBar.innerHTML = "";
     abilityBar.style.display = "none";
     return;
@@ -2177,7 +2788,12 @@ function setupInput() {
     if (gameState === "play" && BLOCK_KEYS.has(e.code)) e.preventDefault();
     keys[e.code] = true;
 
-    if (gameState === "play" && e.code === "KeyE" && nearMissionStation && !playAsKiller && !activeQuiz && !isKeyHuntMode()) {
+    if (gameState === "play" && e.code === "KeyE" && nearPuzzleDoor && !playAsKiller && !activeQuiz && isPuzzleDoorMode()) {
+      e.preventDefault();
+      openMathQuiz(nearPuzzleDoor);
+      return;
+    }
+    if (gameState === "play" && e.code === "KeyE" && nearMissionStation && !playAsKiller && !activeQuiz && !isKeyHuntMode() && !isPuzzleDoorMode()) {
       e.preventDefault();
       openMathQuiz(nearMissionStation);
       return;
@@ -2187,13 +2803,19 @@ function setupInput() {
       tryOpenDoorInput();
       return;
     }
-    if (gameState === "play" && e.code === "KeyR" && !playAsKiller) {
+    if (gameState === "play" && e.code === "KeyR" && !playAsKiller && !isShooterMode()) {
       e.preventDefault();
       tryUseFirstItem();
       return;
     }
+    if (gameState === "play" && isShooterMode()) {
+      if (e.code === "Digit1" || e.code === "Numpad1") { tryShooterWeaponSwitch(1); return; }
+      if (e.code === "Digit2" || e.code === "Numpad2") { tryShooterWeaponSwitch(2); return; }
+      if (e.code === "Digit3" || e.code === "Numpad3") { tryShooterWeaponSwitch(3); return; }
+      if (e.code === "Digit4" || e.code === "Numpad4") { tryShooterWeaponSwitch(4); return; }
+    }
     if (gameState !== "play") return;
-    if (!isKeyHuntMode() && !isPlatformerMode()) handleAbilityKeys(e.code, true);
+    if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) handleAbilityKeys(e.code, true);
   });
   window.addEventListener("keyup", (e) => {
     keys[e.code] = false;
@@ -2216,6 +2838,26 @@ function setupInput() {
     initAudioEngine();
     if (gameState !== "play") return;
     const humanKiller = killers.find((k) => !k.isAI);
+    if (e.button === 0 && isShooterMode()) {
+      const human = getHumanFocus();
+      if (human) {
+        e.preventDefault();
+        tryShooterFire(human);
+        if (!pointerLocked) renderer.domElement.requestPointerLock?.();
+      }
+      return;
+    }
+    if (e.button === 2 && isShooterMode()) {
+      e.preventDefault();
+      const human = getHumanSurvivor();
+      if (human && getShooterWeapon(human.weaponId)?.id === "sniper") {
+        shooterAds = true;
+        document.body.classList.add("shooter-ads");
+        updateShooterFov();
+        updateCrosshair();
+      }
+      return;
+    }
     if (e.button === 0 && humanKiller && (playAsKiller || gameMode === "versus")) {
       e.preventDefault();
       tryKillerBasicAttack(humanKiller);
@@ -2226,10 +2868,21 @@ function setupInput() {
       renderer.domElement.requestPointerLock?.();
     }
   });
+  window.addEventListener("mouseup", (e) => {
+    if (e.button === 2 && shooterAds) {
+      shooterAds = false;
+      document.body.classList.remove("shooter-ads");
+      updateShooterFov();
+      updateCrosshair();
+    }
+  });
+  renderer.domElement.addEventListener("contextmenu", (e) => {
+    if (isShooterMode()) e.preventDefault();
+  });
   document.addEventListener("mousemove", (e) => {
     if (!pointerLocked || gameState !== "play") return;
     camYaw -= e.movementX * 0.0022;
-    camPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, camPitch + e.movementY * 0.0022));
+    applyLookPitch(e.movementY, 0.0022);
   });
   window.addEventListener("resize", () => {
     const W = window.innerWidth;
@@ -2241,7 +2894,7 @@ function setupInput() {
     }
   });
   renderer.domElement.addEventListener("wheel", (e) => {
-    if (gameState !== "play") return;
+    if (gameState !== "play" || isShooterMode()) return;
     e.preventDefault();
     camDist = Math.max(CAM_DIST_MIN, Math.min(CAM_DIST_MAX, camDist + e.deltaY * 0.012));
   }, { passive: false });
@@ -2268,7 +2921,7 @@ function setupInput() {
 }
 
 function handleZoomKeys() {
-  if (gameState !== "play") return;
+  if (gameState !== "play" || isShooterMode()) return;
   const zp = playAsKiller ? "killer" : "p1";
   if (keyDown(keys, zp, "zoomIn") || keyDown(keys, "p1", "zoomIn")) {
     camDist = Math.max(CAM_DIST_MIN, camDist - 12 * 0.016);
@@ -2299,9 +2952,12 @@ function pollTouchVirtualKeys() {
       if (code === "KeyG" && isKeyHuntMode()) tryOpenDoorInput();
       else if (code === "KeyR" && !playAsKiller) tryUseFirstItem();
       else if (
-        code === "KeyE" && nearMissionStation && !playAsKiller && !activeQuiz && !isKeyHuntMode()
+        code === "KeyE" && nearPuzzleDoor && !playAsKiller && !activeQuiz && isPuzzleDoorMode()
+      ) openMathQuiz(nearPuzzleDoor);
+      else if (
+        code === "KeyE" && nearMissionStation && !playAsKiller && !activeQuiz && !isKeyHuntMode() && !isPuzzleDoorMode()
       ) openMathQuiz(nearMissionStation);
-      else if (!isKeyHuntMode() && !isPlatformerMode()) handleAbilityKeys(code, true);
+      else if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) handleAbilityKeys(code, true);
     }
     if (now) touchKeyPrev[code] = true;
     else delete touchKeyPrev[code];
@@ -2382,6 +3038,41 @@ function updateSprint(p, dt, wantsSprint, moving) {
   return false;
 }
 
+function updatePuzzleDoorProximity() {
+  nearPuzzleDoor = null;
+  if (!isPuzzleDoorMode() || !puzzleDoorState || playAsKiller || activeQuiz) {
+    const hint = document.getElementById("missionInteractHint");
+    if (hint && isPuzzleDoorMode()) hint.style.display = "none";
+    if (isTouchUiEnabled()) setTouchMissionHighlight(false);
+    return;
+  }
+  const p = getHumanFocus();
+  if (!p || p.caught) return;
+  nearPuzzleDoor = getNearPuzzleDoor(p, puzzleDoorState.doors, ctx);
+  const hint = document.getElementById("missionInteractHint");
+  if (hint) {
+    if (nearPuzzleDoor) {
+      hint.style.display = "block";
+      hint.textContent = gamepadActive
+        ? `按 ${getGamepadActionLabels(false).interact} 解 #${nearPuzzleDoor.label} 號謎門（選答案）`
+        : isTouchUiEnabled()
+          ? `發光 ? 門前 · 按 E 或右下「解題」· #${nearPuzzleDoor.label}`
+          : `靠近發光的 ? 門 · 按 E 解題（選答案）· #${nearPuzzleDoor.label}`;
+    } else {
+      const lockHint = getLockedPuzzleDoorHint(p, puzzleDoorState.doors, ctx);
+      if (lockHint) {
+        hint.style.display = "block";
+        hint.textContent = lockHint;
+      } else {
+        hint.style.display = "none";
+      }
+    }
+  }
+  if (isTouchUiEnabled()) {
+    setTouchMissionHighlight(!!nearPuzzleDoor);
+  }
+}
+
 function updateMissionsProximity() {
   nearMissionStation = null;
   const missionBtn = document.getElementById("btnTouchMission");
@@ -2390,7 +3081,7 @@ function updateMissionsProximity() {
     if (missionBtn) missionBtn.hidden = true;
     if (missionBanner) missionBanner.hidden = true;
   };
-  if (playAsKiller || activeQuiz || isKeyHuntMode()) {
+  if (playAsKiller || activeQuiz || isKeyHuntMode() || isPuzzleDoorMode()) {
     const hint = document.getElementById("missionInteractHint");
     if (hint) hint.style.display = "none";
     hideMissionTouchUi();
@@ -2417,7 +3108,7 @@ function updateMissionsProximity() {
     }
   }
 
-  const showMission = !!nearMissionStation && !playAsKiller && !isKeyHuntMode() && !activeQuiz;
+  const showMission = !!nearMissionStation && !playAsKiller && !isKeyHuntMode() && !isPuzzleDoorMode() && !activeQuiz;
   if (missionBtn) missionBtn.hidden = true;
   if (missionBanner) missionBanner.hidden = true;
   if (isTouchUiEnabled()) setTouchMissionHighlight(showMission);
@@ -2434,31 +3125,53 @@ function updateMissionsProximity() {
 function updateEntity(p, dt, move) {
   if (p.caught) return;
   tickCooldowns(p, dt);
+  if (p.elev == null) p.elev = 0;
   if (p._jumpY == null) p._jumpY = 0;
-  const grav = p.role === "killer" ? 32 : 26;
-  p.velY = (p.velY ?? 0) - grav * dt;
-  p._jumpY += p.velY * dt;
-  if (p._jumpY <= 0) {
-    p._jumpY = 0;
-    p.velY = 0;
-    p.onGround = true;
-    if ((p.jumpsUsed ?? 0) >= 2 && hasDoubleJumpPassive(p)) {
-      p._djRechargeUntil = Math.max(p._djRechargeUntil ?? 0, elapsed + DOUBLE_JUMP_RECHARGE);
-    }
-    p.jumpsUsed = 0;
-    if (hasDoubleJumpPassive(p) && elapsed >= (p._djRechargeUntil ?? 0)) {
-      p._airJumpReady = true;
-    }
+
+  if (verticalWorldState) {
+    updateVerticalPhysics(p, dt, verticalWorldState);
+    applyFallSafety(p);
   } else {
-    p.onGround = false;
+    const grav = isShooterMode() ? 36 : p.role === "killer" ? 32 : 26;
+    p.velY = (p.velY ?? 0) - grav * dt;
+    p._jumpY += p.velY * dt;
+    if (p._jumpY <= 0) {
+      p._jumpY = 0;
+      p.velY = 0;
+      p.onGround = true;
+      if (!isShooterMode()) {
+        if ((p.jumpsUsed ?? 0) >= 2 && hasDoubleJumpPassive(p)) {
+          p._djRechargeUntil = Math.max(p._djRechargeUntil ?? 0, elapsed + DOUBLE_JUMP_RECHARGE);
+        }
+        p.jumpsUsed = 0;
+        if (hasDoubleJumpPassive(p) && elapsed >= (p._djRechargeUntil ?? 0)) {
+          p._airJumpReady = true;
+        }
+      }
+    } else {
+      p.onGround = false;
+    }
+  }
+  if (p.onGround) {
+    if (!isShooterMode()) {
+      if ((p.jumpsUsed ?? 0) >= 2 && hasDoubleJumpPassive(p)) {
+        p._djRechargeUntil = Math.max(p._djRechargeUntil ?? 0, elapsed + DOUBLE_JUMP_RECHARGE);
+      }
+      p.jumpsUsed = 0;
+      if (hasDoubleJumpPassive(p) && elapsed >= (p._djRechargeUntil ?? 0)) {
+        p._airJumpReady = true;
+      }
+    }
   }
   const speedMult = getSpeedMult(p);
   const moving = !!(move.x || move.z);
   const wantsSprint = move.sprint && moving;
   const sprinting = updateSprint(p, dt, wantsSprint, moving);
   const isKiller = p.role === "killer";
-  let maxSpeed = (isKiller ? KILLER_WALK : WALK_SPEED) * speedMult;
-  if (sprinting) maxSpeed = (isKiller ? KILLER_SPRINT : SPRINT_SPEED) * speedMult;
+  const mapScale = getMapMoveScale();
+  const classSpd = p._shooterSpeedMult ?? 1;
+  let maxSpeed = (isKiller ? KILLER_WALK : WALK_SPEED) * speedMult * mapScale * classSpd;
+  if (sprinting) maxSpeed = (isKiller ? KILLER_SPRINT : SPRINT_SPEED) * speedMult * mapScale * classSpd;
   if (gameMode === "practice" && isKiller && p.isAI) maxSpeed *= 0.82;
   if (gameMode === "hardcore" && isKiller) maxSpeed *= 1.12;
   const parts = p.mesh?.userData?.parts;
@@ -2480,9 +3193,9 @@ function updateEntity(p, dt, move) {
       parts.leftLeg.position.z = -0.22;
       parts.rightLeg.position.z = 0.48;
     }
-    playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY);
+    playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY ?? 0, p.elev ?? 0);
     if (p.mesh) {
-      p.mesh.position.set(p.pos.x, p._jumpY, p.pos.z);
+      p.mesh.position.set(p.pos.x, worldHeight(p), p.pos.z);
       p.mesh.rotation.y = p.yaw;
     }
     return;
@@ -2511,15 +3224,31 @@ function updateEntity(p, dt, move) {
 
   const spd = Math.hypot(p.vel.x, p.vel.z);
   if (spd > 0.05) {
-    playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY);
-    if (p.mesh) p.mesh.rotation.y = Math.atan2(p.vel.x, p.vel.z);
+    playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY ?? 0, p.elev ?? 0);
+  }
+  if (isShooterMode() && !p.isAI) {
+    p.yaw = camYaw;
+  } else if (spd > 0.05 && p.mesh) {
+    p.mesh.rotation.y = Math.atan2(p.vel.x, p.vel.z);
+  }
+
+  if (p.onGround && spd > 1.4 && !p.caught && !p.sliding) {
+    p._stepCd = (p._stepCd ?? 0) - dt;
+    const stepGap = sprinting ? 0.28 : 0.38;
+    if (p._stepCd <= 0) {
+      if (!p.isAI) playSfx("footstep", 0.09);
+      else if (isShooterMode()) playSfx("footstep", 0.14);
+      p._stepCd = stepGap * (8 / Math.max(4, spd));
+    }
   }
   applyMeshAnim(p, dt);
   if (!p._anim && shouldAnimateEntity(p)) applyLocomotionAnim(p, dt);
   tickEntityUnstuck(p, dt);
 
+  if (isShooterMode() && p.weaponId) tickGunFlash(p, dt, camera);
+
   if (p.mesh) {
-    p.mesh.position.set(p.pos.x, p._jumpY, p.pos.z);
+    p.mesh.position.set(p.pos.x, worldHeight(p), p.pos.z);
     if (p.mesh.scale.x !== 1) p.mesh.scale.set(1, 1, 1);
     if (p._hitFlash > 0) {
       p._hitFlash -= dt;
@@ -2529,6 +3258,7 @@ function updateEntity(p, dt, move) {
       });
     } else if (p.role === "survivor") {
       p.mesh.traverse((c) => {
+        if (c === p.gunMesh) return;
         if (c.material?.emissive) c.material.emissiveIntensity = 0;
       });
     }
@@ -2538,8 +3268,15 @@ function updateEntity(p, dt, move) {
     p.history.push({ x: p.pos.x, z: p.pos.z });
     if (p.history.length > 60) p.history.shift();
     if (p.cloneMesh) {
-      p.cloneMesh.position.x += (p.pos.x + 3 - p.cloneMesh.position.x) * dt * 0.5;
-      p.cloneMesh.position.z += (p.pos.z - p.cloneMesh.position.z) * dt * 0.5;
+      if ((p._cloneUntil ?? 0) <= elapsed) {
+        scene.remove(p.cloneMesh);
+        p.cloneMesh = null;
+      } else {
+        p.cloneMesh.visible = true;
+        p.cloneMesh.position.x += (p.pos.x + 2.8 - p.cloneMesh.position.x) * dt * 0.55;
+        p.cloneMesh.position.z += (p.pos.z + 1.2 - p.cloneMesh.position.z) * dt * 0.55;
+        p.cloneMesh.position.y = worldHeight(p);
+      }
     }
     const invisible = p.effects.invisible > 0;
     const selfView = invisible && !p.isAI;
@@ -2608,7 +3345,7 @@ function updateAISurvivor(s, dt) {
     return;
   }
   const { killer: k, dist: distK } = getNearestKiller(s);
-  if (!k) return;
+  if (!k && !isPuzzleDoorMode()) return;
 
   let tx;
   let tz;
@@ -2616,7 +3353,7 @@ function updateAISurvivor(s, dt) {
 
   if (s._aiRoamTimer == null) s._aiRoamTimer = 0;
 
-  if (distK < 15) {
+  if (distK < 15 && k) {
     tx = s.pos.x + (s.pos.x - k.pos.x) * 2.5;
     tz = s.pos.z + (s.pos.z - k.pos.z) * 2.5;
     s._aiRoamTimer = 0;
@@ -2736,7 +3473,7 @@ function updateSurvivors(dt) {
     const useCam = profile === "p1" || gameMode === "coop";
     const move = getMoveFromProfile(profile, useCam ? camYaw : s.yaw, gp);
     if (!s._gpPrev) s._gpPrev = {};
-    const missionLock = nearMissionStation && !activeQuiz && !playAsKiller;
+    const missionLock = (nearMissionStation || nearPuzzleDoor) && !activeQuiz && !playAsKiller;
     if (!s.isAI) {
       const ctrlProfile = playAsKiller && s.profile === "p1" ? "p1" : profile;
       if (isKeyHuntMode()) {
@@ -2752,7 +3489,8 @@ function updateSurvivors(dt) {
         if (!gp?.useItem) s._gpUseItem = false;
       } else if (!isPlatformerMode() && missionLock && gp?.interact && !s._gpInteract) {
         s._gpInteract = true;
-        openMathQuiz(nearMissionStation);
+        if (nearPuzzleDoor) openMathQuiz(nearPuzzleDoor);
+        else openMathQuiz(nearMissionStation);
       } else if (!gp?.interact) {
         s._gpInteract = false;
       }
@@ -2778,11 +3516,14 @@ function updateSurvivors(dt) {
       tryJump(s, ctrlProfile, gp);
       const slidMove = applySlideInput(s, ctrlProfile, move, dt, gp);
       updateEntity(s, dt, slidMove);
-    } else if (s.isAI) updateAISurvivor(s, dt);
-    else updateEntity(s, dt, move);
+    } else if (s.isAI && !isShooterMode()) updateAISurvivor(s, dt);
+    else if (!s.isAI) updateEntity(s, dt, move);
   });
 
   updateMissionsProximity();
+  updatePuzzleDoorProximity();
+  updatePuzzleWaypointHud();
+  tickPuzzleDoorBeacons();
   checkExitWin();
   if (frameCount % 8 === 0) {
     updateKeyHuntBar();
@@ -2826,44 +3567,42 @@ function updateOneKiller(k, dt) {
     return;
   }
 
-  let target = null;
-  let bestD = Infinity;
-  for (const s of survivors) {
-    if (s.caught || isInvisibleToKiller(s)) continue;
-    const d = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
-    if (d < bestD) { bestD = d; target = s; }
-  }
-  if (!target) return;
+  const chase = getKillerAITarget(k);
+  if (!chase) return;
+  const target = chase.entity;
+  const chaseX = chase.x;
+  const chaseZ = chase.z;
 
   if (k._pathTimer === undefined) k._pathTimer = 0;
   k._pathTimer -= dt;
   if (k._pathTimer <= 0) {
     k._pathTimer = 0.4;
-    k._pathTarget = bfsNextStep(ctx, maze, k.pos.x, k.pos.z, target.pos.x, target.pos.z);
+    k._pathTarget = bfsNextStep(ctx, maze, k.pos.x, k.pos.z, chaseX, chaseZ);
   }
-  let dx = target.pos.x - k.pos.x;
-  let dz = target.pos.z - k.pos.z;
+  let dx = chaseX - k.pos.x;
+  let dz = chaseZ - k.pos.z;
   if (k._pathTarget) {
     dx = k._pathTarget.x - k.pos.x;
     dz = k._pathTarget.z - k.pos.z;
   }
   const pathDist = Math.hypot(dx, dz);
   const toSurvivor = Math.hypot(target.pos.x - k.pos.x, target.pos.z - k.pos.z);
+  const toChase = Math.hypot(chaseX - k.pos.x, chaseZ - k.pos.z);
 
   if (!k._lastPos) k._lastPos = { x: k.pos.x, z: k.pos.z };
   const moved = Math.hypot(k.pos.x - k._lastPos.x, k.pos.z - k._lastPos.z);
   if (moved < 0.05) k._stuckT = (k._stuckT || 0) + dt;
   else k._stuckT = 0;
   k._lastPos = { x: k.pos.x, z: k.pos.z };
-  if (k._stuckT > 0.5 || (pathDist < 1.2 && toSurvivor > 5)) {
-    dx = target.pos.x - k.pos.x;
-    dz = target.pos.z - k.pos.z;
+  if (k._stuckT > 0.5 || (pathDist < 1.2 && toChase > 5)) {
+    dx = chaseX - k.pos.x;
+    dz = chaseZ - k.pos.z;
     k._pathTarget = null;
     k._pathTimer = 0;
   }
 
   k._aiAtkCd = (k._aiAtkCd ?? 0) - dt;
-  if (toSurvivor < KILLER_MELEE_RANGE + 0.5) {
+  if (!chase.isClone && toSurvivor < KILLER_MELEE_RANGE + 0.5) {
     tryKillerMeleeAttack(k, target, KILLER_MELEE_DAMAGE);
   } else if (toSurvivor < 12 && k._aiAtkCd <= 0) {
     k._aiAtkCd = perfTier === "low" ? 0.85 : 0.55;
@@ -2875,9 +3614,9 @@ function updateOneKiller(k, dt) {
   }
 
   const mustChase = pathDist < 2 || k._stuckT > 0.35 || toSurvivor < 14;
-  if (mustChase && toSurvivor > 1.2) {
-    dx = target.pos.x - k.pos.x;
-    dz = target.pos.z - k.pos.z;
+  if (mustChase && toChase > 1.2) {
+    dx = chaseX - k.pos.x;
+    dz = chaseZ - k.pos.z;
   }
   const moveDist = Math.hypot(dx, dz);
   if (moveDist > 0.2) {
@@ -2904,7 +3643,7 @@ function syncProjectileMeshes() {
   projectiles.forEach((pr, i) => {
     const m = vfxMeshes[i];
     if (!m) return;
-    m.position.set(pr.x, 1.2, pr.z);
+    m.position.set(pr.x, pr.y ?? 1.2, pr.z);
     m.material.color.setHex(pr.color || 0xff2244);
   });
 }
@@ -2913,10 +3652,46 @@ function updateProjectiles(dt) {
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const pr = projectiles[i];
     pr.life -= dt;
+    const prevX = pr.x;
+    const prevZ = pr.z;
+    const prevY = pr.y ?? 1.2;
     pr.x += pr.vx * dt;
     pr.z += pr.vz * dt;
-    if (pr.life <= 0 || collides(ctx, maze, pr.x, pr.z, 0.2)) {
+    if (pr.vy != null) pr.y = (pr.y ?? 1.2) + pr.vy * dt;
+
+    let hit = pr.life <= 0;
+    let hitType = "wall";
+    if (!hit && pr.y != null && pr.y <= 0.1) {
+      hit = true;
+      hitType = "floor";
+      pr.y = 0.1;
+    }
+    if (!hit && collides(ctx, maze, pr.x, pr.z, 0.2, 0, 0, { vaultClear: 99 })) {
+      hit = true;
+      hitType = "wall";
+    }
+
+    if (hit) {
       projectiles.splice(i, 1);
+      continue;
+    }
+    if (pr.fromShooter && pr.owner) {
+      for (const s of survivors) {
+        if (s === pr.owner || s.caught || (s.hp ?? 0) <= 0) continue;
+        if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
+          projectiles.splice(i, 1);
+          let dmg = pr.damage || 22;
+          let headshot = false;
+          if (pr.owner && pr.fireDir && isShooterHeadshot(pr.owner, s, pr.fireDir)) {
+            dmg = 999;
+            headshot = true;
+          }
+          const col = pr.owner.paintColor ?? pr.color ?? 0xff4466;
+          spawnPaintOnBody(scene, s, pr.owner.pos.x, pr.owner.pos.z, worldHeight(s), col);
+          damageSurvivor(s, pr.owner, dmg, { headshot });
+          continue;
+        }
+      }
       continue;
     }
     for (const s of getAliveSurvivors()) {
@@ -2965,15 +3740,41 @@ function ensureCoopCamera() {
 
 function updateCameraForPlayer(cam, focus, yaw, pitch) {
   if (!cam || !focus) return;
-  const pos = focus.pos;
-  const pitchOff = pitch * 5;
-  const cx = pos.x - Math.sin(yaw) * camDist;
-  const cz = pos.z - Math.cos(yaw) * camDist;
-  const cy = 3.8 + pitchOff + camDist * 0.15;
+  if (isShooterMode()) {
+    const eyeY = 1.62 + jumpYFor(focus);
+    if (!isSpectating()) {
+      const cosP = Math.cos(pitch);
+      const sinP = Math.sin(pitch);
+      const fx = Math.sin(yaw) * cosP;
+      const fy = sinP;
+      const fz = Math.cos(yaw) * cosP;
+      cam.position.set(focus.pos.x, eyeY, focus.pos.z);
+      cam.lookAt(
+        focus.pos.x + fx * 20,
+        eyeY + fy * 20,
+        focus.pos.z + fz * 20
+      );
+      return;
+    }
+    const dist = 9;
+    const cx = focus.pos.x - Math.sin(yaw) * dist;
+    const cz = focus.pos.z - Math.cos(yaw) * dist;
+    cam.position.set(cx, eyeY + 2.8, cz);
+    cam.lookAt(focus.pos.x, eyeY + 0.4, focus.pos.z);
+    return;
+  }
+  const lerpK = 0.2;
+  const dist = camDist;
+  const cosP = Math.cos(pitch);
+  const sinP = Math.sin(pitch);
+  const lookY = 1.85 + jumpYFor(focus);
+  const cx = focus.pos.x - Math.sin(yaw) * cosP * dist;
+  const cz = focus.pos.z - Math.cos(yaw) * cosP * dist;
+  const cy = lookY + sinP * dist * 1.05 + Math.max(0, cosP) * 2.4;
   const targetCam = new THREE.Vector3(cx, cy, cz);
   if (cam.position.distanceTo(targetCam) > 35) cam.position.copy(targetCam);
-  else cam.position.lerp(targetCam, 0.2);
-  cam.lookAt(pos.x, 2.2 + jumpYFor(focus), pos.z);
+  else cam.position.lerp(targetCam, lerpK);
+  cam.lookAt(focus.pos.x, lookY, focus.pos.z);
 }
 
 function snapCameraToPlayer() {
@@ -3051,7 +3852,7 @@ function renderGameView() {
 }
 
 function jumpYFor(p) {
-  return p?._jumpY ?? 0;
+  return worldHeight(p);
 }
 
 function formatTime(s) {
@@ -3060,30 +3861,61 @@ function formatTime(s) {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
-function drawMinimap() {
-  if (!minimapCanvas || !maze) return;
+function paintColorCss(c) {
+  return `#${((c ?? 0xffffff) >>> 0).toString(16).padStart(6, "0").slice(-6)}`;
+}
+
+function drawShooterRadar() {
+  if (!minimapCanvas || !maze || !isShooterMode()) return;
+  if (!minimapBaseCanvas) rebuildMinimapBase();
   const ctx2 = minimapCanvas.getContext("2d");
   const w = minimapCanvas.width;
-  const h = minimapCanvas.height;
   const pad = 3;
   const cellPx = (w - pad * 2) / ctx.w;
+  ctx2.drawImage(minimapBaseCanvas, 0, 0);
 
-  ctx2.fillStyle = "#0c0814";
-  ctx2.fillRect(0, 0, w, h);
+  const toMap = (wx, wz) => [
+    pad + ((wx + (ctx.w * ctx.cell) / 2) / ctx.cell) * cellPx,
+    pad + ((wz + (ctx.h * ctx.cell) / 2) / ctx.cell) * cellPx,
+  ];
 
-  for (let gz = 0; gz < ctx.h; gz++) {
-    for (let gx = 0; gx < ctx.w; gx++) {
-      const cell = maze[gz][gx];
-      const px = pad + gx * cellPx;
-      const py = pad + gz * cellPx;
-      ctx2.fillStyle = "#3a3050";
-      ctx2.fillRect(px, py, cellPx, cellPx);
-      ctx2.strokeStyle = "#6a5888";
-      ctx2.lineWidth = 0.5;
-      if (cell.top) { ctx2.beginPath(); ctx2.moveTo(px, py); ctx2.lineTo(px + cellPx, py); ctx2.stroke(); }
-      if (cell.left) { ctx2.beginPath(); ctx2.moveTo(px, py); ctx2.lineTo(px, py + cellPx); ctx2.stroke(); }
+  const human = getHumanSurvivor();
+  for (const s of survivors) {
+    if (s.caught || (s.hp ?? 0) <= 0) continue;
+    const [px, py] = toMap(s.pos.x, s.pos.z);
+    const isYou = s === human;
+    ctx2.fillStyle = paintColorCss(s.paintColor ?? s.charDef?.accent ?? 0xffffff);
+    ctx2.strokeStyle = isYou ? "#ffffff" : "#00000088";
+    ctx2.lineWidth = isYou ? 2 : 1;
+    ctx2.beginPath();
+    ctx2.arc(px, py, isYou ? 5 : 4, 0, Math.PI * 2);
+    ctx2.fill();
+    ctx2.stroke();
+    if (isYou) {
+      const face = camYaw;
+      ctx2.save();
+      ctx2.translate(px, py);
+      ctx2.rotate(-face);
+      ctx2.fillStyle = "#ffffff";
+      ctx2.beginPath();
+      ctx2.moveTo(0, -8);
+      ctx2.lineTo(4, 3);
+      ctx2.lineTo(-4, 3);
+      ctx2.closePath();
+      ctx2.fill();
+      ctx2.restore();
     }
   }
+}
+
+function drawMinimap() {
+  if (!minimapCanvas || !maze || isShooterMode()) return;
+  if (!minimapBaseCanvas) rebuildMinimapBase();
+  const ctx2 = minimapCanvas.getContext("2d");
+  const w = minimapCanvas.width;
+  const pad = 3;
+  const cellPx = (w - pad * 2) / ctx.w;
+  ctx2.drawImage(minimapBaseCanvas, 0, 0);
 
   const toMap = (wx, wz) => [
     pad + ((wx + (ctx.w * ctx.cell) / 2) / ctx.cell) * cellPx,
@@ -3152,6 +3984,91 @@ function drawMinimap() {
       const [dx, dy] = toMap(d.x, d.z);
       ctx2.fillStyle = `#${(d.color >>> 0).toString(16).padStart(6, "0").slice(-6)}`;
       ctx2.fillRect(dx - 2, dy - 2, 4, 4);
+    });
+  }
+  if (puzzleDoorState?.doors) {
+    ctx2.font = "bold 11px system-ui, sans-serif";
+    ctx2.textAlign = "center";
+    ctx2.textBaseline = "middle";
+    const pFocus = getHumanFocus();
+    const pc = pFocus ? worldToCell(ctx, pFocus.pos.x, pFocus.pos.z) : { gx: 0, gz: 0 };
+    puzzleDoorState.doors.forEach((d) => {
+      if (d.open) return;
+      const mp = getDoorMapPos(ctx, d);
+      const ac = worldToCell(ctx, mp.x, mp.z);
+      const locked = d.requires >= 0 && !puzzleDoorState.doors[d.requires]?.open;
+      const reachable = !locked && isCellReachable(ctx, maze, pc.gx, pc.gz, ac.gx, ac.gz);
+      const [dx, dy] = toMap(mp.x, mp.z);
+      ctx2.fillStyle = locked ? "#665577" : reachable ? "#ffdd55" : "#aa8833";
+      ctx2.strokeStyle = "#221133";
+      ctx2.lineWidth = 2;
+      ctx2.strokeText("?", dx, dy);
+      ctx2.fillText("?", dx, dy);
+    });
+  }
+}
+
+function updatePuzzleWaypointHud() {
+  const el = document.getElementById("puzzleWaypoint");
+  if (!el) return;
+  if (!isPuzzleDoorMode() || !puzzleDoorState || playAsKiller || activeQuiz) {
+    el.hidden = true;
+    return;
+  }
+  const p = getHumanFocus();
+  if (!p || p.caught) {
+    el.hidden = true;
+    return;
+  }
+  const target = getNextPuzzleDoor(puzzleDoorState.doors);
+  if (!target) {
+    el.hidden = true;
+    return;
+  }
+  const ap = getDoorApproach(ctx, target);
+  const ac = worldToCell(ctx, ap.x, ap.z);
+  const pc = worldToCell(ctx, p.pos.x, p.pos.z);
+  const reachable = isCellReachable(ctx, maze, pc.gx, pc.gz, ac.gx, ac.gz);
+  const best = Math.hypot(ap.x - p.pos.x, ap.z - p.pos.z);
+  const dx = ap.x - p.pos.x;
+  const dz = ap.z - p.pos.z;
+  const ang = Math.atan2(dx, dz) - camYaw;
+  const deg = ((ang * 180) / Math.PI + 360) % 360;
+  const arrow =
+    deg < 22.5 || deg >= 337.5 ? "↑" :
+    deg < 67.5 ? "↗" :
+    deg < 112.5 ? "→" :
+    deg < 157.5 ? "↘" :
+    deg < 202.5 ? "↓" :
+    deg < 247.5 ? "↙" :
+    deg < 292.5 ? "←" : "↖";
+  el.hidden = false;
+  el.textContent = reachable
+    ? `${arrow} #${target.label} · ${best.toFixed(0)}m`
+    : `#${target.label} 需繞路 · ${best.toFixed(0)}m`;
+  el.title = reachable
+    ? "跟著小地圖黃色 ? 與發光門 · 靠近按 E"
+    : "橘色 ? = 目前路被擋 · 請找其他通道繞過去";
+  const obj = document.getElementById("hudObjective");
+  if (obj && best > 6) {
+    obj.dataset.puzzleDist = String(Math.round(best));
+  }
+}
+
+function tickPuzzleDoorBeacons() {
+  if (!isPuzzleDoorMode() || !puzzleDoorState?.doors) return;
+  const t = elapsed * 3;
+  const next = getNextPuzzleDoor(puzzleDoorState.doors);
+  for (const d of puzzleDoorState.doors) {
+    if (!d.mesh || d.open) continue;
+    const active = d === next;
+    const pulse = active ? 0.55 + Math.sin(t) * 0.35 : 0.2;
+    d.mesh.scale.setScalar(0.94 + pulse * 0.1);
+    if (d.beacon) d.beacon.intensity = active ? 1.6 + Math.sin(t) * 0.9 : 0.25;
+    d.mesh.traverse((c) => {
+      if (c.material?.emissive) {
+        c.material.emissiveIntensity = active ? 0.7 + Math.sin(t) * 0.35 : 0.35;
+      }
     });
   }
 }
@@ -3246,6 +4163,38 @@ function updateHUD() {
       : `出口 ${distExit.toFixed(0)}m · 獵人 ${distK.toFixed(0)}m · HP ${hp}`;
   }
 
+  const mapLabel = document.getElementById("hudMapName");
+  if (mapLabel && selectedLevel) {
+    mapLabel.textContent = `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
+  }
+
+  if (isShooterMode() && shooterState) {
+    const gun = getShooterWeapon(focus.weaponId);
+    const k = shooterState.humanKills || 0;
+    const need = shooterState.targetKills || 10;
+    document.getElementById("hudObjective").textContent =
+      `【${shooterState.levelName}】擊殺 ${k}/${need} · ${gun.name}`;
+    document.getElementById("hudKiller").textContent = "槍戰模式 · 無獵人";
+    document.getElementById("hudKillerTimer").textContent =
+      `剩餘 ${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+    warning.classList.remove("show");
+    if (distEl) distEl.textContent = `${gun.name} · 擊殺 ${k}/${need} · HP ${hp} · 1~4 換槍 · 狙擊右鍵開鏡`;
+    return;
+  }
+
+  if (isPuzzleDoorMode() && puzzleDoorState) {
+    const left = puzzleDoorsRemaining(puzzleDoorState.doors);
+    const total = puzzleDoorState.doors.length;
+    document.getElementById("hudObjective").textContent =
+      left > 0
+        ? `謎題門 ${total - left}/${total} · 跟著 ? 與箭頭 · 靠近發光門按 E 解題`
+        : `全員前往出口 · 謎題已解完`;
+    document.getElementById("hudKiller").textContent = "解題闖關 · 無獵人";
+    warning.classList.remove("show");
+    if (distEl) distEl.textContent = `謎門剩 ${left} · 出口 ${distExit.toFixed(0)}m · HP ${hp}`;
+    return;
+  }
+
   if (isPlatformerMode() && platformerState) {
     const aliveE = platformerState.enemies.filter((e) => !e.squashed).length;
     document.getElementById("hudObjective").textContent =
@@ -3253,6 +4202,19 @@ function updateHUD() {
     document.getElementById("hudKiller").textContent = "平台冒險 · 無獵人";
     warning.classList.remove("show");
     if (distEl) distEl.textContent = `小怪 ${aliveE} · 出口 ${distExit.toFixed(0)}m · HP ${hp}`;
+    return;
+  }
+
+  if (isPuzzleDoorMode() && puzzleDoorState) {
+    const left = puzzleDoorsRemaining(puzzleDoorState.doors);
+    const total = puzzleDoorState.doors.length;
+    document.getElementById("hudObjective").textContent =
+      left > 0
+        ? `謎題門 ${total - left}/${total} · 跟著 ? 與箭頭 · 靠近發光門按 E 解題`
+        : `全員前往出口 · 謎題已解完`;
+    document.getElementById("hudKiller").textContent = "解題闖關 · 無獵人";
+    warning.classList.remove("show");
+    if (distEl) distEl.textContent = `謎門剩 ${left} · 出口 ${distExit.toFixed(0)}m · HP ${hp}`;
     return;
   }
 
@@ -3318,7 +4280,7 @@ function loop(now) {
   if (touchLook && gameState === "play" && !isCoopSplitView()) {
     const lookK = 0.0048;
     camYaw -= touchLook.dx * lookK;
-    camPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, camPitch + touchLook.dy * lookK));
+    applyLookPitch(touchLook.dy, lookK);
   }
   applyGamepadCamera(dt);
   updateQuizGamepad();
@@ -3333,6 +4295,7 @@ function loop(now) {
     killerTimer -= dt;
     tickMissionGlow(missionStations, animTime);
     updateSurvivors(dt);
+    syncShooterPlayerVisibility();
     handleZoomKeys();
     if (keyHuntState) {
       updateKeyHuntDoorHints();
@@ -3371,7 +4334,34 @@ function loop(now) {
         },
       });
     }
-    if (!isKeyHuntMode() && !isPlatformerMode()) updateKillers(dt);
+    if (isShooterMode() && shooterState) {
+      tickShooterRespawns(survivors, ctx, maze, elapsed);
+      updateShooterBots(dt, survivors, ctx, maze, shooterState, {
+        elapsed,
+        moveEntity: updateEntity,
+        fire: (bot, yaw) => {
+          const dir = new THREE.Vector3(Math.sin(yaw), 0.04, Math.cos(yaw));
+          bot._lastFireDir = dir;
+          const eyeY = 1.52 + worldHeight(bot);
+          spawnPaintFromAim(
+            scene, ctx, maze,
+            bot.pos.x + dir.x * 0.85, eyeY + dir.y * 0.85, bot.pos.z + dir.z * 0.85,
+            dir.x, dir.y, dir.z, bot.paintColor ?? bot._shooterColor, bot.mesh
+          );
+          for (const pr of fireShooterWeapon(bot, yaw, dir)) {
+            pr.color = bot.paintColor ?? pr.color;
+            projectiles.push(pr);
+          }
+          muzzleFlash(bot);
+          if (Math.random() < 0.35) playSfx("shoot", 0.06);
+        },
+      });
+    }
+    if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) updateKillers(dt);
+    updateBouncePads(bouncePads, getAliveSurvivors(), verticalWorldState, dt, (p) => {
+      playSfx("teleport", 0.15);
+      if (!p.isAI) showToast("彈跳床！", 450);
+    });
     updateProjectiles(dt);
     updateWorldItems();
     updateTeleporters();
@@ -3379,8 +4369,22 @@ function loop(now) {
     updateMinions(dt);
     updateVfx(dt);
     updateCamera();
-    const mapEvery = perfTier === "low" ? 10 : perfTier === "med" ? 6 : 4;
-    if (frameCount % mapEvery === 0) drawMinimap();
+    if (isShooterMode()) {
+      updateShooterFov();
+      const sh = scene?.userData?.shadowLight;
+      const focus = getHumanSurvivor() || getCameraFocus();
+      if (sh && focus) {
+        sh.position.set(focus.pos.x + 16, 40, focus.pos.z + 12);
+        sh.target.position.set(focus.pos.x, 0, focus.pos.z);
+        sh.target.updateMatrixWorld();
+      }
+    }
+    if (isShooterMode()) {
+      if (frameCount % 3 === 0) drawShooterRadar();
+    } else {
+      const mapEvery = perfTier === "low" ? 10 : perfTier === "med" ? 6 : 4;
+      if (frameCount % mapEvery === 0) drawMinimap();
+    }
     animTime += dt;
     checkMatchEnd();
   }
@@ -3414,8 +4418,30 @@ function boot() {
       gameState,
       playAsKiller,
       isKeyHunt: isKeyHuntMode,
+      isShooterMode,
       isHumanKiller: isHumanKillerControl,
       getTouchProfile: getTouchBindingProfile,
+      getShooterWeaponSlot: () => {
+        const h = getHumanSurvivor();
+        const w = getShooterWeapon(h?.weaponId);
+        return w?.slot ?? 2;
+      },
+      onShooterFire: () => {
+        if (gameState !== "play" || !isShooterMode()) return;
+        const h = getHumanSurvivor();
+        if (h && !h.caught) tryShooterFire(h);
+      },
+      onShooterScope: () => {
+        if (gameState !== "play" || !isShooterMode()) return;
+        const h = getHumanSurvivor();
+        if (!h || getShooterWeapon(h.weaponId)?.id !== "sniper") return;
+        shooterAds = !shooterAds;
+        document.body.classList.toggle("shooter-ads", shooterAds);
+        updateShooterFov();
+        updateCrosshair();
+        updateTouchGunHighlight(getShooterWeapon(h.weaponId)?.slot ?? 4);
+      },
+      onShooterWeapon: (slot) => tryShooterWeaponSwitch(slot),
       onKillerAttack: () => {
         if (gameState !== "play") return;
         const k = killers.find((kk) => !kk.isAI);

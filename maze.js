@@ -3,7 +3,15 @@ import * as THREE from "three";
 const WALL_H = 4;
 const WALL_THICK = 0.38;
 
-export function generateMaze(w, h) {
+export function createSeededRandom(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+export function generateMaze(w, h, rng = Math.random) {
   const grid = Array.from({ length: h }, () =>
     Array.from({ length: w }, () => ({
       top: true, right: true, bottom: true, left: true, visited: false,
@@ -22,7 +30,7 @@ export function generateMaze(w, h) {
         neighbors.push([nx, ny, i]);
     });
     if (!neighbors.length) { stack.pop(); continue; }
-    const [nx, ny, di] = neighbors[Math.floor(Math.random() * neighbors.length)];
+    const [nx, ny, di] = neighbors[Math.floor(rng() * neighbors.length)];
     const [a, b] = wallPair[di];
     grid[cy][cx][a] = false;
     grid[ny][nx][b] = false;
@@ -32,20 +40,24 @@ export function generateMaze(w, h) {
   return grid;
 }
 
+export function generateMazeSeeded(w, h, seed) {
+  return generateMaze(w, h, createSeededRandom(seed));
+}
+
 /** 打通額外牆 → 環路、多條路線 */
-export function addMazeLoops(maze, w, h, extraPassages) {
+export function addMazeLoops(maze, w, h, extraPassages, rng = Math.random) {
   let added = 0;
   let tries = 0;
   while (added < extraPassages && tries < extraPassages * 40) {
     tries++;
-    const gx = Math.floor(Math.random() * w);
-    const gz = Math.floor(Math.random() * h);
+    const gx = Math.floor(rng() * w);
+    const gz = Math.floor(rng() * h);
     const cell = maze[gz][gx];
     const opts = [];
     if (cell.right && gx < w - 1) opts.push("right");
     if (cell.bottom && gz < h - 1) opts.push("bottom");
     if (!opts.length) continue;
-    const pick = opts[Math.floor(Math.random() * opts.length)];
+    const pick = opts[Math.floor(rng() * opts.length)];
     if (pick === "right") {
       cell.right = false;
       maze[gz][gx + 1].left = false;
@@ -54,6 +66,67 @@ export function addMazeLoops(maze, w, h, extraPassages) {
       maze[gz + 1][gx].top = false;
     }
     added++;
+  }
+}
+
+/** 依地圖風格改造迷宮 — 讓各關視覺/路線明顯不同 */
+export function applyMapStyle(maze, w, h, style, rng = Math.random) {
+  const openSide = (gx, gz, side) => {
+    if (gx < 0 || gz < 0 || gx >= w || gz >= h) return;
+    const c = maze[gz][gx];
+    if (side === "right" && gx < w - 1) {
+      c.right = false;
+      maze[gz][gx + 1].left = false;
+    } else if (side === "bottom" && gz < h - 1) {
+      c.bottom = false;
+      maze[gz + 1][gx].top = false;
+    } else if (side === "left" && gx > 0) {
+      c.left = false;
+      maze[gz][gx - 1].right = false;
+    } else if (side === "top" && gz > 0) {
+      c.top = false;
+      maze[gz - 1][gx].bottom = false;
+    }
+  };
+  const openBox = (x0, z0, x1, z1) => {
+    for (let gz = z0; gz <= z1; gz++) {
+      for (let gx = x0; gx <= x1; gx++) {
+        openSide(gx, gz, "right");
+        openSide(gx, gz, "bottom");
+        openSide(gx, gz, "left");
+        openSide(gx, gz, "top");
+      }
+    }
+  };
+  const cx = Math.floor(w / 2);
+  const cz = Math.floor(h / 2);
+
+  if (style === "arena") {
+    openBox(Math.max(1, cx - 2), Math.max(1, cz - 2), Math.min(w - 2, cx + 2), Math.min(h - 2, cz + 2));
+  } else if (style === "dock") {
+    for (let gz = 1; gz < h - 1; gz += 2) {
+      for (let gx = 0; gx < w - 1; gx++) openSide(gx, gz, "right");
+    }
+    for (let gx = 2; gx < w - 2; gx += 3) {
+      for (let gz = 0; gz < h - 1; gz++) openSide(gx, gz, "bottom");
+    }
+  } else if (style === "sky") {
+    for (let gx = 1; gx < w - 1; gx += 3) {
+      for (let gz = 0; gz < h - 1; gz++) openSide(gx, gz, "bottom");
+    }
+    openBox(Math.max(1, cx - 1), Math.max(1, cz - 1), Math.min(w - 2, cx + 1), Math.min(h - 2, cz + 1));
+  } else if (style === "puzzle") {
+    addMazeLoops(maze, w, h, Math.max(4, Math.floor(w / 3)), rng);
+  } else if (style === "platform") {
+    for (let gz = 1; gz < h - 1; gz += 4) {
+      for (let gx = 0; gx < w - 1; gx++) openSide(gx, gz, "right");
+    }
+  } else {
+    for (let i = 0; i < 2 + Math.floor(rng() * 2); i++) {
+      const rx = 2 + Math.floor(rng() * Math.max(1, w - 5));
+      const rz = 2 + Math.floor(rng() * Math.max(1, h - 5));
+      openBox(rx, rz, Math.min(w - 2, rx + 2), Math.min(h - 2, rz + 2));
+    }
   }
 }
 
@@ -92,12 +165,19 @@ export function worldToCell(ctx, x, z) {
   };
 }
 
-export const AIRY_JUMP_MIN = 0.22;
+export const AIRY_JUMP_MIN = 0.1;
 
-export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0) {
-  const airy = jumpY > AIRY_JUMP_MIN;
-  const r = airy ? Math.min(radius, 0.16) : radius;
-  const half = ctx.cell / 2 - r - (airy ? 1.05 : 0.2);
+export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0, footElev = 0, opts = {}) {
+  const jy = jumpY ?? 0;
+  const fe = footElev ?? 0;
+  const vaultClear = opts.vaultClear ?? 2.6;
+  const vaultJumpMin = opts.vaultJumpMin ?? AIRY_JUMP_MIN;
+  const airy =
+    jy > vaultJumpMin &&
+    (jy > 0.42 || jy + fe * 0.22 > vaultClear * 0.55);
+  const scale = opts.radiusScale ?? 1;
+  const r = (airy ? Math.min(radius, 0.14) : radius) * scale;
+  const half = ctx.cell / 2 - r - (airy ? 1.1 : 0.18);
   const { gx, gz } = worldToCell(ctx, x, z);
   const cell = maze[gz][gx];
   const c = cellCenter(ctx, gx, gz);
@@ -108,16 +188,17 @@ export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0) {
   return false;
 }
 
-export function moveWithCollision(ctx, maze, pos, vx, vz, dt, jumpY = 0) {
+export function moveWithCollision(ctx, maze, pos, vx, vz, dt, jumpY = 0, footElev = 0, colOpts = {}) {
   const nx = pos.x + vx * dt;
   const nz = pos.z + vz * dt;
-  const rad = jumpY > 0.45 ? 0.38 : 0.45;
-  if (!collides(ctx, maze, nx, pos.z, rad, jumpY)) pos.x = nx;
-  if (!collides(ctx, maze, pos.x, nz, rad, jumpY)) pos.z = nz;
-  if (jumpY > 0.48) {
+  const clearH = (footElev ?? 0) + (jumpY ?? 0);
+  const rad = clearH > 3.6 ? 0.32 : jumpY > 0.45 ? 0.36 : 0.4;
+  if (!collides(ctx, maze, nx, pos.z, rad, jumpY, footElev, colOpts)) pos.x = nx;
+  if (!collides(ctx, maze, pos.x, nz, rad, jumpY, footElev, colOpts)) pos.z = nz;
+  if (jumpY > 0.48 || clearH > 4) {
     const cx = pos.x + vx * dt;
     const cz = pos.z + vz * dt;
-    if (!collides(ctx, maze, cx, cz, 0.34, jumpY)) {
+    if (!collides(ctx, maze, cx, cz, 0.32, jumpY, footElev, colOpts)) {
       pos.x = cx;
       pos.z = cz;
     }
@@ -134,6 +215,37 @@ export function openMazePassage(maze, w, h, door) {
     cell.bottom = false;
     if (door.gz < h - 1) maze[door.gz + 1][door.gx].top = false;
   }
+}
+
+export function isCellReachable(ctx, maze, fromGx, fromGz, toGx, toGz) {
+  if (fromGx < 0 || fromGz < 0 || toGx < 0 || toGz < 0) return false;
+  if (fromGx >= ctx.w || fromGz >= ctx.h || toGx >= ctx.w || toGz >= ctx.h) return false;
+  if (fromGx === toGx && fromGz === toGz) return true;
+  const key = (a, b) => `${a},${b}`;
+  const q = [[fromGx, fromGz]];
+  const seen = new Set([key(fromGx, fromGz)]);
+  const neighbors = (gx, gz) => {
+    const cell = maze[gz][gx];
+    const out = [];
+    if (!cell.top && gz > 0) out.push([gx, gz - 1]);
+    if (!cell.bottom && gz < ctx.h - 1) out.push([gx, gz + 1]);
+    if (!cell.left && gx > 0) out.push([gx - 1, gz]);
+    if (!cell.right && gx < ctx.w - 1) out.push([gx + 1, gz]);
+    return out;
+  };
+  while (q.length) {
+    const [gx, gz] = q.shift();
+    if (gx === toGx && gz === toGz) return true;
+    if (seen.size > ctx.w * ctx.h) break;
+    for (const [nx, nz] of neighbors(gx, gz)) {
+      const k = key(nx, nz);
+      if (!seen.has(k)) {
+        seen.add(k);
+        q.push([nx, nz]);
+      }
+    }
+  }
+  return false;
 }
 
 export function bfsNextStep(ctx, maze, sx, sz, tx, tz) {
@@ -252,6 +364,8 @@ export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
     inst.instanceMatrix.needsUpdate = true;
     inst.frustumCulled = false;
     inst.computeBoundingSphere();
+    inst.receiveShadow = true;
+    inst.castShadow = false;
   }
   group.add(floorA, floorB, floorC);
 
@@ -286,6 +400,8 @@ export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
     inst.instanceMatrix.needsUpdate = true;
     inst.frustumCulled = false;
     inst.computeBoundingSphere();
+    inst.castShadow = true;
+    inst.receiveShadow = true;
     group.add(inst);
   };
   const hAlt = hWalls.filter((t) => t.alt);
@@ -306,6 +422,8 @@ export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
       const c = cellCenter(ctx, gx, gz);
       const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.8 + (gx % 3) * 0.4, 0.5), decoMat);
       pillar.position.set(c.x + ((gx % 2) ? 1.5 : -1.5), 1.4, c.z + ((gz % 2) ? 1.5 : -1.5));
+      pillar.castShadow = true;
+      pillar.receiveShadow = true;
       group.add(pillar);
       if ((gx + gz) % 5 === 0) {
         const orb = new THREE.Mesh(

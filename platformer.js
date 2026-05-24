@@ -181,7 +181,8 @@ export function buildPlatformerMeshes(scene, state, cellSize) {
 }
 
 /** 單向門：從錯誤方向靠近會擋住 */
-export function collidesOneWay(oneWays, x, z, vx, vz, radius = 0.45) {
+export function collidesOneWay(oneWays, x, z, vx, vz, radius = 0.45, jumpY = 0) {
+  if ((jumpY ?? 0) > 0.55) return false;
   for (const ow of oneWays) {
     const dx = x - ow.x;
     const dz = z - ow.z;
@@ -279,6 +280,6 @@ export function updatePlatformer(dt, state, players, callbacks) {
   state._oneWays = oneWays;
 }
 
-export function platformerBlocksMove(oneWays, x, z, vx, vz, radius) {
-  return collidesOneWay(oneWays || [], x, z, vx, vz, radius);
+export function platformerBlocksMove(oneWays, x, z, vx, vz, radius, jumpY = 0) {
+  return collidesOneWay(oneWays || [], x, z, vx, vz, radius, jumpY);
 }
