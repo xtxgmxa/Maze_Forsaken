@@ -1,15 +1,18 @@
-import { getShooterWeapon } from "./shooterMode.js";
+import { getShooterWeapon, SHOOTER_TEAMS } from "./shooterMode.js";
 
 export function initShooterStats(p) {
-  if (!p._shooterStats) p._shooterStats = { kills: 0, deaths: 0 };
+  if (!p._shooterStats) p._shooterStats = { kills: 0, deaths: 0, score: 0 };
   return p._shooterStats;
 }
 
-export function recordShooterFrag(killer, victim) {
-  if (killer && killer !== victim) {
-    initShooterStats(killer).kills += 1;
-  }
-  if (victim) initShooterStats(victim).deaths += 1;
+export function teamColorCss(teamId) {
+  const c = SHOOTER_TEAMS[teamId ?? 0]?.color ?? 0xffffff;
+  return `#${(c >>> 0).toString(16).padStart(6, "0").slice(-6)}`;
+}
+
+export function playerColorCss(p) {
+  const c = p?.paintColor ?? p?._shooterColor ?? 0x88aaff;
+  return `#${(c >>> 0).toString(16).padStart(6, "0").slice(-6)}`;
 }
 
 export function resetShooterScoreboardUi() {
@@ -22,22 +25,50 @@ export function setShooterScoreboardVisible(show) {
   const el = document.getElementById("shooterScoreboard");
   if (!el) return;
   el.classList.toggle("show", !!show);
+  el.setAttribute("aria-hidden", show ? "false" : "true");
   document.body.classList.toggle("scoreboard-open", !!show);
 }
 
-export function renderShooterScoreboard(players, human) {
+export function renderShooterScoreboard(players, human, playStyle = "teams") {
   const tbody = document.getElementById("shooterScoreboardBody");
+  const teamBar = document.getElementById("shooterScoreboardTeams");
+  const title = document.querySelector("#shooterScoreboard h3");
   if (!tbody) return;
+
+  const ffa = playStyle === "ffa";
+  const teamKills = [0, 0];
   const rows = [...players]
     .filter((p) => p)
     .sort((a, b) => {
       const ak = a._shooterStats?.kills ?? 0;
       const bk = b._shooterStats?.kills ?? 0;
       if (bk !== ak) return bk - ak;
-      const ad = a._shooterStats?.deaths ?? 0;
-      const bd = b._shooterStats?.deaths ?? 0;
-      return ad - bd;
+      return (a._shooterStats?.deaths ?? 0) - (b._shooterStats?.deaths ?? 0);
     });
+
+  for (const p of rows) {
+    const k = p._shooterStats?.kills ?? 0;
+    if (p.teamId >= 0) teamKills[p.teamId] += k;
+    initShooterStats(p).score = k;
+  }
+
+  if (title) {
+    title.textContent = ffa
+      ? `自由混戰戰績 · ${rows.length} 人`
+      : `團隊對抗戰績 · ${rows.length} 人`;
+  }
+
+  if (teamBar) {
+    if (ffa) {
+      teamBar.style.display = "none";
+      teamBar.innerHTML = "";
+    } else {
+      teamBar.style.display = "flex";
+      teamBar.innerHTML = SHOOTER_TEAMS.map((t, i) =>
+        `<span class="sb-team-pill" style="--tc:${teamColorCss(i)}">${t.name} <b>${teamKills[i]}</b> 分</span>`
+      ).join("");
+    }
+  }
 
   tbody.innerHTML = rows.map((p, i) => {
     const st = initShooterStats(p);
@@ -47,14 +78,49 @@ export function renderShooterScoreboard(players, human) {
     const hp = Math.max(0, Math.round(p.hp ?? 0));
     const you = p === human || (!p.isAI && human === p);
     const dead = p.caught || hp <= 0;
-    return `<tr class="${you ? "you" : ""} ${dead ? "dead" : ""}">
+    const rowColor = ffa ? playerColorCss(p) : teamColorCss(p.teamId);
+    const teamLabel = ffa ? "混戰" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—");
+    return `<tr class="${you ? "you" : ""} ${dead ? "dead" : ""}" style="--row-team:${rowColor}">
       <td>${i + 1}</td>
-      <td class="sb-name">${you ? "▸ " : ""}${name}${p.isAI ? " <span class='sb-bot'>AI</span>" : ""}</td>
-      <td>${st.kills}</td>
+      <td class="sb-name"><span class="sb-team-dot"></span>${you ? "▸ " : ""}${name}${p.isAI ? " <span class='sb-bot'>AI</span>" : ""}</td>
+      <td class="sb-team">${teamLabel}</td>
+      <td><b>${st.kills}</b></td>
       <td>${st.deaths}</td>
       <td>${kd}</td>
       <td>${hp}</td>
       <td class="sb-gun">${gun}</td>
     </tr>`;
   }).join("");
+}
+
+export function bindShooterScoreboardUi(onToggle) {
+  const sbBtn = document.getElementById("btnTouchScoreboard");
+  const panel = document.querySelector("#shooterScoreboard .sb-panel");
+  const backdrop = document.getElementById("shooterScoreboardBackdrop");
+  const closeBtn = document.getElementById("btnScoreboardClose");
+
+  const toggle = (ev) => {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    onToggle?.();
+  };
+
+  if (sbBtn) {
+    sbBtn.onpointerdown = null;
+    sbBtn.onpointerup = null;
+    sbBtn.onpointercancel = null;
+    sbBtn.onclick = toggle;
+  }
+  if (closeBtn) closeBtn.onclick = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onToggle?.(false);
+  };
+  if (backdrop) backdrop.onclick = (ev) => {
+    ev.preventDefault();
+    onToggle?.(false);
+  };
+  if (panel) {
+    panel.onclick = (ev) => ev.stopPropagation();
+  }
 }

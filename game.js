@@ -28,10 +28,14 @@ import {
   applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState,
   canShooterFire, fireShooterWeapon, updateShooterBots, buildShooterArena,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
-  checkShooterWin, onShooterDowned, tickShooterRespawns, SHOOTER_WEAPONS, isShooterHeadshot, getTargetHeadY,
+  assignShooterPlayer, buildShooterEndResults, onShooterDowned, tickShooterRespawns,
+  SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
 } from "./shooterMode.js";
+import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
+import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
   initShooterStats, renderShooterScoreboard, setShooterScoreboardVisible, resetShooterScoreboardUi,
+  bindShooterScoreboardUi,
 } from "./shooterScoreboard.js";
 import { getLevelMapSeed, getMapStyle, enrichLevelForMode } from "./mapGen.js";
 import { buildRealmZones, getRealmAt, applyRealmAtmosphere } from "./realmZones.js";
@@ -188,6 +192,7 @@ let worldItems = [];
 let traps = [];
 let matchHumanRole = "survivor";
 let numSurvivors = 1;
+let shooterPlayStyle = "teams";
 let numKillers = 1;
 let camDist = 11;
 const CAM_DIST_MIN = 7;
@@ -511,6 +516,9 @@ function refreshMenuForMode() {
     updatePickRoleLabel();
   }
 
+  const psLabel = document.getElementById("shooterPlayStyleLabel");
+  if (psLabel) psLabel.style.display = dedicatedShooter ? "" : "none";
+
   syncPlayerCountOptions();
   rebuildLevelGrid();
   refreshRoleUI();
@@ -557,7 +565,7 @@ function initMenu() {
     { id: "practice", name: "練習模式", desc: "獵人較慢 · 時間較長 · 適合新手" },
     { id: "mob", name: "團隊逃亡", desc: "4 倖存者 · 2 獵人追擊" },
     { id: "hardcore", name: "硬核", desc: "獵人更快 · 任務更少" },
-    { id: "shooter", name: "槍戰模式", desc: "最多 12 人混戰 · 漆彈 · 左鍵射擊", featured: true },
+    { id: "shooter", name: "槍戰模式", desc: "團隊或自由混戰 · 最多 12 人 · 漆彈射擊", featured: true },
   ].forEach((m, i) => {
     const card = document.createElement("div");
     card.className = "mode-card" + (i === 0 ? " selected" : "") + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
@@ -1462,7 +1470,9 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   const headshot = !!opts.headshot;
   const envKiller = killer || { charDef: { name: "環境" }, pos: target.pos };
   if (isShooterMode()) {
-    playSfx(headshot ? "headshot" : "shoot_hit", 0.05);
+    playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
+    target._hitFlash = 0.28;
+    target._hitFlashColor = killer?.paintColor ?? 0xff4466;
     spawnHitVfx(scene, target.pos.x, target.pos.z);
     if (killer && !killer.isAI) {
       showHitMarker();
@@ -1500,15 +1510,10 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   if (target.hp <= 0) {
     if (isShooterMode() && shooterState) {
-      const toastMsg = onShooterDowned(killer, target, shooterState, elapsed);
+      const toastMsg = onShooterDowned(killer, target, shooterState, elapsed, (x, z) => {
+        spawnShooterHealOrb(scene, x, z, worldHeight(target));
+      });
       if (toastMsg && !target.isAI) showToast(toastMsg, 1100);
-      if (!killer?.isAI || killer === target) { /* kill credit above */ }
-      const human = survivors.find((s) => !s.isAI);
-      const win = checkShooterWin(shooterState, human);
-      if (win) {
-        playSfx("exit");
-        endGame(win.won, win.msg);
-      }
       return;
     }
     if (isKeyHuntMode()) {
@@ -1803,19 +1808,11 @@ function checkExitWin() {
 
 function checkMatchEnd(msgIfLose) {
   if (isShooterMode() && shooterState) {
-    const human = survivors.find((s) => !s.isAI);
-    const win = checkShooterWin(shooterState, human);
-    if (win) {
-      endGame(win.won, win.msg);
-      return;
-    }
     if (killerTimer <= 0) {
-      const k = shooterState.humanKills || 0;
-      const need = shooterState.targetKills || 10;
-      endGame(
-        k >= need,
-        k >= need ? `時間到！達成 ${k} 擊殺，勝利！` : `時間到！擊殺 ${k}/${need}，再接再厲`
-      );
+      const human = survivors.find((s) => !s.isAI);
+      const res = buildShooterEndResults(survivors, human, shooterState?.playStyle ?? shooterPlayStyle);
+      playSfx("exit");
+      endGame(res.won, res.msg);
       return;
     }
     return;
@@ -1930,7 +1927,7 @@ function showShooterScoreboard(open) {
   shooterScoreboardOpen = !!open;
   setShooterScoreboardVisible(open);
   if (open) {
-    renderShooterScoreboard(survivors, getHumanSurvivor());
+    renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
   }
   if (open && document.pointerLockElement) document.exitPointerLock?.();
   else if (!open && gameState === "play" && !isTouchUiEnabled()) {
@@ -1988,7 +1985,7 @@ function tryShooterFire(p) {
     pr.color = p.paintColor ?? pr.color;
     projectiles.push(pr);
   }
-  playSfx("shoot", 0.03);
+  playShooterSfx("fire", playSfx, 0.03);
   muzzleFlash(p);
   if (!p.isAI && camera) syncFpGunVisual(camera, p.weaponId, 1);
   p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
@@ -2207,7 +2204,9 @@ function readMatchConfig() {
   const sEl = document.getElementById("numSurvivors");
   const kEl = document.getElementById("numKillers");
   const tEl = document.getElementById("matchTime");
+  const psEl = document.getElementById("shooterPlayStyle");
   const maxSurv = isShooterMode() ? 12 : 4;
+  shooterPlayStyle = psEl?.value === "ffa" ? "ffa" : "teams";
   numSurvivors = sEl
     ? Math.max(1, Math.min(maxSurv, parseInt(sEl.value, 10) || (isShooterMode() ? 8 : 1)))
     : selectedLevel.survivorSlots || 1;
@@ -2378,7 +2377,7 @@ async function runStartGame() {
     puzzleDoorState = setupPuzzleDoorLevel(ctx, maze, selectedLevel);
   }
   if (isShooterMode()) {
-    shooterState = createShooterState(selectedLevel);
+    shooterState = createShooterState(selectedLevel, shooterPlayStyle);
   }
   await yieldFrame();
   buildMazeMeshes(ctx, maze, scene, {
@@ -2513,9 +2512,12 @@ async function runStartGame() {
     }
   }
   if (isShooterMode()) {
+    clearShooterHealOrbs(scene);
+    loadShooterSounds().then(() => preloadShooterSounds());
+    const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
       initShooterStats(s);
-      assignPaintColor(s, i);
+      assignShooterPlayer(s, i, survivors.length, playStyle);
       const startGun = !s.isAI ? "rifle" : ["smg", "rifle", "shotgun", "sniper"][i % 4];
       applyShooterLoadout(s, startGun);
       attachShooterGun(s);
@@ -2523,21 +2525,21 @@ async function runStartGame() {
     });
     document.body.classList.add("shooter-play");
     const sbBtn = document.getElementById("btnTouchScoreboard");
-    if (sbBtn) {
-      sbBtn.hidden = !isTouchUiEnabled();
-      sbBtn.onpointerdown = (ev) => { ev.preventDefault(); showShooterScoreboard(true); };
-      sbBtn.onpointerup = () => showShooterScoreboard(false);
-      sbBtn.onpointerleave = () => showShooterScoreboard(false);
-    }
+    if (sbBtn) sbBtn.hidden = !isTouchUiEnabled();
+    bindShooterScoreboardUi((force) => {
+      if (force === false) showShooterScoreboard(false);
+      else showShooterScoreboard(!shooterScoreboardOpen);
+    });
     const touchAb = document.getElementById("touchRowAbilities");
     if (touchAb) touchAb.hidden = true;
     const mmLabel = document.querySelector("#minimap-wrap label");
     if (mmLabel) mmLabel.textContent = "雷達";
     invalidateMinimapBase();
     drawShooterRadar();
+    const styleZh = playStyle === "ffa" ? "自由混戰" : "團隊對抗";
     showToast(
-      `${selectedLevel.name} · ${survivors.length} 人對戰 · 目標 ${shooterState?.targetKills ?? 8} 擊殺 · 1~4 換槍`,
-      2600
+      `${selectedLevel.name} · ${styleZh} · ${survivors.length} 人 · 時間到比積分 · 戰績可點開`,
+      2800
     );
     if (!isTouchUiEnabled()) renderer.domElement.requestPointerLock?.();
     const humanShooter = survivors.find((s) => !s.isAI);
@@ -2770,9 +2772,9 @@ function setMissionText() {
     modeText = "平台冒險：踩綠色小怪 · 躲噴火與落石 · 藍色箭頭為單向門";
     rules = `<li>空白鍵二段跳可越過矮牆 · 無獵人 · 到達出口通關</li>`;
   } else if (isShooterMode()) {
-    const need = shooterState?.targetKills ?? 10;
-    modeText = `槍戰：左鍵射擊 · 達成 ${need} 擊殺 · 全員相同三種槍（1/2/3）`;
-    rules = `<li>平地競技 · 肩後視角 · 滑壘＋衝刺 · 被擊倒數秒重生</li>`;
+    const shStyle = shooterPlayStyle === "ffa" ? "自由混戰（見人就打）" : "團隊對抗（紅藍均分）";
+    modeText = `槍戰：${shStyle} · 時間結束比積分（擊殺=1分）`;
+    rules = `<li>擊倒敵人掉落綠十字 · 靠近補 50% HP · 戰績可看全員名單 · 1~4 換槍</li>`;
   } else if (playAsKiller) {
     modeText = `扮演 ${selectedKiller?.name}：擊倒所有倖存者`;
     rules = `<li>無終點模式：時間到仍有倖存者則你輸</li>`;
@@ -3395,9 +3397,14 @@ function updateEntity(p, dt, move) {
     if (p.mesh.scale.x !== 1) p.mesh.scale.set(1, 1, 1);
     if (p._hitFlash > 0) {
       p._hitFlash -= dt;
+      const flashCol = p._hitFlashColor ?? 0xff2244;
+      const pulse = 0.35 + (p._hitFlash / 0.35) * 0.55;
       p.mesh.traverse((c) => {
-        if (c.material?.emissive) c.material.emissive.setHex(0xff2244);
-        if (c.material) c.material.emissiveIntensity = 0.6;
+        if (c === p.gunMesh) return;
+        if (c.material?.emissive) c.material.emissive.setHex(flashCol);
+        if (c.material?.emissiveIntensity != null) {
+          c.material.emissiveIntensity = isShooterMode() ? pulse : 0.6;
+        }
       });
     } else if (p.role === "survivor") {
       p.mesh.traverse((c) => {
@@ -3815,12 +3822,14 @@ function updateProjectiles(dt) {
     }
 
     if (hit) {
+      if (hitType === "wall" && pr.fromShooter) playShooterSfx("hitWall", playSfx, 0.06);
       projectiles.splice(i, 1);
       continue;
     }
     if (pr.fromShooter && pr.owner) {
       for (const s of survivors) {
         if (s === pr.owner || s.caught || (s.hp ?? 0) <= 0) continue;
+        if (!isShooterEnemy(pr.owner, s, shooterState?.playStyle ?? shooterPlayStyle)) continue;
         if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
           const hitY = worldHeight(s) + 1.05;
           if (shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z)) continue;
@@ -4330,15 +4339,20 @@ function updateHUD() {
 
   if (isShooterMode() && shooterState) {
     const gun = getShooterWeapon(focus.weaponId);
-    const k = shooterState.humanKills || 0;
-    const need = shooterState.targetKills || 10;
+    const myScore = focus._shooterStats?.kills ?? 0;
+    const tLeft = `${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+    const styleTag = shooterState.playStyle === "ffa" ? "自由混戰" : "團隊對抗";
     document.getElementById("hudObjective").textContent =
-      `【${shooterState.levelName}】擊殺 ${k}/${need} · ${gun.name}`;
-    document.getElementById("hudKiller").textContent = "槍戰模式 · 無獵人";
-    document.getElementById("hudKillerTimer").textContent =
-      `剩餘 ${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+      `【${shooterState.levelName}】${styleTag} · 積分 ${myScore} · ${gun.name}`;
+    document.getElementById("hudKiller").textContent =
+      shooterState.playStyle === "ffa" ? `槍戰 · ${survivors.length} 人混戰` : "槍戰 · 紅藍隊";
+    document.getElementById("hudKillerTimer").textContent = `剩餘 ${tLeft}`;
     warning.classList.remove("show");
-    if (distEl) distEl.textContent = `${gun.name} · 擊殺 ${k}/${need} · HP ${hp} · 1~4 換槍 · 狙擊右鍵開鏡`;
+    if (distEl) {
+      distEl.textContent = isTouchUiEnabled()
+        ? `${gun.name} · 積分 ${myScore} · 點戰績看名單`
+        : `${gun.name} · 積分 ${myScore} · Tab 戰績 · 綠十字補血`;
+    }
     return;
   }
 
@@ -4509,8 +4523,12 @@ function loop(now) {
     }
     if (isShooterMode() && shooterState) {
       if (shooterScoreboardOpen) {
-        renderShooterScoreboard(survivors, getHumanSurvivor());
+        renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
       }
+      tickShooterHealOrbs(dt, survivors, scene, (p) => {
+        playShooterSfx("pickupHeal", playSfx, 0.12);
+        if (!p.isAI) showToast("補血 +50% HP", 900);
+      });
       tickShooterRespawns(survivors, ctx, maze, elapsed);
       updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,

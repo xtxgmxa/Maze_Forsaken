@@ -205,6 +205,14 @@ const SFX = {
   },
 };
 
+export function getAudioContext() {
+  return actx;
+}
+
+export function getSfxBus() {
+  return sfxBus;
+}
+
 export function playSfx(name, minGap = 0.04) {
   const now = performance.now();
   if (lastSfxTime[name] && now - lastSfxTime[name] < minGap * 1000) return;

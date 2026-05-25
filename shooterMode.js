@@ -1,7 +1,35 @@
 import * as THREE from "three";
 import { cellCenter } from "./maze.js";
 import { lambertStud } from "./mapTextures.js";
-/** 全員相同四種槍 */
+import { PAINT_PALETTE } from "./paintballSplats.js";
+
+export const SHOOTER_TEAMS = [
+  { id: 0, name: "紅隊", color: 0xff4466 },
+  { id: 1, name: "藍隊", color: 0x44aaff },
+];
+
+/** playStyle: "teams" 平均分队 | "ffa" 自由混戰每人一色 */
+export function assignShooterPlayer(p, index, total, playStyle = "teams") {
+  if (playStyle === "ffa") {
+    p.teamId = -1;
+    p.paintColor = PAINT_PALETTE[index % PAINT_PALETTE.length];
+  } else {
+    const half = Math.ceil(Math.max(2, total) / 2);
+    const teamId = index < half ? 0 : 1;
+    p.teamId = teamId;
+    p.paintColor = SHOOTER_TEAMS[teamId].color;
+  }
+  p._shooterColor = p.paintColor;
+}
+
+export function isShooterEnemy(a, b, playStyle = "teams") {
+  if (!a || !b || a === b) return false;
+  if (a.caught || b.caught) return false;
+  if ((a.hp ?? 0) <= 0 || (b.hp ?? 0) <= 0) return false;
+  if (playStyle === "ffa") return true;
+  return (a.teamId ?? 0) !== (b.teamId ?? 0);
+}
+
 export const SHOOTER_WEAPONS = [
   { id: "smg", name: "衝鋒槍", slot: 1, damage: 8, fireCd: 0.14, spread: 0.035, speed: 30, color: 0x44ddff, pellets: 1 },
   { id: "rifle", name: "步槍", slot: 2, damage: 18, fireCd: 0.36, spread: 0.008, speed: 34, color: 0xffcc44, pellets: 1 },
@@ -14,7 +42,7 @@ export function getShooterWeapon(id) {
 }
 
 export function getTargetHeadY(target) {
-  return (target?.elev ?? 0) + (target?._jumpY ?? 0) + 2.0;
+  return (target?.elev ?? 0) + (target?._jumpY ?? 0) + 2.15;
 }
 
 export function getShooterEyeY(p) {
@@ -58,9 +86,9 @@ export function cycleShooterWeapon(p, dir = 1) {
   return next;
 }
 
-export function createShooterState(level = {}) {
+export function createShooterState(level = {}, playStyle = "teams") {
   return {
-    targetKills: level.shooterKills ?? 12,
+    playStyle: playStyle === "ffa" ? "ffa" : "teams",
     humanKills: 0,
     botKills: 0,
     respawnDelay: 2.2,
@@ -379,15 +407,15 @@ export function buildShooterArena(ctx, maze, scene, level = {}) {
 }
 
 export function updateShooterBots(dt, players, ctx, maze, state, api) {
-  const human = players.find((p) => !p.isAI);
+  const style = state.playStyle ?? "teams";
   for (const bot of players) {
     if (!bot.isAI || bot.caught || (bot.hp ?? 0) <= 0) continue;
     if (bot._respawnUntil > api.elapsed) continue;
 
-    let target = human;
-    let bd = target ? Math.hypot(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z) : Infinity;
+    let target = null;
+    let bd = Infinity;
     for (const other of players) {
-      if (other === bot || other.caught || (other.hp ?? 0) <= 0) continue;
+      if (!isShooterEnemy(bot, other, style)) continue;
       const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
       if (d < bd) { bd = d; target = other; }
     }
@@ -440,15 +468,64 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     }
   }
 }
-export function checkShooterWin(state, human) {
-  if (!state || !human) return null;
-  if (state.humanKills >= state.targetKills) {
-    return { won: true, msg: `擊殺 ${state.humanKills} 人！槍戰勝利！` };
+/** 時間結束：依擊殺積分排名；teams 比隊伍總分，ffa 僅個人排名 */
+export function buildShooterEndResults(players, human, playStyle = "teams") {
+  const ranked = [...players]
+    .filter((p) => p)
+    .sort((a, b) => {
+      const ak = a._shooterStats?.kills ?? 0;
+      const bk = b._shooterStats?.kills ?? 0;
+      if (bk !== ak) return bk - ak;
+      return (a._shooterStats?.deaths ?? 0) - (b._shooterStats?.deaths ?? 0);
+    });
+  const teamKills = [0, 0];
+  for (const p of ranked) {
+    if (p.teamId >= 0) teamKills[p.teamId] += p._shooterStats?.kills ?? 0;
   }
-  return null;
+
+  const humanRank = human ? ranked.indexOf(human) + 1 : 0;
+  const humanKills = human?._shooterStats?.kills ?? 0;
+  const top = ranked[0];
+  const topKills = top?._shooterStats?.kills ?? 0;
+
+  const lineFor = (p, i) => {
+    const st = p._shooterStats || { kills: 0, deaths: 0 };
+    const tag = playStyle === "ffa"
+      ? "混戰"
+      : SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "?";
+    return `${i + 1}. ${p.charDef?.name || "?"}（${tag}）${st.kills} 分`;
+  };
+  const lines = ranked.map(lineFor);
+
+  if (playStyle === "ffa") {
+    const youWon = human && human === top;
+    let msg = `自由混戰結束！${top?.charDef?.name || "—"} 第一名（${topKills} 分）\n`;
+    msg += lines.join("\n");
+    if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分`;
+    return { won: youWon, msg, ranked, teamWin: null, humanRank, playStyle };
+  }
+
+  let teamWin = null;
+  if (teamKills[0] !== teamKills[1]) teamWin = teamKills[0] > teamKills[1] ? 0 : 1;
+
+  if (teamWin != null) {
+    const wonTeam = SHOOTER_TEAMS[teamWin];
+    const youWin = human && (human.teamId ?? 0) === teamWin;
+    let msg = `${wonTeam.name} 總分 ${teamKills[teamWin]} 獲勝！\n`;
+    msg += `紅隊 ${teamKills[0]} · 藍隊 ${teamKills[1]}\n`;
+    msg += lines.join("\n");
+    if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分${youWin ? " · 勝利隊伍！" : ""}`;
+    return { won: !!youWin, msg, ranked, teamWin, humanRank, playStyle };
+  }
+
+  const youWon = human && human === top;
+  let msg = `時間到！${top?.charDef?.name || "—"} 第一名（${topKills} 分）\n`;
+  msg += lines.join("\n");
+  if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分`;
+  return { won: youWon, msg, ranked, teamWin: null, humanRank, playStyle };
 }
 
-export function onShooterDowned(killer, victim, state, elapsed) {
+export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   if (killer && killer !== victim) {
     killer._shooterStats = killer._shooterStats || { kills: 0, deaths: 0 };
     killer._shooterStats.kills += 1;
@@ -462,6 +539,9 @@ export function onShooterDowned(killer, victim, state, elapsed) {
   victim.caught = true;
   if (victim.mesh) victim.mesh.visible = false;
   victim._respawnUntil = elapsed + (state.respawnDelay ?? 2.2);
+  if (typeof spawnHeal === "function") {
+    spawnHeal(victim.pos.x, victim.pos.z);
+  }
   if (!victim.isAI) {
     return `${killer?.charDef?.name || "敵人"} 擊倒了你 · ${Math.ceil(state.respawnDelay)} 秒後重生`;
   }

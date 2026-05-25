@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { plasticPBR } from "./mapTextures.js";
 
 let robloxFaceTex = null;
-let headSphereGeo = null;
 
 function getRobloxFaceTexture() {
   if (robloxFaceTex) return robloxFaceTex;
@@ -23,11 +22,6 @@ function getRobloxFaceTexture() {
   robloxFaceTex = new THREE.CanvasTexture(cvs);
   robloxFaceTex.colorSpace = THREE.SRGBColorSpace;
   return robloxFaceTex;
-}
-
-function getHeadSphereGeo() {
-  if (!headSphereGeo) headSphereGeo = new THREE.SphereGeometry(0.5, 12, 10);
-  return headSphereGeo;
 }
 
 /** 肖像檔名對照你提供的「forsaken角色圖」資料夾 */
@@ -288,36 +282,44 @@ export function buildForsakenCharacter(def, scale = 1) {
     addBox(rightArm, limbW, 0.16, limbD, mat(def.accent, def.accent, 0.24), -0.28);
   }
 
-  const head = pivot(torso, 0, 1.62, 0);
-  const headMesh = new THREE.Mesh(getHeadSphereGeo(), mat(def.head));
-  headMesh.scale.setScalar(0.78 * s);
-  headMesh.position.y = 0.38 * s;
-  head.add(headMesh);
+  const head = pivot(torso, 0, 1.14, 0);
+  addBox(head, 1.0, 1.0, 1.0, mat(def.head), 0.5);
+
+  const stud = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1 * s, 0.12 * s, 0.1 * s, 8),
+    mat(def.head, def.head, 0.08)
+  );
+  stud.position.y = 1.02 * s;
+  head.add(stud);
+
   const face = new THREE.Mesh(
     new THREE.PlaneGeometry(0.42 * s, 0.42 * s),
     new THREE.MeshBasicMaterial({ map: getRobloxFaceTexture(), transparent: true, depthWrite: false })
   );
-  face.position.set(0, 0.38 * s, 0.36 * s);
+  face.position.set(0, 0.5 * s, 0.51 * s);
   head.add(face);
 
   const ex = def.extras || [];
   if (ex.includes("red_eyes") || ex.includes("red_eye")) {
-    addBox(head, 0.18, 0.12, 0.05, mat(0xff0000, 0xff0000, 0.5), 0.6, -0.22, 0.48);
-    if (ex.includes("red_eyes")) addBox(head, 0.18, 0.12, 0.05, mat(0xff0000, 0xff0000, 0.5), 0.6, 0.22, 0.48);
+    addBox(head, 0.18, 0.12, 0.05, mat(0xff0000, 0xff0000, 0.5), 0.48, -0.22, 0.52);
+    if (ex.includes("red_eyes")) addBox(head, 0.18, 0.12, 0.05, mat(0xff0000, 0xff0000, 0.5), 0.48, 0.22, 0.52);
   }
-  if (ex.includes("guest_hat")) addBox(head, 1.05, 0.35, 1.05, mat(0xdddddd), 1.05);
-  if (ex.includes("hacker_hood")) addBox(head, 1.1, 0.5, 1.1, mat(def.shirt), 0.95);
-  if (ex.includes("delivery_cap")) addBox(head, 1.0, 0.25, 1.0, mat(def.accent), 1.05);
-  if (ex.includes("hard_hat")) addBox(head, 1.05, 0.3, 1.05, mat(0xffcc00), 1.05);
-  if (ex.includes("domino_crown")) addBox(head, 1.1, 0.35, 1.1, mat(0x33ff44, 0x22aa33, 0.4), 1.1);
-  if (ex.includes("vampire_hood")) addBox(head, 1.15, 0.6, 1.15, mat(0x220811), 0.95);
-  if (ex.includes("skull_mask")) addBox(head, 1.0, 1.0, 1.0, mat(0x2244aa, 0x1133aa, 0.3), 0.5);
-  if (ex.includes("fedora")) addBox(head, 1.1, 0.25, 1.1, mat(0x111111), 1.05);
-  if (ex.includes("wide_hat")) addBox(head, 1.35, 0.12, 1.35, mat(0x111111), 1.1);
+  if (ex.includes("guest_hat")) addBox(head, 1.05, 0.35, 1.05, mat(0xdddddd), 1.02);
+  if (ex.includes("hacker_hood")) addBox(head, 1.1, 0.5, 1.1, mat(def.shirt), 0.92);
+  if (ex.includes("delivery_cap")) addBox(head, 1.0, 0.25, 1.0, mat(def.accent), 1.02);
+  if (ex.includes("hard_hat")) addBox(head, 1.05, 0.3, 1.05, mat(0xffcc00), 1.02);
+  if (ex.includes("domino_crown")) addBox(head, 1.1, 0.35, 1.1, mat(0x33ff44, 0x22aa33, 0.4), 1.06);
+  if (ex.includes("vampire_hood")) addBox(head, 1.15, 0.6, 1.15, mat(0x220811), 0.9);
+  if (ex.includes("skull_mask")) addBox(head, 1.0, 1.0, 1.0, mat(0x2244aa, 0x1133aa, 0.3), 0.48);
+  if (ex.includes("fedora")) addBox(head, 1.1, 0.25, 1.1, mat(0x111111), 1.02);
+  if (ex.includes("wide_hat")) addBox(head, 1.35, 0.12, 1.35, mat(0x111111), 1.06);
   if (ex.includes("fried_chicken")) addBox(torso, 0.45, 0.35, 0.55, mat(def.accent), 0.5, 0.7, 0.35);
   if (ex.includes("hair_buns")) {
-    addBox(head, 0.35, 0.35, 0.35, mat(def.head), 0.95, -0.35);
-    addBox(head, 0.35, 0.35, 0.35, mat(def.head), 0.95, 0.35);
+    addBox(head, 0.32, 0.32, 0.32, mat(def.head), 0.58, -0.32, 0.05);
+    addBox(head, 0.32, 0.32, 0.32, mat(def.head), 0.58, 0.32, 0.05);
+  }
+  if (ex.includes("tv_head")) {
+    addBox(head, 0.5, 0.38, 0.22, mat(0x222222), 0.48, 0, 0.02);
   }
   if (ex.includes("c00l_shirt")) addBox(torso, 1.3, 0.4, 0.7, mat(0x111111), 0.35);
 
@@ -336,7 +338,7 @@ export function buildForsakenCharacter(def, scale = 1) {
     rightArm,
     weapon,
     baseTorsoY: torsoY * s,
-    baseHeadY: 1.62 * s,
+    baseHeadY: (torsoY + 1.14 + 0.5) * s,
   };
   root.traverse((c) => {
     if (c.isMesh) {
