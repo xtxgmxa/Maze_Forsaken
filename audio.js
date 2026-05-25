@@ -213,6 +213,58 @@ export function getSfxBus() {
   return sfxBus;
 }
 
+const FOOTSTEP_URL = "assets/audio/sfx/footstep.mp3";
+let footstepBuffer = null;
+let footstepLoadPromise = null;
+
+export async function preloadFootstepSfx() {
+  if (footstepLoadPromise) return footstepLoadPromise;
+  footstepLoadPromise = (async () => {
+    const ok = await initAudioEngine();
+    if (!ok || !actx) return false;
+    try {
+      const res = await fetch(FOOTSTEP_URL, { cache: "force-cache" });
+      if (!res.ok) return false;
+      const ab = await res.arrayBuffer();
+      footstepBuffer = await actx.decodeAudioData(ab.slice(0));
+      return true;
+    } catch {
+      footstepBuffer = null;
+      return false;
+    }
+  })();
+  return footstepLoadPromise;
+}
+
+export function playFootstepSfx(minGap = 0.08) {
+  const now = performance.now();
+  if (lastSfxTime.footstep && now - lastSfxTime.footstep < minGap * 1000) return;
+  lastSfxTime.footstep = now;
+  const playBuf = () => {
+    if (!footstepBuffer || !actx || !sfxBus) return false;
+    try {
+      const src = actx.createBufferSource();
+      src.buffer = footstepBuffer;
+      const g = actx.createGain();
+      g.gain.value = 0.55 * Math.max(0, Math.min(2, audioSettings.sfx));
+      src.connect(g);
+      g.connect(sfxBus);
+      src.start(0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (unlocked && actx) {
+    if (actx.state === "suspended") actx.resume().catch(() => {});
+    if (!playBuf()) playSfx("footstep", minGap);
+    return;
+  }
+  initAudioEngine().then((ok) => {
+    if (ok && !playBuf()) playSfx("footstep", minGap);
+  });
+}
+
 export function playSfx(name, minGap = 0.04) {
   const now = performance.now();
   if (lastSfxTime[name] && now - lastSfxTime[name] < minGap * 1000) return;

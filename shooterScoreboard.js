@@ -36,6 +36,7 @@ export function renderShooterScoreboard(players, human, playStyle = "teams") {
   if (!tbody) return;
 
   const ffa = playStyle === "ffa";
+  const mole = playStyle === "mole";
   const teamKills = [0, 0];
   const rows = [...players]
     .filter((p) => p)
@@ -53,9 +54,11 @@ export function renderShooterScoreboard(players, human, playStyle = "teams") {
   }
 
   if (title) {
-    title.textContent = ffa
-      ? `自由混戰戰績 · ${rows.length} 人`
-      : `團隊對抗戰績 · ${rows.length} 人`;
+    title.textContent = mole
+      ? `無間道戰績 · 紅 ${teamKills[0]} · 藍 ${teamKills[1]}`
+      : ffa
+        ? `自由混戰戰績 · ${rows.length} 人`
+        : `團隊對抗戰績 · ${rows.length} 人`;
   }
 
   if (teamBar) {
@@ -79,7 +82,9 @@ export function renderShooterScoreboard(players, human, playStyle = "teams") {
     const you = p === human || (!p.isAI && human === p);
     const dead = p.caught || hp <= 0;
     const rowColor = ffa ? playerColorCss(p) : teamColorCss(p.teamId);
-    const teamLabel = ffa ? "混戰" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—");
+    const teamLabel = mole
+      ? (p.isMole ? "內鬼" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—"))
+      : ffa ? "混戰" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—");
     return `<tr class="${you ? "you" : ""} ${dead ? "dead" : ""}" style="--row-team:${rowColor}">
       <td>${i + 1}</td>
       <td class="sb-name"><span class="sb-team-dot"></span>${you ? "▸ " : ""}${name}${p.isAI ? " <span class='sb-bot'>AI</span>" : ""}</td>
@@ -99,27 +104,36 @@ export function bindShooterScoreboardUi(onToggle) {
   const backdrop = document.getElementById("shooterScoreboardBackdrop");
   const closeBtn = document.getElementById("btnScoreboardClose");
 
-  const toggle = (ev) => {
+  const forceClose = (ev) => {
     ev?.preventDefault?.();
     ev?.stopPropagation?.();
-    onToggle?.();
+    onToggle?.(false);
   };
 
   if (sbBtn) {
     sbBtn.onpointerdown = null;
     sbBtn.onpointerup = null;
     sbBtn.onpointercancel = null;
-    sbBtn.onclick = toggle;
+    sbBtn.onclick = null;
+    const openToggle = (ev) => {
+      ev?.preventDefault?.();
+      ev?.stopPropagation?.();
+      onToggle?.();
+    };
+    if (document.body.classList.contains("touch-ui")) {
+      sbBtn.addEventListener("touchend", openToggle, { passive: false });
+    } else {
+      sbBtn.onclick = openToggle;
+    }
   }
-  if (closeBtn) closeBtn.onclick = (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    onToggle?.(false);
-  };
-  if (backdrop) backdrop.onclick = (ev) => {
-    ev.preventDefault();
-    onToggle?.(false);
-  };
+  if (closeBtn) {
+    closeBtn.onclick = forceClose;
+    closeBtn.addEventListener("touchend", forceClose, { passive: false });
+  }
+  if (backdrop) {
+    backdrop.onclick = forceClose;
+    backdrop.addEventListener("touchend", forceClose, { passive: false });
+  }
   if (panel) {
     panel.onclick = (ev) => ev.stopPropagation();
   }

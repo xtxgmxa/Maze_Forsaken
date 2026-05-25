@@ -16,7 +16,8 @@ import {
 } from "./platformer.js";
 import { buildMazeDecor } from "./mazeDecor.js";
 import {
-  buildVerticalWorld, updateVerticalPhysics, updateBouncePads, worldHeight,
+  buildVerticalWorld, updateVerticalPhysics, updateBouncePads, spawnArenaBouncePads,
+  getBounceAirControlMult, worldHeight,
 } from "./verticalWorld.js";
 import {
   setupPuzzleDoorLevel, buildPuzzleDoorMeshes, getNearPuzzleDoor,
@@ -25,11 +26,13 @@ import {
   isPuzzleDoorUnlocked,
 } from "./puzzleDoorMode.js";
 import {
-  applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState,
+  applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState, respawnShooterPlayer,
   canShooterFire, fireShooterWeapon, updateShooterBots, buildShooterArena,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
-  assignShooterPlayer, buildShooterEndResults, onShooterDowned, getShooterKillAnnounce,
-  tickShooterRespawns,
+  assignShooterPlayer, buildShooterEndResults, buildMoleEndResults, onShooterDowned,
+  getShooterKillAnnounce, tickShooterRespawns, tryManualShooterRespawn, tickShooterDownedPose,
+  setupMoleRound, tickMoleAlerts, isMoleTeamkillViolation, scoreMoleKill, checkMoleRoundEnd,
+  isShooterMoleMode, clearShooterDownedState, SHOOTER_TEAMS,
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
 } from "./shooterMode.js";
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
@@ -48,6 +51,9 @@ import {
   initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings,
   setAudioSettings, resetAudioSettings, applyAudioSettings, connectMusicElement, setMusicZoneTint,
 } from "./audio.js";
+import {
+  loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
+} from "./gameSounds.js";
 import {
   buildZoneParticles, clearZoneParticles, tickZoneParticles,
   buildLedgeHints, tickLedgeHints, setCharacterRim, applyPlasticToCharacter,
@@ -788,6 +794,7 @@ function getHumanSurvivor() {
 
 function isSpectating() {
   if (playAsKiller || gameMode === "versus" || gameState !== "play") return false;
+  if (isShooterMode()) return false;
   const human = getHumanSurvivor();
   return !!(human && human.caught);
 }
@@ -901,7 +908,10 @@ function getHumanFocus() {
     return killers.find((k) => !k.isAI) || killers[0];
   }
   const human = getHumanSurvivor();
-  if (human) return human.caught ? null : human;
+  if (human) {
+    if (isShooterMode() && human._awaitingRespawn) return human;
+    return human.caught ? null : human;
+  }
   return survivors.find((s) => !s.caught) || survivors[0];
 }
 
@@ -1465,11 +1475,45 @@ function tryKillerBasicAttack(killer) {
   return startKillerAttack(killer, target, scene, combatCallbacks, { damage: KILLER_MELEE_DAMAGE, abId: "slash" });
 }
 
+function restartMoleRound(winTeam) {
+  if (!shooterState || !ctx || !maze) return;
+  for (const p of survivors) {
+    clearShooterDownedState(p);
+    respawnShooterPlayer(p, ctx, maze, survivors);
+    p.caught = false;
+    p._awaitingRespawn = false;
+  }
+  const mole = setupMoleRound(survivors, shooterState);
+  shooterState.moleCanShoot = false;
+  shooterState.moleAnnounced = false;
+  const human = getHumanSurvivor();
+  if (human?.isMole) {
+    showToast("你是內鬼！30 秒警報前勿開槍，之後可暗殺隊友換高分。", 4000, "kill");
+  } else {
+    showToast("新一局無間道！找出並擊殺內鬼。", 2800);
+  }
+  if (mole && !mole.isAI) {
+    /* human mole got private hint above */
+  }
+}
+
+function eliminateShooterForTeamkill(p, reason) {
+  if (!p || !isShooterMode() || !shooterState) return;
+  p.hp = 0;
+  p.caught = true;
+  p._shooterDowned = true;
+  showToast(reason || `${p.charDef?.name || "玩家"} 誤傷隊友，立刻淘汰！`, 1400, "kill");
+}
+
 function damageSurvivor(target, killer, amount, opts = {}) {
   if (!target || target.caught || elapsed < MATCH_START_GRACE) return;
   if ((target.invuln ?? 0) > 0.05) return;
   const headshot = !!opts.headshot;
   const envKiller = killer || { charDef: { name: "環境" }, pos: target.pos };
+  if (isShooterMode() && killer && target && isMoleTeamkillViolation(killer, target, shooterState)) {
+    eliminateShooterForTeamkill(killer, `${killer.charDef?.name || "玩家"} 射擊隊友！立刻淘汰`);
+    return;
+  }
   if (isShooterMode()) {
     playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
     target._hitFlash = 0.28;
@@ -1500,12 +1544,16 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   target.hp = Math.max(0, (target.hp ?? 100) - amount);
   if (isShooterMode()) {
-    spawnDamageNumber(target.pos.x, target.pos.z, amount, {
-      headshot,
-      onYou: !target.isAI,
-      onEnemy: target.isAI,
-      y: getTargetHeadY(target),
-    });
+    const human = getHumanSurvivor();
+    const myHit = killer && human && killer === human;
+    if (myHit) {
+      spawnDamageNumber(target.pos.x, target.pos.z, amount, {
+        headshot,
+        onYou: false,
+        onEnemy: true,
+        y: getTargetHeadY(target),
+      });
+    }
   } else {
     spawnDamageNumber(target.pos.x, target.pos.z, amount);
   }
@@ -1515,13 +1563,22 @@ function damageSurvivor(target, killer, amount, opts = {}) {
         spawnShooterHealOrb(scene, x, z, worldHeight(target));
       });
       const human = getHumanSurvivor();
+      syncShooterRespawnUi();
       const victimToast = !target.isAI
-        ? `${killer?.charDef?.name || "敵人"} 擊倒了你 · ${Math.ceil(shooterState.respawnDelay ?? 2.2)} 秒後重生`
+        ? `${killer?.charDef?.name || "敵人"} 擊倒了你 · 按「重生」復活`
         : null;
       const killAnnounce = getShooterKillAnnounce(killer, target, human);
       if (victimToast) showToast(victimToast, 1200, "kill");
       else if (killAnnounce) {
         showToast(killAnnounce, killer === human ? 1100 : 820, "kill");
+      }
+      if (isShooterMoleMode(shooterState)) {
+        scoreMoleKill(killer, target, shooterState);
+        const round = checkMoleRoundEnd(survivors, shooterState);
+        if (round) {
+          showToast(`${round.reason} · ${SHOOTER_TEAMS[round.winTeam]?.name || "隊伍"} +3 分`, 3200, "kill");
+          restartMoleRound(round.winTeam);
+        }
       }
       return;
     }
@@ -1819,7 +1876,9 @@ function checkMatchEnd(msgIfLose) {
   if (isShooterMode() && shooterState) {
     if (killerTimer <= 0) {
       const human = survivors.find((s) => !s.isAI);
-      const res = buildShooterEndResults(survivors, human, shooterState?.playStyle ?? shooterPlayStyle);
+      const res = isShooterMoleMode(shooterState)
+        ? buildMoleEndResults(survivors, human, shooterState)
+        : buildShooterEndResults(survivors, human, shooterState?.playStyle ?? shooterPlayStyle);
       playSfx("exit");
       endGame(res.won, res.msg);
       return;
@@ -1931,6 +1990,44 @@ function closeMathQuiz() {
   if (isTouchUiEnabled()) setTouchMissionHighlight(false);
 }
 
+function syncShooterRespawnUi() {
+  const human = getHumanSurvivor();
+  const waiting = !!(human && human._awaitingRespawn);
+  document.body.classList.toggle("shooter-awaiting-respawn", waiting);
+  const touchBtn = document.getElementById("btnTouchRespawn");
+  const deskBtn = document.getElementById("btnRespawn");
+  if (touchBtn) touchBtn.hidden = !waiting || !isTouchUiEnabled();
+  if (deskBtn) deskBtn.hidden = !waiting || isTouchUiEnabled();
+}
+
+function tryShooterRespawnInput() {
+  const human = getHumanSurvivor();
+  if (!human?._awaitingRespawn || !ctx || !maze) return false;
+  if (tryManualShooterRespawn(human, ctx, maze, survivors)) {
+    syncShooterRespawnUi();
+    showToast("已重生！", 700);
+    playSfx("teleport", 0.1);
+    return true;
+  }
+  return false;
+}
+
+function bindShooterRespawnUi() {
+  const touchBtn = document.getElementById("btnTouchRespawn");
+  const deskBtn = document.getElementById("btnRespawn");
+  const fire = (ev) => {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    tryShooterRespawnInput();
+  };
+  if (touchBtn) {
+    touchBtn.onclick = null;
+    touchBtn.addEventListener("touchend", fire, { passive: false });
+    touchBtn.addEventListener("click", fire);
+  }
+  if (deskBtn) deskBtn.onclick = fire;
+}
+
 function showShooterScoreboard(open) {
   if (!isShooterMode()) return;
   shooterScoreboardOpen = !!open;
@@ -1975,7 +2072,7 @@ function canUseAirJump(p) {
 }
 
 function tryShooterFire(p) {
-  if (!p || !isShooterMode() || !canShooterFire(p, elapsed)) return;
+  if (!p || !isShooterMode() || !canShooterFire(p, elapsed, shooterState)) return;
   if (camera) updateCameraForPlayer(camera, p, camYaw, camPitch);
   const aimDir = getShooterAimDir();
   p._lastFireDir = aimDir.clone();
@@ -2026,7 +2123,7 @@ function tryJump(p, profile, gp = null) {
     p.onGround = false;
     p.jumpsUsed = 1;
     p._airJumpReady = hasDoubleJumpPassive(p) && elapsed >= (p._djRechargeUntil ?? 0);
-    playSfx("jump");
+    playJumpSfx();
   } else if (canUseAirJump(p) && (p.jumpsUsed ?? 0) < 2) {
     p.velY = verticalWorldState ? 19 : 17;
     p.jumpsUsed = 2;
@@ -2039,7 +2136,7 @@ function tryJump(p, profile, gp = null) {
     p.vel.z = Math.cos(yaw) * hop;
     p.pos.x += Math.sin(yaw) * 0.65;
     p.pos.z += Math.cos(yaw) * 0.65;
-    playSfx("jump");
+    playJumpSfx();
     if (!p.isAI) showToast(`二段跳已使用 · ${DOUBLE_JUMP_RECHARGE} 秒後恢復`, 550, "default");
   }
 }
@@ -2058,12 +2155,13 @@ function getSlideDirection(move, profile) {
 }
 
 function applySlideInput(p, profile, move, dt, gp = null) {
-  if (p.role === "killer" || p.caught || playAsKiller) return move;
+  if (p.role === "killer" || p.caught || playAsKiller || p._shooterDowned) return move;
   if (p.slideTimer == null) p.slideTimer = 0;
   if (p.slideCd == null) p.slideCd = 0;
 
-  const SLIDE_DUR = 0.52;
-  const SLIDE_SPEED = 19 * getMapMoveScale();
+  const shSlide = isShooterMode();
+  const SLIDE_DUR = shSlide ? 0.88 : 0.52;
+  const SLIDE_SPEED = (shSlide ? 28 : 19) * getMapMoveScale();
 
   if (p.slideTimer > 0) {
     p.slideTimer = Math.max(0, p.slideTimer - dt);
@@ -2215,7 +2313,8 @@ function readMatchConfig() {
   const tEl = document.getElementById("matchTime");
   const psEl = document.getElementById("shooterPlayStyle");
   const maxSurv = isShooterMode() ? 12 : 4;
-  shooterPlayStyle = psEl?.value === "ffa" ? "ffa" : "teams";
+  const psv = psEl?.value;
+  shooterPlayStyle = psv === "ffa" ? "ffa" : psv === "mole" ? "mole" : "teams";
   numSurvivors = sEl
     ? Math.max(1, Math.min(maxSurv, parseInt(sEl.value, 10) || (isShooterMode() ? 8 : 1)))
     : selectedLevel.survivorSlots || 1;
@@ -2408,14 +2507,16 @@ async function runStartGame() {
   if (isShooterMode()) {
     const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
     shooterArenaGroup = arena.group;
+    bouncePads = spawnArenaBouncePads(
+      ctx, maze, arena.group, Math.min(8, selectedLevel.bouncePads ?? 4)
+    );
     verticalWorldState = {
       group: arena.group,
       platforms: arena.covers,
       stairs: [],
       bridges: [],
-      bouncePads: [],
+      bouncePads,
     };
-    bouncePads = [];
   } else {
     shooterArenaGroup = null;
     verticalWorldState = buildVerticalWorld(ctx, maze, scene, {
@@ -2523,6 +2624,17 @@ async function runStartGame() {
   if (isShooterMode()) {
     clearShooterHealOrbs(scene);
     loadShooterSounds().then(() => preloadShooterSounds());
+    preloadGameSounds();
+    if (isShooterMoleMode(shooterState)) {
+      const mole = setupMoleRound(survivors, shooterState);
+      const human = getHumanSurvivor();
+      if (human?.isMole) {
+        showToast("你是內鬼！警報前不能開槍，之後可暗殺隊友為隊伍換高分。", 4200, "kill");
+      } else {
+        showToast("無間道：找出並擊殺內鬼！誤傷隊友者立刻淘汰。", 3200);
+      }
+      if (mole) mole._moleRevealed = true;
+    }
     const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
       initShooterStats(s);
@@ -2545,7 +2657,7 @@ async function runStartGame() {
     if (mmLabel) mmLabel.textContent = "雷達";
     invalidateMinimapBase();
     drawShooterRadar();
-    const styleZh = playStyle === "ffa" ? "自由混戰" : "團隊對抗";
+    const styleZh = playStyle === "ffa" ? "自由混戰" : playStyle === "mole" ? "無間道" : "團隊對抗";
     showToast(
       `${selectedLevel.name} · ${styleZh} · ${survivors.length} 人 · 時間到比積分 · 戰績可點開`,
       2800
@@ -2558,9 +2670,12 @@ async function runStartGame() {
       camera.updateProjectionMatrix();
     }
     if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
+    syncShooterRespawnUi();
+    bindShooterRespawnUi();
   } else {
     showShooterScoreboard(false);
     resetShooterScoreboardUi();
+    syncShooterRespawnUi();
     const sbBtn = document.getElementById("btnTouchScoreboard");
     if (sbBtn) sbBtn.hidden = true;
     if (camera) {
@@ -2594,7 +2709,10 @@ async function runStartGame() {
   updateKeyHuntBar();
   syncTouchHudFromPlayer();
   setMissionText();
-  initAudioEngine().then(() => connectMusicElement(musicEl));
+  initAudioEngine().then(() => {
+    connectMusicElement(musicEl);
+    preloadGameSounds();
+  });
   musicEl?.play().catch(() => {});
 
   refreshGameplayHints();
@@ -2781,7 +2899,11 @@ function setMissionText() {
     modeText = "平台冒險：踩綠色小怪 · 躲噴火與落石 · 藍色箭頭為單向門";
     rules = `<li>空白鍵二段跳可越過矮牆 · 無獵人 · 到達出口通關</li>`;
   } else if (isShooterMode()) {
-    const shStyle = shooterPlayStyle === "ffa" ? "自由混戰（見人就打）" : "團隊對抗（紅藍均分）";
+    const shStyle = shooterPlayStyle === "ffa"
+      ? "自由混戰（見人就打）"
+      : shooterPlayStyle === "mole"
+        ? "無間道（內鬼模式）"
+        : "團隊對抗（紅藍均分）";
     modeText = `槍戰：${shStyle} · 時間結束比積分（擊殺=1分）`;
     rules = `<li>擊倒敵人掉落綠十字 · 靠近補 50% HP · 戰績可看全員名單 · 1~4 換槍</li>`;
   } else if (playAsKiller) {
@@ -2949,6 +3071,11 @@ function setupInput() {
     if (gameState === "play" && e.code === "KeyG" && isKeyHuntMode()) {
       e.preventDefault();
       tryOpenDoorInput();
+      return;
+    }
+    if (gameState === "play" && e.code === "KeyR" && isShooterMode()) {
+      e.preventDefault();
+      tryShooterRespawnInput();
       return;
     }
     if (gameState === "play" && e.code === "KeyR" && !playAsKiller && !isShooterMode()) {
@@ -3324,8 +3451,11 @@ function updateEntity(p, dt, move) {
   const isKiller = p.role === "killer";
   const mapScale = getMapMoveScale();
   const classSpd = p._shooterSpeedMult ?? 1;
-  let maxSpeed = (isKiller ? KILLER_WALK : WALK_SPEED) * speedMult * mapScale * classSpd;
-  if (sprinting) maxSpeed = (isKiller ? KILLER_SPRINT : SPRINT_SPEED) * speedMult * mapScale * classSpd;
+  const walkBase = isShooterMode() ? WALK_SPEED * 0.72 : WALK_SPEED;
+  const sprintBase = isShooterMode() ? SPRINT_SPEED * 0.75 : SPRINT_SPEED;
+  const airMult = getBounceAirControlMult(p);
+  let maxSpeed = (isKiller ? KILLER_WALK : walkBase) * speedMult * mapScale * classSpd * airMult;
+  if (sprinting) maxSpeed = (isKiller ? KILLER_SPRINT : sprintBase) * speedMult * mapScale * classSpd * airMult;
   if (gameMode === "practice" && isKiller && p.isAI) maxSpeed *= 0.82;
   if (gameMode === "hardcore" && isKiller) maxSpeed *= 1.12;
   const parts = p.mesh?.userData?.parts;
@@ -3390,11 +3520,18 @@ function updateEntity(p, dt, move) {
     p._stepCd = (p._stepCd ?? 0) - dt;
     const stepGap = sprinting ? 0.28 : 0.38;
     if (p._stepCd <= 0) {
-      if (!p.isAI) playSfx("footstep", 0.09);
-      else if (isShooterMode()) playSfx("footstep", 0.14);
+      if (!p.isAI) playFootstepSfx(0.09);
+      else if (isShooterMode()) playFootstepSfx(0.14);
       p._stepCd = stepGap * (8 / Math.max(4, spd));
     }
   }
+  const wasAir = p._wasInAir;
+  const inAir = !p.onGround || (p._jumpY ?? 0) > 0.2 || (p.velY ?? 0) > 0.4 || (p._bounceAirTime ?? 0) > 0;
+  p._wasInAir = inAir;
+  if (wasAir && p.onGround && (p._jumpY ?? 0) <= 0.08 && Math.abs(p.velY ?? 0) < 1.2) {
+    playLandSfx(0.1);
+  }
+
   applyMeshAnim(p, dt);
   if (!p._anim && shouldAnimateEntity(p)) applyLocomotionAnim(p, dt);
   tickEntityUnstuck(p, dt);
@@ -3838,7 +3975,7 @@ function updateProjectiles(dt) {
     if (pr.fromShooter && pr.owner) {
       for (const s of survivors) {
         if (s === pr.owner || s.caught || (s.hp ?? 0) <= 0) continue;
-        if (!isShooterEnemy(pr.owner, s, shooterState?.playStyle ?? shooterPlayStyle)) continue;
+        if (!isShooterEnemy(pr.owner, s, shooterState?.playStyle ?? shooterPlayStyle, shooterState)) continue;
         if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
           const hitY = worldHeight(s) + 1.05;
           if (shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z)) continue;
@@ -4539,6 +4676,11 @@ function loop(now) {
         if (!p.isAI) showToast("補血 +50% HP", 900);
       });
       tickShooterRespawns(survivors, ctx, maze, elapsed);
+      tickMoleAlerts(shooterState, elapsed, (msg, ms) => showToast(msg, ms, "kill"));
+      for (const s of survivors) {
+        if (s._shooterDowned) tickShooterDownedPose(s, elapsed, worldHeight);
+      }
+      syncShooterRespawnUi();
       updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,
         moveEntity: updateEntity,
@@ -4562,8 +4704,8 @@ function loop(now) {
     }
     if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) updateKillers(dt);
     updateBouncePads(bouncePads, getAliveSurvivors(), verticalWorldState, dt, (p) => {
-      playSfx("teleport", 0.15);
-      if (!p.isAI) showToast("彈跳床！", 450);
+      playBouncePadSfx(0.15);
+      if (!p.isAI) showToast("彈跳板！空中可移動調整落點", 650);
     });
     updateProjectiles(dt);
     updateWorldItems();

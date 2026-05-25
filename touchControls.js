@@ -135,7 +135,9 @@ function bindLook(zone) {
   let lastX = 0;
   let lastY = 0;
   zone.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".touch-btn, #touchButtons, #touchShooterBar, #touchStickWrap, #btnTouchSettings, #btnHudPause")) return;
+    if (e.target.closest(
+      ".touch-btn, #touchButtons, #touchShooterBar, #touchStickWrap, #btnTouchSettings, #btnHudPause, #btnTouchScoreboard, #btnTouchRespawn, #minimap-wrap, #shooterScoreboard"
+    )) return;
     const t = e.changedTouches[0];
     if (t.clientX < window.innerWidth * 0.36) return;
     pid = t.identifier;

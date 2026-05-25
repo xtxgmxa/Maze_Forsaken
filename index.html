@@ -1053,7 +1053,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      z-index: 85;
+      z-index: 200;
       align-items: flex-start;
       justify-content: center;
       padding-top: max(10px, env(safe-area-inset-top, 0px));
@@ -1178,6 +1178,53 @@
       vertical-align: middle;
     }
     #shooterScoreboard tr.you td { border-left: 3px solid var(--row-team, #66ccff); }
+    #btnTouchRespawn, #btnRespawn {
+      display: none;
+      pointer-events: auto;
+      touch-action: manipulation;
+      z-index: 96;
+    }
+    body.shooter-awaiting-respawn #btnTouchRespawn,
+    body.shooter-awaiting-respawn #btnRespawn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    body.touch-ui.shooter-play.shooter-awaiting-respawn #btnTouchRespawn {
+      position: fixed;
+      left: 50%;
+      bottom: max(108px, calc(100px + env(safe-area-inset-bottom, 0px)));
+      transform: translateX(-50%);
+      min-width: 120px;
+      height: 40px;
+      padding: 0 20px;
+      border-radius: 10px;
+      border: 2px solid #66ffcc;
+      background: rgba(12, 28, 40, 0.94);
+      color: #88ffdd;
+      font-size: 0.9rem;
+      font-weight: bold;
+    }
+    body.shooter-play.shooter-awaiting-respawn:not(.touch-ui) #btnRespawn {
+      position: fixed;
+      left: 50%;
+      bottom: 28%;
+      transform: translateX(-50%);
+      min-width: 140px;
+      height: 44px;
+      padding: 0 24px;
+      border-radius: 10px;
+      border: 2px solid #66ffcc;
+      background: rgba(12, 28, 40, 0.94);
+      color: #88ffdd;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    body.touch-ui.shooter-play #minimap-wrap {
+      pointer-events: auto;
+      z-index: 94;
+    }
     body.touch-ui.shooter-play #btnTouchScoreboard {
       display: flex;
       position: static;
@@ -2379,6 +2426,7 @@
           <select id="shooterPlayStyle">
             <option value="teams" selected>團隊對抗（紅藍均分）</option>
             <option value="ffa">自由混戰（見人就打）</option>
+            <option value="mole">無間道（內鬼臥底）</option>
           </select>
         </label>
       </div>
@@ -2527,6 +2575,8 @@
     <span id="spectateHint" class="spectate-hint">[ ] 或 ← → 切換視角</span>
   </div>
   <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
+  <button type="button" id="btnTouchRespawn" class="touch-only" hidden>重生</button>
+  <button type="button" id="btnRespawn" hidden title="重生 (R)">重生 (R)</button>
   <div id="puzzleWaypoint" hidden></div>
   <p id="touchMissionBanner" class="touch-only" hidden></p>
   <button type="button" id="btnTouchMission" class="touch-only" hidden>⚡ 解任務</button>

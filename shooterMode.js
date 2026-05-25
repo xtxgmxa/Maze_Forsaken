@@ -22,12 +22,112 @@ export function assignShooterPlayer(p, index, total, playStyle = "teams") {
   p._shooterColor = p.paintColor;
 }
 
-export function isShooterEnemy(a, b, playStyle = "teams") {
+export function isShooterMoleMode(stateOrStyle) {
+  if (typeof stateOrStyle === "object" && stateOrStyle) return stateOrStyle.playStyle === "mole";
+  return stateOrStyle === "mole";
+}
+
+export function isShooterEnemy(a, b, playStyle = "teams", state = null) {
   if (!a || !b || a === b) return false;
   if (a.caught || b.caught) return false;
   if ((a.hp ?? 0) <= 0 || (b.hp ?? 0) <= 0) return false;
+  const mole = isShooterMoleMode(state) || playStyle === "mole";
+  if (mole && a.isMole && state?.moleCanShoot) return true;
   if (playStyle === "ffa") return true;
   return (a.teamId ?? 0) !== (b.teamId ?? 0);
+}
+
+export function isSameShooterTeam(a, b) {
+  if (!a || !b) return false;
+  if (a.teamId < 0 || b.teamId < 0) return false;
+  return (a.teamId ?? 0) === (b.teamId ?? 0);
+}
+
+/** 無間道：開局隨機內鬼（僅該隊伍一人知曉身分） */
+export function setupMoleRound(players, state) {
+  const pool = players.filter((p) => p && p.teamId >= 0);
+  if (!pool.length) return null;
+  const teamPick = Math.random() < 0.5 ? 0 : 1;
+  const teamMates = pool.filter((p) => (p.teamId ?? 0) === teamPick);
+  const pickFrom = teamMates.length ? teamMates : pool;
+  const mole = pickFrom[Math.floor(Math.random() * pickFrom.length)];
+  for (const p of players) {
+    p.isMole = false;
+    p._moleRevealed = false;
+  }
+  mole.isMole = true;
+  state.moleRef = mole;
+  state.moleTeamId = mole.teamId ?? 0;
+  state.moleCanShoot = false;
+  state.moleAnnounced = false;
+  state.moleArmAt = state.moleArmAt ?? 30;
+  state.teamRoundScore = state.teamRoundScore || [0, 0];
+  return mole;
+}
+
+export function tickMoleAlerts(state, elapsed, onToast) {
+  if (!isShooterMoleMode(state)) return;
+  if (!state.moleAnnounced && elapsed >= (state.moleArmAt ?? 30)) {
+    state.moleCanShoot = true;
+    state.moleAnnounced = true;
+    onToast?.("⚠ 警報：內鬼現在可以對隊友開槍了！", 2600);
+  }
+}
+
+/** 射擊同隊好人 → 立刻淘汰射手 */
+export function isMoleTeamkillViolation(killer, target, state) {
+  if (!isShooterMoleMode(state)) return false;
+  if (!killer || !target || killer === target) return false;
+  if (!isSameShooterTeam(killer, target)) return false;
+  if (killer.isMole && state.moleCanShoot) return false;
+  return true;
+}
+
+export function scoreMoleKill(killer, victim, state) {
+  if (!isShooterMoleMode(state) || !killer || !victim) return;
+  if (killer.isMole && state.moleCanShoot && isSameShooterTeam(killer, victim)) {
+    const tid = killer.teamId ?? 0;
+    state.teamRoundScore[tid] = (state.teamRoundScore[tid] || 0) + 5;
+    return;
+  }
+  if (!isSameShooterTeam(killer, victim)) {
+    const tid = killer.teamId ?? 0;
+    state.teamRoundScore[tid] = (state.teamRoundScore[tid] || 0) + 1;
+  }
+}
+
+export function checkMoleRoundEnd(players, state) {
+  if (!isShooterMoleMode(state)) return null;
+  const mole = state.moleRef || players.find((p) => p.isMole);
+  if (mole && (mole.caught || mole._shooterDowned || (mole.hp ?? 0) <= 0)) {
+    const win = mole.teamId === 0 ? 1 : 0;
+    state.teamRoundScore[win] = (state.teamRoundScore[win] || 0) + 3;
+    return { winTeam: win, reason: "內鬼被擊殺，對方隊伍贏得本局" };
+  }
+  const alive0 = players.filter((p) => (p.teamId ?? 0) === 0 && !p.caught && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
+  const alive1 = players.filter((p) => (p.teamId ?? 0) === 1 && !p.caught && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
+  if (!alive0.length) return { winTeam: 1, reason: "紅隊全滅" };
+  if (!alive1.length) return { winTeam: 0, reason: "藍隊全滅" };
+  return null;
+}
+
+export function buildMoleEndResults(players, human, state) {
+  const s0 = state.teamRoundScore?.[0] ?? 0;
+  const s1 = state.teamRoundScore?.[1] ?? 0;
+  let teamWin = null;
+  if (s0 !== s1) teamWin = s0 > s1 ? 0 : 1;
+  const mole = state.moleRef;
+  const moleName = mole?.charDef?.name || "?";
+  let msg = `無間道結束 · 紅隊 ${s0} 分 · 藍隊 ${s1} 分\n`;
+  msg += `內鬼：${moleName}（${SHOOTER_TEAMS[state.moleTeamId ?? 0]?.name || "—"}）\n`;
+  if (teamWin != null) {
+    const youWin = human && (human.teamId ?? 0) === teamWin;
+    msg += `${SHOOTER_TEAMS[teamWin].name} 總分獲勝！`;
+    if (human) msg += youWin ? "\n你：勝利隊伍！" : "\n你：落敗隊伍…";
+    return { won: !!youWin, msg, teamWin, playStyle: "mole" };
+  }
+  msg += "平手！";
+  return { won: false, msg, teamWin: null, playStyle: "mole" };
 }
 
 export const SHOOTER_WEAPONS = [
@@ -67,8 +167,8 @@ export function isShooterHeadshot(shooter, target, fireDir) {
 export function applyShooterLoadout(p, weaponId = "rifle") {
   const w = getShooterWeapon(weaponId);
   p.weaponId = w.id;
-  p.maxHp = 110;
-  p.hp = 110;
+  p.maxHp = 140;
+  p.hp = 140;
   p._shooterSpeedMult = w.id === "sniper" ? 0.9 : w.id === "shotgun" ? 0.94 : 1;
   p._shooterColor = p.paintColor ?? w.color;
   p._shooterFireCd = w.fireCd;
@@ -87,13 +187,20 @@ export function cycleShooterWeapon(p, dir = 1) {
 }
 
 export function createShooterState(level = {}, playStyle = "teams") {
+  const ps = playStyle === "ffa" ? "ffa" : playStyle === "mole" ? "mole" : "teams";
   return {
-    playStyle: playStyle === "ffa" ? "ffa" : "teams",
+    playStyle: ps,
     humanKills: 0,
     botKills: 0,
     respawnDelay: 2.2,
     mapStyle: level.mapStyle || "arena",
     levelName: level.name || "槍戰",
+    moleArmAt: 30,
+    moleCanShoot: false,
+    moleAnnounced: false,
+    moleRef: null,
+    moleTeamId: 0,
+    teamRoundScore: [0, 0],
   };
 }
 
@@ -119,7 +226,7 @@ export function respawnShooterPlayer(p, ctx, maze, players) {
   p.velY = 0;
   p.onGround = true;
   p.caught = false;
-  p.hp = p.maxHp ?? 110;
+  p.hp = p.maxHp ?? 140;
   p.invuln = 1.6;
   p._respawnUntil = 0;
   if (p.mesh) {
@@ -128,9 +235,44 @@ export function respawnShooterPlayer(p, ctx, maze, players) {
   }
 }
 
-export function canShooterFire(p, elapsed) {
-  return (p._shootCd ?? 0) <= elapsed && !p.caught && (p.hp ?? 0) > 0
-    && !(p._respawnUntil > elapsed);
+export function canShooterFire(p, elapsed, state = null) {
+  if (p.isMole && isShooterMoleMode(state) && !state.moleCanShoot) return false;
+  return (p._shootCd ?? 0) <= elapsed && !p.caught && !p._shooterDowned
+    && (p.hp ?? 0) > 0 && !(p._respawnUntil > elapsed);
+}
+
+/** 倒地動畫：先側躺再隱藏模型（玩家需手動重生） */
+export function tickShooterDownedPose(p, elapsed, worldHeightFn) {
+  if (!p?._shooterDowned || !p.mesh) return;
+  const wh = worldHeightFn ? worldHeightFn(p) : (p.elev ?? 0);
+  const t0 = p._shooterDownedAt ?? elapsed;
+  const layT = Math.min(1, (elapsed - t0) / 0.5);
+  const lay = layT * (Math.PI / 2) * 0.88;
+  p.mesh.rotation.x = -lay;
+  p.mesh.position.y = wh + layT * 0.15;
+  p.mesh.rotation.y = p._shooterDownedYaw ?? p.yaw ?? p.mesh.rotation.y;
+  if (p._shooterBodyHideAt != null && elapsed >= p._shooterBodyHideAt) {
+    p.mesh.visible = false;
+  }
+}
+
+export function clearShooterDownedState(p) {
+  if (!p) return;
+  p._shooterDowned = false;
+  p._awaitingRespawn = false;
+  p._autoRespawnAt = 0;
+  p._shooterBodyHideAt = null;
+  if (p.mesh) {
+    p.mesh.rotation.x = 0;
+    p.mesh.visible = true;
+  }
+}
+
+export function tryManualShooterRespawn(p, ctx, maze, players) {
+  if (!p || !p._awaitingRespawn) return false;
+  clearShooterDownedState(p);
+  respawnShooterPlayer(p, ctx, maze, players);
+  return true;
 }
 
 export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) {
@@ -423,7 +565,7 @@ function pickShooterBotTarget(bot, players, style) {
   let target = null;
   let best = Infinity;
   for (const other of players) {
-    if (!isShooterEnemy(bot, other, style)) continue;
+      if (!isShooterEnemy(bot, other, style, state)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
     if (d < best) {
       best = d;
@@ -550,7 +692,7 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
     const canShoot = bd >= minR * 0.75 && bd <= maxR * 1.2 + (wId === "sniper" ? 20 : 8);
-    if (canShoot && bd < 40 && canShooterFire(bot, api.elapsed)) {
+    if (canShoot && bd < 40 && canShooterFire(bot, api.elapsed, state)) {
       bot.yaw = yawTo;
       api.fire(bot, bot.yaw);
       muzzleFlash(bot);
@@ -626,23 +768,45 @@ export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   }
   if (!killer?.isAI) state.humanKills = (state.humanKills || 0) + 1;
   else if (killer?.isAI && !victim?.isAI) state.botKills = (state.botKills || 0) + 1;
+
+  victim.hp = 0;
   victim.caught = true;
-  if (victim.mesh) victim.mesh.visible = false;
-  victim._respawnUntil = elapsed + (state.respawnDelay ?? 2.2);
+  victim.vel = { x: 0, z: 0 };
+  victim.velY = 0;
+  victim._shooterDowned = true;
+  victim._shooterDownedAt = elapsed;
+  victim._shooterDownedYaw = victim.yaw ?? 0;
+  victim._shooterBodyHideAt = elapsed + 2.4;
+  victim._respawnUntil = 0;
+
+  if (victim.mesh) {
+    victim.mesh.visible = true;
+    victim.mesh.rotation.x = 0;
+  }
+
+  if (!victim.isAI) {
+    victim._awaitingRespawn = true;
+  } else {
+    victim._awaitingRespawn = false;
+    victim._autoRespawnAt = elapsed + 3.0;
+  }
+
   if (typeof spawnHeal === "function") {
     spawnHeal(victim.pos.x, victim.pos.z);
   }
   if (!victim.isAI) {
-    return `${killer?.charDef?.name || "敵人"} 擊倒了你 · ${Math.ceil(state.respawnDelay)} 秒後重生`;
+    return `${killer?.charDef?.name || "敵人"} 擊倒了你 · 按「重生」復活`;
   }
   return null;
 }
 
 export function tickShooterRespawns(players, ctx, maze, elapsed) {
   for (const p of players) {
-    if (!p._respawnUntil || elapsed < p._respawnUntil) continue;
-    respawnShooterPlayer(p, ctx, maze, players);
-    p._respawnUntil = 0;
-    p.caught = false;
+    tickShooterDownedPose(p, elapsed);
+    if (p._awaitingRespawn) continue;
+    if (p._autoRespawnAt && elapsed >= p._autoRespawnAt) {
+      clearShooterDownedState(p);
+      respawnShooterPlayer(p, ctx, maze, players);
+    }
   }
 }

@@ -214,7 +214,7 @@ export function buildVerticalWorld(ctx, maze, scene, level = {}) {
     }
   }
 
-  const padMax = Math.min(level.bouncePads ?? 6, 10);
+  const padMax = Math.min(level.bouncePads ?? 6, 12);
   for (let i = 0; i < padMax && passages.length; i++) {
     for (let t = 0; t < 60; t++) {
       const p = passages[Math.floor(Math.random() * passages.length)];
@@ -226,44 +226,17 @@ export function buildVerticalWorld(ctx, maze, scene, level = {}) {
       if (p.dir === "r") tgx += 1;
       else tgz += 1;
       if (!isOpen(tgx, tgz)) continue;
-      const to = cellCenter(ctx, tgx, tgz);
-      const toPlat = platforms.find((pl) => pl.gx === tgx && pl.gz === tgz);
       const fromPlat = platforms.find((pl) => pl.gx === p.gx && pl.gz === p.gz);
       const startElev = fromPlat?.y ?? 0;
-      const targetElev = toPlat?.y ?? 0;
-      const padY = startElev + 0.14;
-      const pad = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.2, 1.45, 0.28, 14),
-        lambertStud(0x44ffaa, 0x22ff88, 0.55)
-      );
-      pad.position.set(p.x, padY, p.z);
-      group.add(pad);
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.15, 0.12, 10, 24),
-        new THREE.MeshBasicMaterial({ color: 0xaaffcc })
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.set(p.x, padY + 0.1, p.z);
-      group.add(ring);
-      const dist = Math.hypot(to.x - p.x, to.z - p.z);
-      const arc = new THREE.Mesh(
-        new THREE.TorusGeometry(0.6, 0.08, 8, 16, Math.PI),
-        new THREE.MeshBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.8 })
-      );
-      arc.rotation.x = Math.PI / 2;
-      arc.rotation.z = Math.atan2(to.z - p.z, to.x - p.x);
-      arc.position.set((p.x + to.x) / 2, padY + 1.6 + dist * 0.1, (p.z + to.z) / 2);
-      group.add(arc);
+      const pad = addRivalsBouncePad(group, p.x, p.z, startElev);
       bouncePads.push({
         x: p.x,
         z: p.z,
         startElev,
-        targetX: to.x,
-        targetZ: to.z,
-        targetElev,
-        peak: 5 + dist * 0.22,
-        mesh: pad,
-        ring,
+        launchVy: 27,
+        halfW: 1.42,
+        halfD: 1.42,
+        ...pad,
       });
       break;
     }
@@ -301,55 +274,90 @@ export function buildVerticalWorld(ctx, maze, scene, level = {}) {
   return { group, platforms, stairs, bridges, bouncePads };
 }
 
-export function launchBounceArc(p, pad) {
-  const dist = Math.hypot(pad.targetX - p.pos.x, pad.targetZ - p.pos.z);
-  p._bounceArc = {
-    t: 0,
-    dur: Math.max(0.65, Math.min(1.2, 0.52 + dist * 0.048)),
-    sx: p.pos.x,
-    sz: p.pos.z,
-    se: pad.startElev ?? p.elev ?? 0,
-    tx: pad.targetX,
-    tz: pad.targetZ,
-    te: pad.targetElev ?? 0,
-    peak: pad.peak ?? 5.5,
-  };
+/** Rivals 風格彈跳板模型（大方塊 + 青色發光核心） */
+export function addRivalsBouncePad(group, x, z, floorY = 0) {
+  const padRoot = new THREE.Group();
+  padRoot.position.set(x, floorY + 0.1, z);
+
+  const frameMat = lambertStud(0xe8ecef, 0xd0d8e0, 0.12);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0x33eeff, transparent: true, opacity: 0.92 });
+  const trimMat = lambertStud(0x9aa8b8, 0x667788, 0.2);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.22, 2.85), frameMat);
+  base.position.y = 0.11;
+  padRoot.add(base);
+
+  const core = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.08, 1.35), glowMat);
+  core.position.y = 0.28;
+  padRoot.add(core);
+
+  const corner = 1.18;
+  for (const [cx, cz] of [[-corner, -corner], [corner, -corner], [-corner, corner], [corner, corner]]) {
+    const c = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.42), trimMat);
+    c.position.set(cx, 0.2, cz);
+    padRoot.add(c);
+  }
+  for (let i = 0; i < 4; i++) {
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.06, 0.22), glowMat);
+    strip.position.set(i < 2 ? 0 : 0, 0.24, i % 2 === 0 ? -0.95 : 0.95);
+    if (i >= 2) strip.rotation.y = Math.PI / 2;
+    padRoot.add(strip);
+  }
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 1.25, 4),
+    new THREE.MeshBasicMaterial({ color: 0x66ffff, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.31;
+  padRoot.add(ring);
+
+  group.add(padRoot);
+  return { mesh: padRoot, core, ring };
+}
+
+/** 垂直彈射：約 4～5 層樓高，空中可用移動鍵調整落點 */
+export function launchRivalsBounce(p, pad) {
+  p._bounceArc = null;
+  const vy = pad.launchVy ?? 27;
+  p.velY = vy;
+  p._jumpY = 0.35;
   p.onGround = false;
-  p.velY = 0;
-  p.vel = { x: 0, z: 0 };
+  p._bounceAirTime = 4.2;
+  p._bounceCd = 1.1;
+  p._wasInAir = true;
 }
 
 export function tickBounceArc(p, dt) {
-  const arc = p._bounceArc;
-  if (!arc) return false;
-  arc.t += dt;
-  const u = Math.min(1, arc.t / arc.dur);
-  const ease = u * u * (3 - 2 * u);
-  p.pos.x = arc.sx + (arc.tx - arc.sx) * ease;
-  p.pos.z = arc.sz + (arc.tz - arc.sz) * ease;
-  p.elev = arc.se + (arc.te - arc.se) * ease;
-  p._jumpY = arc.peak * 4 * ease * (1 - ease);
-  p.onGround = false;
-  if (u >= 1) {
+  if (p._bounceArc) {
     p._bounceArc = null;
-    p.elev = arc.te;
-    p._jumpY = 0;
-    p.velY = 0;
-    p.onGround = true;
-    p._bounceCd = 1.15;
-    return true;
   }
-  return true;
+  return false;
+}
+
+export function getBounceAirControlMult(p) {
+  if ((p._bounceAirTime ?? 0) <= 0) return 1;
+  return 1.55;
+}
+
+export function tickBounceAirTime(p, dt) {
+  if ((p._bounceAirTime ?? 0) > 0) {
+    p._bounceAirTime = Math.max(0, p._bounceAirTime - dt);
+  }
 }
 
 export function updateVerticalPhysics(p, dt, verticalState) {
   if (!p || p.caught) return;
-  if (tickBounceArc(p, dt)) return;
+  tickBounceArc(p, dt);
+  tickBounceAirTime(p, dt);
 
   if (p.elev == null) p.elev = 0;
   if (p._jumpY == null) p._jumpY = 0;
 
-  const grav = p.role === "killer" ? 32 : (p._shooterSpeedMult != null ? 36 : 26);
+  const airBoost = (p._bounceAirTime ?? 0) > 0;
+  const grav = airBoost
+    ? (p.role === "killer" ? 24 : p._shooterSpeedMult != null ? 28 : 20)
+    : (p.role === "killer" ? 32 : (p._shooterSpeedMult != null ? 36 : 26));
   if (!p.onGround) {
     p.velY = (p.velY ?? 0) - grav * dt;
     p._jumpY += p.velY * dt;
@@ -395,22 +403,51 @@ export function updateVerticalPhysics(p, dt, verticalState) {
 export function updateBouncePads(bouncePads, players, verticalState, dt, onLaunch) {
   if (!bouncePads?.length) return;
   for (const p of players) {
-    if (!p || p.caught || p._bounceArc) continue;
+    if (!p || p.caught) continue;
     if ((p._bounceCd ?? 0) > 0) {
       p._bounceCd -= dt;
       continue;
     }
     for (const pad of bouncePads) {
-      if (Math.hypot(p.pos.x - pad.x, p.pos.z - pad.z) > 1.55) continue;
-      launchBounceArc(p, pad);
-      if (pad.mesh) pad.mesh.scale.set(1.25, 0.6, 1.25);
+      const hw = pad.halfW ?? 1.42;
+      const hd = pad.halfD ?? 1.42;
+      if (!insideAabb(p.pos.x, p.pos.z, pad.x, pad.z, hw, hd)) continue;
+      launchRivalsBounce(p, pad);
+      if (pad.mesh) pad.mesh.scale.set(1.08, 0.72, 1.08);
       onLaunch?.(p, pad);
       break;
     }
   }
   for (const pad of bouncePads) {
-    if (pad.mesh) pad.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.12);
+    if (pad.mesh) pad.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.14);
+    if (pad.core) pad.core.material.opacity = 0.82 + Math.sin(performance.now() * 0.006) * 0.12;
   }
+}
+
+/** 槍戰／平面關卡也可放彈跳板 */
+export function spawnArenaBouncePads(ctx, maze, group, count = 4, floorY = 0) {
+  const pads = [];
+  const { w, h } = ctx;
+  for (let i = 0; i < count; i++) {
+    for (let t = 0; t < 40; t++) {
+      const gx = 2 + Math.floor(Math.random() * Math.max(1, w - 4));
+      const gz = 2 + Math.floor(Math.random() * Math.max(1, h - 4));
+      if (maze[gz][gx].wall) continue;
+      const c = cellCenter(ctx, gx, gz);
+      const vis = addRivalsBouncePad(group, c.x, c.z, floorY);
+      pads.push({
+        x: c.x,
+        z: c.z,
+        startElev: floorY,
+        launchVy: 27,
+        halfW: 1.42,
+        halfD: 1.42,
+        ...vis,
+      });
+      break;
+    }
+  }
+  return pads;
 }
 
 export function worldHeight(p) {
