@@ -28,6 +28,8 @@ import {
 import {
   applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState, respawnShooterPlayer,
   canShooterFire, fireShooterWeapon, updateShooterBots, buildShooterArena,
+  carveShooterSecretPassages, buildShooterVerticalWorld, spawnShooterBouncePads,
+  resetShooterCharacterPose,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
   assignShooterPlayer, buildShooterEndResults, buildMoleEndResults, onShooterDowned,
   getShooterKillAnnounce, tickShooterRespawns, tryManualShooterRespawn, tickShooterDownedPose,
@@ -36,6 +38,12 @@ import {
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
 } from "./shooterMode.js";
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
+import { updateShooterLadderClimb } from "./shooterPhysics.js";
+import { moveWithShooterCollision } from "./shooterCollision.js";
+import { getShooterLayout } from "./shooterLayouts.js";
+import {
+  carveLayoutSecretGates, buildShooterSecretMarkers, applyShooterLevelAtmosphere,
+} from "./shooterArenaArt.js";
 import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
   clearShooterTeamMarkers, syncShooterOverheadLabels, revealMoleOnHit,
@@ -148,7 +156,7 @@ function loadShooterSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SHOOTER_SETTINGS_KEY) || "{}");
     return {
-      fov: Math.max(70, Math.min(115, s.fov ?? 94)),
+      fov: Math.max(70, Math.min(115, s.fov ?? 100)),
       scopeFov: Math.max(28, Math.min(65, s.scopeFov ?? 44)),
       invertY: !!s.invertY,
       autoAim: !!s.autoAim,
@@ -710,6 +718,10 @@ function initMenu() {
     syncTouchButtonBindings(getBindings);
   };
   document.getElementById("btnResume")?.addEventListener("click", () => togglePause());
+  document.getElementById("btnPauseSettings")?.addEventListener("click", () => {
+    initAudioEngine();
+    openSettings();
+  });
   document.getElementById("btnQuitMenu")?.addEventListener("click", () => returnToMenu());
   document.getElementById("btnSpectatePrev")?.addEventListener("click", () => cycleSpectate(-1));
   document.getElementById("btnSpectateNext")?.addEventListener("click", () => cycleSpectate(1));
@@ -1145,7 +1157,8 @@ function returnToMenu() {
 }
 
 function openSettings() {
-  document.getElementById("settingsPanel").classList.add("show");
+  initAudioEngine();
+  document.getElementById("settingsPanel")?.classList.add("show");
   renderSettingsForm();
 }
 
@@ -1189,7 +1202,7 @@ function renderSettingsForm() {
       <h4>槍戰視野</h4>
       <label class="vol-row">視野寬度 (FOV)
         <span class="vol-control">
-          <input type="range" id="setShooterFov" min="75" max="110" value="${shooterSettings.fov}" />
+          <input type="range" id="setShooterFov" min="75" max="115" value="${shooterSettings.fov}" />
           <span id="setShooterFovVal">${shooterSettings.fov}°</span>
         </span>
       </label>
@@ -1580,9 +1593,14 @@ function syncShooterPlayerVisibility() {
   setFpGunVisible(showFp);
   for (const s of survivors) {
     if (!s.mesh) continue;
+    const alive = (s.hp ?? 0) > 0 && !s._awaitingRespawn;
     if (s._shooterDowned) {
       const hideAt = s._shooterBodyHideAt;
-      s.mesh.visible = hideAt == null || elapsed < hideAt;
+      s.mesh.visible = alive && (hideAt == null || elapsed < hideAt);
+      continue;
+    }
+    if (!alive) {
+      s.mesh.visible = false;
       continue;
     }
     if (!split && s === human && !spectating) s.mesh.visible = false;
@@ -1668,7 +1686,7 @@ function getWinSurvivors() {
 
 function getCollisionOpts() {
   if (isShooterMode()) {
-    return { vaultClear: 1.65, vaultJumpMin: 0.22 };
+    return { vaultClear: 2.8, vaultJumpMin: 0.18 };
   }
   if (isPlatformerMode()) {
     return { vaultClear: 2.0, vaultJumpMin: 0.32 };
@@ -1711,12 +1729,15 @@ function applyFallSafety(p) {
 function playerMove(pos, vx, vz, dt, jumpY = 0, footElev = 0) {
   const jy = jumpY ?? 0;
   const fe = footElev ?? 0;
-  if (keyHuntState?.doors) {
+  const colOpts = getCollisionOpts();
+  if (isShooterMode() && verticalWorldState?.isShooter) {
+    moveWithShooterCollision(ctx, maze, pos, vx, vz, dt, jy, fe, colOpts, verticalWorldState);
+  } else if (keyHuntState?.doors) {
     moveWithDoorCollision(ctx, maze, keyHuntState.doors, pos, vx, vz, dt, jy);
   } else if (puzzleDoorState?.doors) {
-    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, getCollisionOpts());
+    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, colOpts);
   } else {
-    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, getCollisionOpts());
+    moveWithCollision(ctx, maze, pos, vx, vz, dt, jy, fe, colOpts);
   }
   if (platformerState?.oneWays?.length) {
     const r = jy > 0.75 ? 0.3 : 0.45;
@@ -2805,7 +2826,10 @@ async function runStartGame() {
   shooterScoreboardOpen = false;
   setShooterScoreboardVisible(false);
   ensureGraphics();
+  const lanCfg = window.__forsakenLanSession?.config;
+  if (lanCfg) applyLanConfigFromHost(lanCfg);
   refreshMenuForMode();
+  if (lanCfg) applyLanConfigFromHost(lanCfg);
   if (checkMenuUiConsistency() && !isTouchUiEnabled()) {
     console.warn("選單狀態檢查未通過，仍嘗試開始（可重新整理頁面）");
   }
@@ -2843,10 +2867,27 @@ async function runStartGame() {
   gameApi.projectiles = projectiles;
   gameApi.minions = minions;
 
-  readMatchConfig();
+  if (!lanCfg) readMatchConfig();
+  else {
+    if (lanCfg.numSurvivors != null) numSurvivors = lanCfg.numSurvivors;
+    if (lanCfg.numLocalPlayers != null) numLocalPlayers = lanCfg.numLocalPlayers;
+    if (lanCfg.numKillers != null) numKillers = lanCfg.numKillers;
+    if (lanCfg.matchTime != null) {
+      matchTimeSeconds = lanCfg.matchTime;
+      killerTimer = matchTimeSeconds;
+    }
+    if (lanCfg.shooterPlayStyle) {
+      shooterPlayStyle = lanCfg.shooterPlayStyle === "ffa" ? "ffa"
+        : lanCfg.shooterPlayStyle === "mole" ? "mole" : "teams";
+    }
+  }
   const lanSess = window.__forsakenLanSession;
   if (lanSess) {
-    numLocalPlayers = 1;
+    if (lanCfg?.numLocalPlayers != null) {
+      numLocalPlayers = Math.min(4, Math.max(1, lanCfg.numLocalPlayers));
+    } else {
+      numLocalPlayers = 1;
+    }
     showToast(
       `區網房間 · ${lanSess.isHost ? "房主" : "加入"} · 可見其他玩家位置（戰鬥仍各機獨立）`,
       3800
@@ -2894,6 +2935,7 @@ async function runStartGame() {
   clearVfxPool();
   scene.background = new THREE.Color(theme.sky);
   scene.fog = new THREE.Fog(theme.sky, ctx.fogNear * 0.95, ctx.fogFar * 1.85);
+  if (isShooterMode()) applyShooterLevelAtmosphere(scene, selectedLevel);
 
   const mapSeed = getLevelMapSeed(selectedLevel, gameMode);
   const mapRng = createSeededRandom(mapSeed);
@@ -2909,6 +2951,10 @@ async function runStartGame() {
     addMazeLoops(maze, ctx.w, ctx.h, Math.floor(loopCount * 0.5), mapRng);
   }
   applyMapStyle(maze, ctx.w, ctx.h, mapStyle, mapRng);
+  if (isShooterMode()) {
+    carveLayoutSecretGates(ctx, maze, selectedLevel);
+    carveShooterSecretPassages(ctx, maze, selectedLevel);
+  }
   invalidateMinimapBase();
   gameApi.maze = maze;
   keyHuntState = null;
@@ -2929,8 +2975,10 @@ async function runStartGame() {
   }
   await yieldFrame();
   loadStep("正在建立場景…");
+  const shooterPal = isShooterMode() ? getShooterLayout(selectedLevel)?.palette : null;
   buildMazeMeshes(ctx, maze, scene, {
     doorWalls: keyHuntState?.doors || puzzleDoorState?.doors || [],
+    shooterPalette: shooterPal,
   });
   const richMap = isPuzzleDoorMode() || isShooterMode() || selectedLevel.w * selectedLevel.h >= 400;
   const decor = buildMazeDecor(ctx, maze, scene, {
@@ -2949,15 +2997,17 @@ async function runStartGame() {
     loadStep("正在布置槍戰競技場…");
     const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
     shooterArenaGroup = arena.group;
-    bouncePads = spawnArenaBouncePads(
-      ctx, maze, arena.group, Math.min(8, selectedLevel.bouncePads ?? 4)
-    );
+    buildShooterSecretMarkers(ctx, arena.group, maze, selectedLevel);
+    const vert = buildShooterVerticalWorld(ctx, maze, arena.group, selectedLevel);
+    bouncePads = spawnShooterBouncePads(ctx, maze, arena.group, selectedLevel, vert.platforms);
     verticalWorldState = {
       group: arena.group,
-      platforms: arena.covers,
-      stairs: [],
-      bridges: [],
+      platforms: [...arena.covers, ...vert.platforms],
+      stairs: vert.stairs,
+      bridges: vert.bridges,
+      ladders: vert.ladders,
       bouncePads,
+      isShooter: true,
     };
   } else {
     shooterArenaGroup = null;
@@ -3050,6 +3100,7 @@ async function runStartGame() {
     s._safeElev = s.elev ?? 0;
   }
   if (!survivors.length) throw new Error("倖存者生成失敗");
+  applyLanPlayerNames();
   if (!killers.length && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode()) {
     throw new Error("獵人生成失敗");
   }
@@ -3101,14 +3152,14 @@ async function runStartGame() {
     drawShooterRadar();
     const styleZh = playStyle === "ffa" ? "自由混戰" : playStyle === "mole" ? "無間道" : "團隊對抗";
     showToast(
-      `${selectedLevel.name} · ${styleZh} · ${survivors.length} 人 · 時間到比積分 · 戰績可點開`,
-      2800
+      `${selectedLevel.name} · ${styleZh} · ${survivors.length} 人 · 跳上掩體/高台 · 長梯按住 W 爬 · 青色板彈跳 · 綠光門=密道`,
+      3600
     );
     if (!isTouchUiEnabled()) renderer.domElement.requestPointerLock?.();
     const humanShooter = survivors.find((s) => !s.isAI);
     if (camera) {
       camera.fov = shooterSettings.fov;
-      camera.near = 0.08;
+      camera.near = 0.05;
       camera.updateProjectionMatrix();
     }
     if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
@@ -3918,6 +3969,9 @@ function updateEntity(p, dt, move) {
 
   if (verticalWorldState) {
     updateVerticalPhysics(p, dt, verticalWorldState);
+    if (isShooterMode() && verticalWorldState.isShooter) {
+      updateShooterLadderClimb(p, dt, verticalWorldState, move);
+    }
     applyFallSafety(p);
   } else {
     const grav = isShooterMode() ? 36 : p.role === "killer" ? 32 : 26;
@@ -4473,12 +4527,22 @@ function updateProjectiles(dt) {
     const prevX = pr.x;
     const prevZ = pr.z;
     const prevY = pr.y ?? 1.2;
-    pr.x += pr.vx * dt;
-    pr.z += pr.vz * dt;
-    if (pr.vy != null) pr.y = (pr.y ?? 1.2) + pr.vy * dt;
+    const nx = pr.x + pr.vx * dt;
+    const nz = pr.z + pr.vz * dt;
+    const ny = pr.vy != null ? (pr.y ?? 1.2) + pr.vy * dt : pr.y;
 
     let hit = pr.life <= 0;
     let hitType = "wall";
+    if (!hit && pr.fromShooter && ctx && maze
+      && shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, nx, ny ?? prevY, nz)) {
+      hit = true;
+      hitType = "wall";
+    }
+    if (!hit) {
+      pr.x = nx;
+      pr.z = nz;
+      if (pr.vy != null) pr.y = ny;
+    }
     if (!hit && pr.y != null && pr.y <= 0.1) {
       hit = true;
       hitType = "floor";
@@ -5052,7 +5116,7 @@ function updateHUD() {
     ca.textContent = `倖存 ${getAliveSurvivors().length}/${survivors.length} · 任務 ${missionsDone}/${missionStations.length}`;
   }
 
-  document.getElementById("hudChar").textContent = focus.charDef?.name || "—";
+  document.getElementById("hudChar").textContent = focus.displayName || focus.charDef?.name || "—";
 
   let distK = 99;
   for (const k of killers) {
@@ -5091,7 +5155,7 @@ function updateHUD() {
     if (ca) {
       ca.textContent = `存活 ${getAliveSurvivors().length}/${survivors.length} · 擊殺積分`;
     }
-    document.getElementById("hudChar").textContent = focus.charDef?.name || "—";
+    document.getElementById("hudChar").textContent = focus.displayName || focus.charDef?.name || "—";
     const mapLabel = document.getElementById("hudMapName");
     if (mapLabel && selectedLevel) {
       mapLabel.textContent = `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
@@ -5453,9 +5517,47 @@ function setGameModeForLan(modeId) {
 }
 
 function readMenuConfigForLan() {
-  const card = document.querySelector(".mode-card.selected");
-  if (card?.dataset?.modeId) gameMode = card.dataset.modeId;
+  const lanOpen = document.getElementById("lanLobbyOverlay")?.classList.contains("show");
+  const lanModeEl = document.getElementById("lanGameMode");
+  const lanStyleEl = document.getElementById("lanShooterStyle");
+  const lanLevelEl = document.getElementById("lanLevelId");
+  const lanSurv = document.getElementById("lanNumSurvivors");
+  const lanLocal = document.getElementById("lanNumLocalPlayers");
+  const lanKill = document.getElementById("lanNumKillers");
+  const lanTime = document.getElementById("lanMatchTime");
+  if (lanOpen && lanModeEl?.value) {
+    setGameModeForLan(lanModeEl.value);
+  } else {
+    const card = document.querySelector(".mode-card.selected");
+    if (card?.dataset?.modeId) gameMode = card.dataset.modeId;
+  }
   readMatchConfig();
+  if (lanOpen) {
+    const maxSurv = gameMode === "shooter" ? 12 : 4;
+    if (lanSurv) {
+      numSurvivors = Math.max(1, Math.min(maxSurv, parseInt(lanSurv.value, 10) || numSurvivors));
+    }
+    if (lanLocal && gameMode === "shooter") {
+      numLocalPlayers = Math.min(4, Math.max(1, parseInt(lanLocal.value, 10) || 1));
+    }
+    if (lanKill && gameMode !== "shooter") {
+      numKillers = Math.max(1, Math.min(3, parseInt(lanKill.value, 10) || numKillers));
+    }
+    if (lanTime) matchTimeSeconds = parseInt(lanTime.value, 10) || matchTimeSeconds;
+    if (gameMode === "shooter") numSurvivors = Math.max(numSurvivors, numLocalPlayers);
+    killerTimer = matchTimeSeconds;
+  }
+  if (lanOpen && lanStyleEl?.value && gameMode === "shooter") {
+    shooterPlayStyle = lanStyleEl.value === "ffa" ? "ffa"
+      : lanStyleEl.value === "mole" ? "mole" : "teams";
+    const psEl = document.getElementById("shooterPlayStyle");
+    if (psEl) psEl.value = shooterPlayStyle;
+  }
+  if (lanOpen && lanLevelEl?.value) {
+    const list = getLevelsForMenu();
+    const lv = list.find((l) => l.id === lanLevelEl.value);
+    if (lv) selectedLevel = lv;
+  }
   return {
     gameMode,
     levelId: selectedLevel?.id,
@@ -5473,10 +5575,41 @@ function readMenuConfigForLan() {
   };
 }
 
+function getLevelsForLan(modeId) {
+  if (modeId) setGameModeForLan(modeId);
+  return getLevelsForMenu().map((l) => ({
+    id: l.id,
+    name: l.name || l.id,
+    desc: l.desc || "",
+  }));
+}
+
+function applyLanPlayerNames() {
+  const sess = window.__forsakenLanSession;
+  if (!sess) return;
+  const meId = sess.playerId;
+  const nick = (sess.name || "").trim();
+  let aiIdx = 1;
+  for (const s of survivors) {
+    if (!s.isAI) {
+      s.lanPlayerId = meId;
+      if (nick) {
+        s.displayName = nick;
+        if (s.charDef) s.charDef = { ...s.charDef, name: nick };
+      }
+      continue;
+    }
+    s.displayName = s.displayName || s.charDef?.name || `電腦${aiIdx++}`;
+  }
+}
+
 function applyLanConfigFromHost(cfg) {
   if (!cfg) return;
-  if (cfg.gameMode) gameMode = cfg.gameMode;
-  if (cfg.shooterPlayStyle) shooterPlayStyle = cfg.shooterPlayStyle;
+  if (cfg.gameMode) setGameModeForLan(cfg.gameMode);
+  if (cfg.shooterPlayStyle) {
+    shooterPlayStyle = cfg.shooterPlayStyle === "ffa" ? "ffa"
+      : cfg.shooterPlayStyle === "mole" ? "mole" : "teams";
+  }
   if (cfg.winGoal) winGoal = cfg.winGoal;
   if (cfg.levelCategory) levelCategory = cfg.levelCategory;
   if (cfg.numSurvivors != null) numSurvivors = cfg.numSurvivors;
@@ -5509,6 +5642,7 @@ async function tryInitLanModule() {
       playSfx,
       readMenuConfig: readMenuConfigForLan,
       setGameMode: setGameModeForLan,
+      getLevelsForLan,
       applyLanConfig: applyLanConfigFromHost,
       startGame: () => {
         startGame().catch((err) => {

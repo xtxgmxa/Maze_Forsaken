@@ -1434,19 +1434,32 @@
     .shooter-lbl {
       position: absolute;
       transform: translate(-50%, -100%);
-      font-weight: 800;
-      font-size: 0.78rem;
-      letter-spacing: 0.06em;
-      text-shadow: 0 0 6px #000, 0 1px 3px #000, 0 0 12px #000;
-      white-space: nowrap;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
       pointer-events: none;
+      white-space: nowrap;
     }
-    .shooter-lbl.enemy { color: #ff3344; }
-    .shooter-lbl.teammate { color: #44ee77; }
-    .shooter-lbl.mole {
+    .shooter-lbl-role {
+      font-weight: 800;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-shadow: 0 0 6px #000, 0 1px 3px #000;
+    }
+    .shooter-lbl-role.enemy { color: #ff3344; }
+    .shooter-lbl-role.teammate { color: #44ee77; }
+    .shooter-lbl-role.mole {
       color: #ffdd22;
-      font-size: 0.88rem;
+      font-size: 0.82rem;
       text-shadow: 0 0 8px #ff8800, 0 0 4px #000;
+    }
+    .shooter-lbl-name {
+      font-weight: 900;
+      font-size: 0.88rem;
+      color: #ffffff;
+      letter-spacing: 0.04em;
+      text-shadow: 0 0 8px #000, 0 0 14px rgba(255, 255, 255, 0.35), 0 2px 4px #000;
     }
     body.touch-ui.shooter-play #minimap-wrap {
       display: flex;
@@ -1482,7 +1495,6 @@
       bottom: max(10px, calc(8px + env(safe-area-inset-bottom, 0px)));
       right: max(6px, calc(4px + env(safe-area-inset-right, 0px)));
     }
-    body.touch-ui.shooter-play #touchSlide { display: none !important; }
     body.touch-ui.shooter-play #touchAttack {
       display: flex !important;
       width: 52px;
@@ -2916,7 +2928,8 @@
       <p class="pause-touch-hint touch-only">可調整手機操作 · 或回主選單重新選角</p>
       <p class="pause-desktop-hint" style="font-size:0.85rem;color:#9988bb;margin-bottom:12px">按 ESC 可開關此選單 · 下方離開回主選單</p>
       <button type="button" id="btnResume">繼續遊戲</button>
-      <button type="button" id="btnPauseMobileSettings" class="touch-only">手機設定</button>
+      <button type="button" id="btnPauseSettings">按鍵與音量設定</button>
+      <button type="button" id="btnPauseMobileSettings" class="touch-only">手機操作設定</button>
       <button type="button" id="btnQuitMenu">離開 · 回主選單</button>
     </div>
   </div>

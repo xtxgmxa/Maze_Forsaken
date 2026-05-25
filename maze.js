@@ -194,6 +194,7 @@ export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0, footElev = 0
   const vaultClear = opts.vaultClear ?? 2.6;
   const vaultJumpMin = opts.vaultJumpMin ?? AIRY_JUMP_MIN;
   const clearH = fe + jy;
+  if (clearH >= MAZE_WALL_HEIGHT - 0.5) return false;
   const overWall = clearH >= MAZE_WALL_HEIGHT - 0.45;
   const airy =
     overWall ||
@@ -324,10 +325,21 @@ function isDoorWallAt(doors, gx, gz, side) {
   });
 }
 
+function paletteFloorColors(pal) {
+  if (!pal?.floor) return null;
+  const f = pal.floor;
+  const a = (f & 0xfefefe) >> 1;
+  const b = ((f & 0xfefefe) * 0.85) | 0;
+  return { floorA: f, floorB: b, accent: pal.secret ?? f, wall: a };
+}
+
 export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
   const doorWalls = opts.doorWalls || [];
   const { w, h, cell } = ctx;
-  const th = ctx.theme;
+  const palTint = paletteFloorColors(opts.shooterPalette);
+  const th = palTint
+    ? { ...ctx.theme, floorA: palTint.floorA, floorB: palTint.floorB, accent: palTint.accent, wall: palTint.wall ?? ctx.theme.wall }
+    : ctx.theme;
   const group = new THREE.Group();
   const usePbr = opts.usePbr !== false;
   const matFloorA = usePbr

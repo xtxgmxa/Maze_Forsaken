@@ -28,9 +28,28 @@ function tierY(tier) {
   return 0;
 }
 
-/** 依位置取腳下樓層高度（可走平面 / 斜坡 / 天橋） */
-export function sampleFloorElev(px, pz, state) {
+function canLandOnPlatform(pl, footElev, jumpY) {
+  if (pl.standable || pl.y < 2.2) {
+    const foot = (footElev ?? 0) + (jumpY ?? 0);
+    return foot >= (pl.y ?? 0) - 0.65 || (jumpY ?? 0) > 0.18;
+  }
+  if (pl.minApproach == null) return true;
+  const foot = (footElev ?? 0) + (jumpY ?? 0);
+  return foot >= pl.minApproach - 0.45 || (jumpY ?? 0) > 0.35;
+}
+
+function sampleLadderElev(px, pz, footElev, jumpY, lad) {
+  if (!insideAabb(px, pz, lad.x, lad.z, lad.halfW, lad.halfD)) return null;
+  const foot = (footElev ?? 0) + (jumpY ?? 0);
+  if (foot < 0.8 && (jumpY ?? 0) < 0.25) return lad.y0 ?? 0;
+  return Math.min(lad.y1, Math.max(lad.y0 ?? 0, foot));
+}
+
+/** 依位置取腳下樓層高度（可走平面 / 斜坡 / 天橋 / 長梯） */
+export function sampleFloorElev(px, pz, state, player = null) {
   if (!state) return 0;
+  const footElev = player?.elev ?? 0;
+  const jumpY = player?._jumpY ?? 0;
   let best = 0;
   for (const st of state.stairs || []) {
     const seg = distToSegment(px, pz, st.ax, st.az, st.bx, st.bz);
@@ -39,15 +58,19 @@ export function sampleFloorElev(px, pz, state) {
       if (y >= best) best = y;
     }
   }
+  for (const lad of state.ladders || []) {
+    const ly = sampleLadderElev(px, pz, footElev, jumpY, lad);
+    if (ly != null && ly >= best) best = ly;
+  }
   for (const br of state.bridges || []) {
     if (insideAabb(px, pz, br.x, br.z, br.halfW, br.halfD) && br.y >= best) {
-      best = br.y;
+      if (!br.minApproach || canLandOnPlatform(br, footElev, jumpY)) best = br.y;
     }
   }
   for (const pl of state.platforms || []) {
-    if (insideAabb(px, pz, pl.x, pl.z, pl.halfW, pl.halfD) && pl.y >= best) {
-      best = pl.y;
-    }
+    if (!insideAabb(px, pz, pl.x, pl.z, pl.halfW, pl.halfD)) continue;
+    if (!canLandOnPlatform(pl, footElev, jumpY)) continue;
+    if (pl.y >= best) best = pl.y;
   }
   return best;
 }
@@ -326,6 +349,11 @@ export function launchRivalsBounce(p, pad) {
   p._bounceAirTime = 4.2;
   p._bounceCd = 1.1;
   p._wasInAir = true;
+  const hs = (pad.launchSpeed ?? 16) * (pad.launchPower ?? 1);
+  if (pad.launchDx != null && pad.launchDz != null) {
+    p.vel.x = pad.launchDx * hs;
+    p.vel.z = pad.launchDz * hs;
+  }
 }
 
 export function tickBounceArc(p, dt) {
@@ -364,7 +392,7 @@ export function updateVerticalPhysics(p, dt, verticalState) {
   }
 
   const footY = p.elev + p._jumpY;
-  const groundElev = sampleFloorElev(p.pos.x, p.pos.z, verticalState);
+  const groundElev = sampleFloorElev(p.pos.x, p.pos.z, verticalState, p);
 
   const rise = groundElev - (p.elev ?? 0);
   const landSnap = rise > 0.35 ? 0.95 : 0.62;

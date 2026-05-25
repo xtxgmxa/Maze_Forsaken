@@ -2,6 +2,334 @@ import * as THREE from "three";
 import { cellCenter, bfsNextStep, shooterLineBlocked } from "./maze.js";
 import { lambertStud } from "./mapTextures.js";
 import { PAINT_PALETTE } from "./paintballSplats.js";
+import { addRivalsBouncePad } from "./verticalWorld.js";
+import {
+  getShooterLayout, resolveSpot, isShooterAlcove, findMazeJunctions,
+} from "./shooterLayouts.js";
+import { buildLayoutSignature } from "./shooterArenaArt.js";
+
+const SHOOTER_TIER_Y = [0, 5.5, 11, 16.5];
+
+function shooterRng(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function cellPassable(maze, w, h, gx, gz) {
+  if (gx < 0 || gz < 0 || gx >= w || gz >= h) return false;
+  const c = maze[gz][gx];
+  const open = !c.left || !c.right || !c.top || !c.bottom;
+  return open;
+}
+
+/** 槍戰密道：在迷宮內額外打通牆壁捷徑 */
+export function carveShooterSecretPassages(ctx, maze, level = {}) {
+  const { w, h } = ctx;
+  const tier = level.sizeTier || "medium";
+  const want = level.secretPassages ?? { small: 2, medium: 3, large: 4, xlarge: 5 }[tier] ?? 3;
+  const rng = shooterRng((level.mapSeed ?? level.id ?? 1) ^ 0x5ec7e7);
+  let carved = 0;
+  for (let attempt = 0; attempt < want * 80 && carved < want; attempt++) {
+    const gx = 1 + Math.floor(rng() * Math.max(1, w - 2));
+    const gz = 1 + Math.floor(rng() * Math.max(1, h - 2));
+    if (!cellPassable(maze, w, h, gx, gz)) continue;
+    const c = maze[gz][gx];
+    const dirs = [];
+    if (c.right && gx < w - 1 && cellPassable(maze, w, h, gx + 1, gz)) dirs.push("right");
+    if (c.bottom && gz < h - 1 && cellPassable(maze, w, h, gx, gz + 1)) dirs.push("bottom");
+    if (c.left && gx > 0 && cellPassable(maze, w, h, gx - 1, gz)) dirs.push("left");
+    if (c.top && gz > 0 && cellPassable(maze, w, h, gx, gz - 1)) dirs.push("top");
+    if (!dirs.length) continue;
+    const dir = dirs[Math.floor(rng() * dirs.length)];
+    if (dir === "right") {
+      c.right = false;
+      maze[gz][gx + 1].left = false;
+    } else if (dir === "bottom") {
+      c.bottom = false;
+      maze[gz + 1][gx].top = false;
+    } else if (dir === "left") {
+      c.left = false;
+      maze[gz][gx - 1].right = false;
+    } else {
+      c.top = false;
+      maze[gz - 1][gx].bottom = false;
+    }
+    carved++;
+  }
+}
+
+function pickDeckCell(ctx, maze, gx, gz, w, h) {
+  if (!cellPassable(maze, w, h, gx, gz)) return null;
+  if ((gx <= 1 && gz <= 1) || (gx >= w - 2 && gz >= h - 2)) return null;
+  return { gx, gz };
+}
+
+function linkRampToDeck(ctx, maze, group, pl, stairs, cell, w, h) {
+  const neighbors = [[pl.gx - 1, pl.gz], [pl.gx + 1, pl.gz], [pl.gx, pl.gz - 1], [pl.gx, pl.gz + 1]];
+  const stepMat = lambertStud(0xbb9988, 0x776655, 0.28);
+  for (const [nx, nz] of neighbors) {
+    if (!cellPassable(maze, w, h, nx, nz)) continue;
+    const fc = cellCenter(ctx, nx, nz);
+    stairs.push({
+      ax: fc.x, az: fc.z, ay: 0,
+      bx: pl.x, bz: pl.z, by: pl.y,
+      halfW: cell * 0.44,
+    });
+    const steps = 7;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const step = new THREE.Mesh(
+        new THREE.BoxGeometry(cell * 0.4, 0.22, cell * 0.55),
+        stepMat
+      );
+      step.position.set(
+        fc.x + (pl.x - fc.x) * t,
+        (pl.y * t) + 0.11,
+        fc.z + (pl.z - fc.z) * t
+      );
+      group.add(step);
+    }
+    return;
+  }
+}
+
+function addShooterLadder(ctx, group, gx, gz, tierTop, ladders, stairs, style, cell) {
+  const c = cellCenter(ctx, gx, gz);
+  const y1 = SHOOTER_TIER_Y[Math.min(tierTop, 3)];
+  const halfW = cell * 0.42;
+  ladders.push({ x: c.x, z: c.z, halfW, halfD: halfW, y0: 0, y1, climbSpeed: 11 });
+  const steps = 12;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const ly = y1 * t;
+    stairs.push({
+      ax: c.x, az: c.z, ay: ly,
+      bx: c.x + 0.02, bz: c.z, by: ly + y1 / steps,
+      halfW: halfW + 0.1,
+    });
+  }
+  const railMat = lambertStud(
+    style === "neon" ? 0xaa66ff : style === "sky" ? 0x446688 : 0x554466,
+    0x332244,
+    0.32
+  );
+  const rungMat = lambertStud(0xccbbaa, 0x887766, 0.35);
+  for (const ox of [-0.32, 0.32]) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, y1, 0.1),
+      railMat
+    );
+    rail.position.set(c.x + ox * cell, y1 / 2, c.z);
+    rail.castShadow = true;
+    group.add(rail);
+  }
+  const rungCount = Math.max(4, Math.floor(y1 / 1.15));
+  for (let i = 0; i < rungCount; i++) {
+    const rung = new THREE.Mesh(
+      new THREE.BoxGeometry(cell * 0.42, 0.08, 0.14),
+      rungMat
+    );
+    rung.position.set(c.x, 0.55 + i * (y1 / rungCount), c.z);
+    group.add(rung);
+  }
+  const cage = new THREE.Mesh(
+    new THREE.BoxGeometry(cell * 0.5, y1, cell * 0.5),
+    new THREE.MeshBasicMaterial({
+      color: 0x88aacc,
+      transparent: true,
+      opacity: 0.06,
+      depthWrite: false,
+    })
+  );
+  cage.position.set(c.x, y1 / 2, c.z);
+  group.add(cage);
+}
+
+function addShooterDeck(ctx, maze, group, gx, gz, tier, scale, style, layout, platforms, cell, w, h) {
+  const spot = pickDeckCell(ctx, maze, gx, gz, w, h);
+  if (!spot) return null;
+  const { gx: dgx, gz: dgz } = spot;
+  const c = cellCenter(ctx, dgx, dgz);
+  const y = SHOOTER_TIER_Y[Math.min(tier, 3)];
+  if (y <= 0) return null;
+  const palette = {
+    arena: [0x8899aa, 0x667788],
+    dock: [0xcc6633, 0xaa4422],
+    sky: [0x66ccff, 0x3388dd],
+    urban: [0x99aa88, 0x667755],
+    neon: [0xff66cc, 0xaa44ff],
+  }[style] || [0x88aacc, 0x556677];
+  const col = layout.accent ?? palette[(dgx + dgz) % palette.length];
+  const half = cell * 0.38 * scale;
+  const pillarH = Math.max(0.5, y - 0.4);
+  const pl = {
+    x: c.x, z: c.z, halfW: half, halfD: half, y, gx: dgx, gz: dgz, tier,
+    standable: true, solidSides: false,
+    minApproach: tier >= 3 ? Math.max(0, y - 2.5) : 0,
+  };
+  platforms.push(pl);
+  platforms.push({
+    x: c.x, z: c.z, halfW: cell * 0.22, halfD: cell * 0.22, y: pillarH,
+    blockTop: pillarH, baseY: 0, solidSides: true, standable: false,
+  });
+  const pillar = new THREE.Mesh(
+    new THREE.BoxGeometry(cell * 0.42, pillarH, cell * 0.42),
+    lambertStud((col & 0xfefefe) >> 1, col, 0.22)
+  );
+  pillar.position.set(c.x, pillarH / 2, c.z);
+  pillar.castShadow = true;
+  group.add(pillar);
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(cell * 0.72 * scale, 0.28, cell * 0.72 * scale),
+    lambertStud(col, col, 0.42)
+  );
+  deck.position.set(c.x, y, c.z);
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+  const trim = new THREE.Mesh(
+    new THREE.BoxGeometry(cell * 0.76 * scale, 0.06, cell * 0.76 * scale),
+    lambertStud(0xffffff, col, 0.5)
+  );
+  trim.position.set(c.x, y + 0.17, c.z);
+  group.add(trim);
+  return pl;
+}
+
+function finishDeckLinks(ctx, maze, group, platforms, stairs, cell, w, h) {
+  for (const pl of platforms) {
+    if (pl.y > 0.5) linkRampToDeck(ctx, maze, group, pl, stairs, cell, w, h);
+  }
+}
+
+function addShooterBridge(ctx, maze, group, g0, g1, tier, bridges, cell, w, h) {
+  if (!cellPassable(maze, w, h, g0.gx, g0.gz) || !cellPassable(maze, w, h, g1.gx, g1.gz)) return;
+  const c0 = cellCenter(ctx, g0.gx, g0.gz);
+  const c1 = cellCenter(ctx, g1.gx, g1.gz);
+  const mx = (c0.x + c1.x) / 2;
+  const mz = (c0.z + c1.z) / 2;
+  const len = Math.hypot(c1.x - c0.x, c1.z - c0.z);
+  const y = SHOOTER_TIER_Y[Math.min(tier, 3)];
+  const halfW = cell * 0.22;
+  const halfD = len / 2 + cell * 0.06;
+  bridges.push({ x: mx, z: mz, halfW, halfD, y, standable: true, minApproach: Math.max(0, y - 1.2) });
+  const bridge = new THREE.Mesh(
+    new THREE.BoxGeometry(
+      Math.abs(c1.x - c0.x) > 0.5 ? len : cell * 0.48,
+      0.18,
+      Math.abs(c1.z - c0.z) > 0.5 ? len : cell * 0.48
+    ),
+    lambertStud(0x99ccee, 0x4488bb, 0.32)
+  );
+  bridge.position.set(mx, y + 0.09, mz);
+  if (Math.abs(c1.x - c0.x) > Math.abs(c1.z - c0.z)) bridge.rotation.y = Math.PI / 2;
+  group.add(bridge);
+  for (const t of [-0.35, 0.35]) {
+    const post = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, y + 0.5, 0.12),
+      lambertStud(0x667788, 0x445566, 0.25)
+    );
+    post.position.set(mx + t * cell, (y + 0.5) / 2, mz);
+    group.add(post);
+  }
+}
+
+/** 依關卡 shooterLayout 建造立體結構（長梯、窄台、不擋主干道） */
+export function buildShooterVerticalWorld(ctx, maze, group, level = {}) {
+  const { w, h, cell } = ctx;
+  const style = level.mapStyle || "arena";
+  const layout = getShooterLayout(level);
+  const platforms = [];
+  const stairs = [];
+  const bridges = [];
+  const ladders = [];
+  const usedPad = new Set();
+
+  for (const d of layout.decks || []) {
+    const { gx, gz, tier, scale } = resolveSpot(ctx, d);
+    addShooterDeck(ctx, maze, group, gx, gz, tier, scale, style, layout, platforms, cell, w, h);
+  }
+  finishDeckLinks(ctx, maze, group, platforms, stairs, cell, w, h);
+  for (const l of layout.ladders || []) {
+    const { gx, gz, tier } = resolveSpot(ctx, l);
+    const tierTop = l.tierTop ?? tier ?? 2;
+    if (pickDeckCell(ctx, maze, gx, gz, w, h)) {
+      addShooterLadder(ctx, group, gx, gz, tierTop, ladders, stairs, style, cell);
+    }
+  }
+  for (const b of layout.bridges || []) {
+    const g0 = resolveSpot(ctx, { u: b.u0, v: b.v0, gx: b.gx0, gz: b.gz0 });
+    const g1 = resolveSpot(ctx, { u: b.u1, v: b.v1, gx: b.gx1, gz: b.gz1 });
+    addShooterBridge(ctx, maze, group, g0, g1, b.tier ?? 1, bridges, cell, w, h);
+  }
+
+  return { platforms, stairs, bridges, ladders };
+}
+
+/** 依布局放置彈跳板（地面 + 高台） */
+export function spawnShooterBouncePads(ctx, maze, group, level, platforms = []) {
+  const pads = [];
+  const layout = getShooterLayout(level);
+  const want = Math.min(16, level.bouncePads ?? 4);
+  const spots = [...(layout.pads || [])];
+  const rng = shooterRng((level.mapSeed ?? 2) ^ 0xb0adc3);
+
+  const tryPadAt = (gx, gz, elev = 0, sp = {}) => {
+    const key = `${gx},${gz},${elev}`;
+    if (usedPad.has(key)) return false;
+    if (!cellPassable(maze, ctx.w, ctx.h, gx, gz)) return false;
+    const c = cellCenter(ctx, gx, gz);
+    const vis = addRivalsBouncePad(group, c.x, c.z, elev);
+    let launchDx = 0;
+    let launchDz = 0;
+    if (sp.launchU != null || sp.launchV != null) {
+      const len = Math.hypot(sp.launchU ?? 0, sp.launchV ?? 0) || 1;
+      launchDx = (sp.launchU ?? 0) / len;
+      launchDz = (sp.launchV ?? 0) / len;
+    }
+    pads.push({
+      x: c.x, z: c.z, startElev: elev,
+      launchVy: elev > 4 ? 30 : 28,
+      launchDx, launchDz,
+      launchPower: sp.power ?? 1.15,
+      launchSpeed: 14 + (sp.power ?? 0) * 4,
+      halfW: 1.45, halfD: 1.45, ...vis,
+    });
+    usedPad.add(key);
+    return true;
+  };
+
+  for (const sp of spots) {
+    if (pads.length >= want) break;
+    const { gx, gz } = resolveSpot(ctx, sp);
+    const pl = platforms.find((p) => p.gx === gx && p.gz === gz);
+    tryPadAt(gx, gz, pl?.y ?? 0, sp);
+  }
+
+  const junctions = findMazeJunctions(maze, ctx.w, ctx.h);
+  for (let j = 0; pads.length < want && j < junctions.length; j++) {
+    const { gx, gz } = junctions[(j * 7 + (level.id ?? 0)) % junctions.length];
+    tryPadAt(gx, gz, 0, { launchV: -1, power: 1.25 });
+  }
+
+  for (const pl of platforms) {
+    if (pads.length >= want) break;
+    if (pl.y >= 4 && rng() > 0.45) tryPadAt(pl.gx, pl.gz, pl.y);
+  }
+
+  for (let i = 0; pads.length < want && i < 80; i++) {
+    const gx = 2 + Math.floor(rng() * Math.max(1, ctx.w - 4));
+    const gz = 2 + Math.floor(rng() * Math.max(1, ctx.h - 4));
+    if (isShooterAlcove(maze, ctx.w, ctx.h, gx, gz)) tryPadAt(gx, gz, 0);
+  }
+
+  return pads;
+}
 
 export const SHOOTER_TEAMS = [
   { id: 0, name: "紅隊", color: 0xff4466 },
@@ -247,6 +575,7 @@ export function respawnShooterPlayer(p, ctx, maze, players) {
   p._respawnUntil = 0;
   if (p.mesh) {
     p.mesh.visible = true;
+    resetShooterCharacterPose(p);
     p.mesh.position.set(spot.x, 0, spot.z);
   }
 }
@@ -260,6 +589,33 @@ export function canShooterFire(p, elapsed, state = null) {
   if (state && p.isAI && elapsed < (state.aiWarmupUntil ?? 10)) return false;
   return (p._shootCd ?? 0) <= elapsed && !p._shooterDowned && !p._awaitingRespawn
     && (p.hp ?? 0) > 0 && !(p._respawnUntil > elapsed);
+}
+
+/** 重置角色骨架（倒地／重生後避免只剩頭頂文字、身體埋地） */
+export function resetShooterCharacterPose(p) {
+  if (!p?.mesh) return;
+  const parts = p.mesh.userData?.parts;
+  p.mesh.rotation.x = 0;
+  p.mesh.rotation.z = 0;
+  if (parts?.torso) {
+    parts.torso.rotation.x = 0;
+    parts.torso.rotation.z = 0;
+    parts.torso.position.y = parts.baseTorsoY ?? 1.38;
+  }
+  if (parts?.head) {
+    parts.head.rotation.x = 0;
+    parts.head.position.y = parts.baseHeadY ?? 1.14;
+  }
+  if (parts?.leftArm) parts.leftArm.rotation.x = 0;
+  if (parts?.rightArm) parts.rightArm.rotation.x = 0;
+  if (parts?.leftLeg) {
+    parts.leftLeg.rotation.x = 0;
+    parts.leftLeg.position.z = 0;
+  }
+  if (parts?.rightLeg) {
+    parts.rightLeg.rotation.x = 0;
+    parts.rightLeg.position.z = 0;
+  }
 }
 
 /** 倒地動畫：先側躺約 5 秒再隱藏模型 */
@@ -407,30 +763,50 @@ function fpGunMat(color) {
   return new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
 }
 
+function fpArmMat() {
+  return new THREE.MeshBasicMaterial({ color: 0x5c2838, depthTest: false, depthWrite: false });
+}
+
 export function attachFpGun(cam, weaponId = "rifle") {
   detachFpGun(cam);
   if (!cam) return;
   const id = weaponId || "rifle";
   const col = GUN_COLORS[id] || 0x888899;
+  const rig = new THREE.Group();
+  rig.name = "fpGun";
+  rig.renderOrder = 999;
+
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.1, 0.32), fpArmMat());
+  armL.position.set(-0.2, -0.08, -0.12);
+  armL.rotation.set(0.35, 0.25, -0.15);
+  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.11, 0.36), fpArmMat());
+  armR.position.set(0.18, -0.1, -0.1);
+  armR.rotation.set(0.28, -0.18, 0.12);
+  const hand = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.14), fpArmMat());
+  hand.position.set(0.14, -0.14, 0.02);
+
   const gun = new THREE.Group();
-  gun.name = "fpGun";
-  gun.renderOrder = 999;
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.42), fpGunMat(col));
-  body.position.z = 0.06;
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.38), fpGunMat(0x222233));
-  barrel.position.set(0, 0.02, 0.42);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.12), fpGunMat(0x111122));
-  grip.position.set(0, -0.12, -0.06);
-  const scope = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.14), fpGunMat(0x445566));
-  scope.position.set(0, 0.1, 0.02);
+  gun.name = "fpGunBody";
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.36), fpGunMat(col));
+  body.position.z = 0.04;
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.34), fpGunMat(0x2a2a38));
+  barrel.position.set(0, 0.02, 0.38);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.18, 0.11), fpGunMat(0x151520));
+  grip.position.set(0, -0.11, -0.04);
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.1), fpGunMat(0x333344));
+  guard.position.set(0, -0.02, 0.12);
+  const scope = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), fpGunMat(0x556677));
+  scope.position.set(0, 0.09, 0.04);
   scope.name = "fpScope";
+  gun.add(body, barrel, grip, guard, scope);
+  gun.position.set(0.12, -0.06, 0.02);
+  gun.rotation.set(0.02, 0.05, 0);
 
-  gun.add(body, barrel, grip, scope);
-  gun.position.set(0.34, -0.24, -0.42);
-  gun.rotation.set(0.04, 0.06, 0);
-  cam.add(gun);
-  fpGunMesh = gun;
+  rig.add(armL, armR, hand, gun);
+  rig.position.set(0.38, -0.28, -0.48);
+  rig.rotation.set(0.03, 0.05, 0);
+  cam.add(rig);
+  fpGunMesh = rig;
   syncFpGunVisual(cam, id);
 }
 
@@ -447,6 +823,7 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
   if (!fpGunMesh) return;
   const id = weaponId || "rifle";
   const col = GUN_COLORS[id] || 0x888899;
+  const gunBody = fpGunMesh.getObjectByName("fpGunBody");
   fpGunMesh.traverse((c) => {
     if (!c.material?.color) return;
     if (c.name === "fpScope") {
@@ -454,16 +831,18 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
       c.material.color.setHex(id === "sniper" ? 0x6688aa : 0x445566);
       return;
     }
-    if (c === fpGunMesh.children[2]) c.material.color.setHex(0x111122);
-    else if (c === fpGunMesh.children[1]) c.material.color.setHex(0x222233);
-    else c.material.color.setHex(flash > 0.2 ? 0xffaa44 : col);
+    if (c.parent === gunBody && c.geometry?.parameters?.depth > 0.2) {
+      c.material.color.setHex(flash > 0.2 ? 0xffaa44 : col);
+    }
   });
-  const sx = id === "shotgun" ? 1.35 : id === "smg" ? 0.88 : id === "sniper" ? 1.08 : 1;
-  fpGunMesh.scale.set(sx, 1, id === "shotgun" ? 1.12 : id === "sniper" ? 1.45 : 1);
+  const sx = id === "shotgun" ? 1.28 : id === "smg" ? 0.9 : id === "sniper" ? 1.05 : 1;
+  if (gunBody) {
+    gunBody.scale.set(sx, 1, id === "shotgun" ? 1.1 : id === "sniper" ? 1.4 : 1);
+  }
   if (id === "sniper") {
-    fpGunMesh.position.set(0.28, -0.2, -0.38);
+    fpGunMesh.position.set(0.32, -0.26, -0.44);
   } else {
-    fpGunMesh.position.set(0.34, -0.24, -0.42);
+    fpGunMesh.position.set(0.38, -0.28, -0.48);
   }
 }
 
@@ -481,106 +860,251 @@ export function tickGunFlash(p, dt, cam) {
   if (!p.isAI && cam) syncFpGunVisual(cam, p.weaponId, flash);
 }
 
-/** 槍戰掩體：視覺 + 平台碰撞（可跳上去） */
+function pushLowCover(covers, group, c, cell, hBox, halfW, halfD) {
+  covers.push({
+    x: c.x, z: c.z, halfW, halfD, y: hBox + 0.05, blockTop: hBox + 0.05, baseY: 0,
+    standable: true, solidSides: true, minApproach: 0,
+  });
+}
+
+function addLayoutProps(ctx, maze, group, level, layout, covers, cell, w, h) {
+  const style = level.mapStyle || "arena";
+  const rng = shooterRng((level.mapSeed ?? 0) ^ 0x707a0e);
+  const props = layout.props || [];
+
+  if (props.includes("arena_ring") || props.includes("holo_ring")) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry((w * cell) * 0.2, 0.4, 8, 40),
+      new THREE.MeshBasicMaterial({
+        color: layout.accent ?? 0xff4466,
+        transparent: true,
+        opacity: 0.4,
+      })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 0.12, 0);
+    group.add(ring);
+  }
+
+  if (props.includes("wood_fence") || props.includes("paint_fence")) {
+    for (let gz = 1; gz < h - 1; gz += 2) {
+      for (const gx of [1, w - 2]) {
+        if (!isShooterAlcove(maze, w, h, gx, gz)) continue;
+        const c = cellCenter(ctx, gx, gz);
+        const fence = new THREE.Mesh(
+          new THREE.BoxGeometry(cell * 0.12, cell * 0.55, cell * 0.85),
+          lambertStud(0x8b6914, 0x5a4010, 0.2)
+        );
+        fence.position.set(c.x, cell * 0.28, c.z);
+        group.add(fence);
+      }
+    }
+  }
+
+  if (props.includes("tire_stack") || props.includes("sandbag")) {
+    for (let i = 0; i < Math.floor(w * 0.6); i++) {
+      const gx = 2 + Math.floor(rng() * Math.max(1, w - 4));
+      const gz = 2 + Math.floor(rng() * Math.max(1, h - 4));
+      if (!isShooterAlcove(maze, w, h, gx, gz)) continue;
+      const c = cellCenter(ctx, gx, gz);
+      const tire = new THREE.Mesh(
+        new THREE.TorusGeometry(0.35, 0.14, 6, 12),
+        lambertStud(0x222222, 0x111111, 0.4)
+      );
+      tire.rotation.x = Math.PI / 2;
+      tire.position.set(c.x, 0.22, c.z);
+      group.add(tire);
+    }
+  }
+
+  if (props.includes("yellow_barrier")) {
+    for (let i = 0; i < 6; i++) {
+      const { gx, gz } = resolveSpot(ctx, { u: 0.2 + i * 0.12, v: 0.5 });
+      const c = cellCenter(ctx, gx, gz);
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(cell * 0.55, cell * 0.5, cell * 0.2),
+        lambertStud(0xffdd33, 0xccaa00, 0.35)
+      );
+      bar.position.set(c.x, cell * 0.25, c.z);
+      group.add(bar);
+      pushLowCover(covers, group, c, cell, cell * 0.5, cell * 0.22, cell * 0.12);
+    }
+  }
+
+  if (props.includes("container_wall") || props.includes("crate_wall")) {
+    const colors = [0xdd3333, 0x3333cc, 0xdddd33, 0x33aa55];
+    for (let i = 0; i < Math.min(w, 14); i++) {
+      const gz = 2 + (i * 2) % Math.max(1, h - 3);
+      const gx = 2 + (i % 4);
+      if (!cellPassable(maze, w, h, gx, gz)) continue;
+      const c = cellCenter(ctx, gx, gz);
+      const col = colors[i % colors.length];
+      const crate = new THREE.Mesh(
+        new THREE.BoxGeometry(cell * 0.65, cell * 0.42, cell * 0.3),
+        lambertStud(col, col, 0.24)
+      );
+      const ch = cell * 0.42;
+      crate.position.set(c.x, ch / 2, c.z);
+      crate.castShadow = true;
+      group.add(crate);
+      pushLowCover(covers, group, c, cell, ch, cell * 0.28, cell * 0.16);
+    }
+  }
+
+  if (props.includes("neon_sign") || props.includes("neon_spire")) {
+    const { gx, gz } = resolveSpot(ctx, { u: 0.5, v: 0.5 });
+    const c = cellCenter(ctx, gx, gz);
+    const spire = new THREE.Mesh(
+      new THREE.ConeGeometry(cell * 0.35, cell * 1.2, 6),
+      lambertStud(0xff66cc, 0xaa44ff, 0.5)
+    );
+    spire.position.set(c.x, cell * 0.6, c.z);
+    group.add(spire);
+  }
+
+  if (props.includes("sniper_nest")) {
+    for (const spot of [{ u: 0.12, v: 0.12 }, { u: 0.88, v: 0.88 }]) {
+      const { gx, gz } = resolveSpot(ctx, spot);
+      const c = cellCenter(ctx, gx, gz);
+      const nest = new THREE.Mesh(
+        new THREE.BoxGeometry(cell * 0.9, cell * 0.25, cell * 0.9),
+        lambertStud(0x666677, 0x444455, 0.3)
+      );
+      nest.position.set(c.x, cell * 0.12, c.z);
+      group.add(nest);
+    }
+  }
+}
+
+/** 槍戰掩體 — 依 layout 差異化；掩體可跳站 */
 export function buildShooterArena(ctx, maze, scene, level = {}) {
   const { w, h, cell } = ctx;
   const style = level.mapStyle || "arena";
+  const layout = getShooterLayout(level);
   const group = new THREE.Group();
   group.name = "shooterArena";
   const covers = [];
 
-  const coverMat = {
-    arena: lambertStud(0x8899aa, 0x556677, 0.2),
-    dock: lambertStud(0xcc4422, 0x882211, 0.25),
-    sky: lambertStud(0x99ccff, 0x4488cc, 0.35),
-    urban: lambertStud(0x778899, 0x445566, 0.22),
-    neon: lambertStud(0xaa44ff, 0xff66cc, 0.38),
-  }[style] || lambertStud(0x888899, 0x555566, 0.2);
-
-  const area = w * h;
-  const count = Math.min(
-    Math.floor(area / 4.5),
-    style === "sky" ? Math.floor(area / 16) : style === "neon" ? Math.floor(area / 14) : Math.floor(area / 12)
+  buildLayoutSignature(ctx, maze, group, level);
+  const rng = shooterRng((level.mapSeed ?? level.id ?? 1) ^ 0xc0fee1);
+  const density = layout.coverDensity ?? 0.45;
+  const coverMat = lambertStud(
+    layout.accent ?? 0x8899aa,
+    (layout.accent ?? 0x556677) >> 1,
+    0.24
   );
-  for (let i = 0; i < count; i++) {
-    const gx = 2 + ((i * 11 + (level.mapSeed ?? 0)) % Math.max(1, w - 4));
-    const gz = 2 + ((i * 7 + (level.id ?? 0) * 3) % Math.max(1, h - 4));
-    const c = cellCenter(ctx, gx, gz);
-    const tall = style === "sky" && i % 4 === 0;
-    const hBox = tall ? cell * 0.5 : cell * 0.35;
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(cell * 0.55, hBox, cell * 0.55),
-      coverMat
-    );
-    box.position.set(c.x, hBox / 2 + 0.05, c.z);
-    box.castShadow = true;
-    box.receiveShadow = true;
-    group.add(box);
-    covers.push({
-      x: c.x,
-      z: c.z,
-      halfW: cell * 0.3,
-      halfD: cell * 0.3,
-      y: hBox + 0.05,
-    });
-  }
 
-  if (style === "dock") {
-    const colors = [0xdd3333, 0x3333cc, 0xdddd33];
-    for (let i = 0; i < Math.min(w, 12); i++) {
-      const gz = 2 + (i * 2) % (h - 3);
-      const c = cellCenter(ctx, 2 + (i % 3), gz);
-      const col = colors[i % 3];
-      const crate = new THREE.Mesh(
-        new THREE.BoxGeometry(cell * 0.7, cell * 0.45, cell * 0.32),
-        lambertStud(col, col, 0.22)
-      );
-      const ch = cell * 0.45;
-      crate.position.set(c.x, ch / 2, c.z);
-      crate.castShadow = true;
-      crate.receiveShadow = true;
-      group.add(crate);
-      covers.push({
-        x: c.x,
-        z: c.z,
-        halfW: cell * 0.36,
-        halfD: cell * 0.18,
-        y: ch,
-      });
-    }
-  }
+  const modes = {
+    wall_alley: () => {
+      for (let gz = 1; gz < h - 1; gz++) {
+        for (let gx = 1; gx < w - 1; gx++) {
+          if (!isShooterAlcove(maze, w, h, gx, gz) || rng() > density) continue;
+          const c = cellCenter(ctx, gx, gz);
+          const hBox = cell * (0.32 + rng() * 0.12);
+          const box = new THREE.Mesh(new THREE.BoxGeometry(cell * 0.5, hBox, cell * 0.4), coverMat);
+          box.position.set(c.x, hBox / 2, c.z);
+          box.castShadow = true;
+          group.add(box);
+          pushLowCover(covers, group, c, cell, hBox, cell * 0.22, cell * 0.18);
+        }
+      }
+    },
+    ring_sparse: () => {
+      for (let i = 0; i < Math.floor(w * h * 0.04 * density); i++) {
+        const gx = 2 + Math.floor(rng() * Math.max(1, w - 4));
+        const gz = 2 + Math.floor(rng() * Math.max(1, h - 4));
+        if (!isShooterAlcove(maze, w, h, gx, gz)) continue;
+        const c = cellCenter(ctx, gx, gz);
+        const hBox = cell * 0.38;
+        const cyl = new THREE.Mesh(
+          new THREE.CylinderGeometry(cell * 0.22, cell * 0.26, hBox, 6),
+          coverMat
+        );
+        cyl.position.set(c.x, hBox / 2, c.z);
+        group.add(cyl);
+        pushLowCover(covers, group, c, cell, hBox, cell * 0.2, cell * 0.2);
+      }
+    },
+    plaza_blocks: () => modes.wall_alley(),
+    shipping_rows: () => modes.wall_alley(),
+    cloud_pillars: () => {
+      for (let i = 0; i < Math.floor(w * 0.8); i++) {
+        const { gx, gz } = resolveSpot(ctx, { u: rng(), v: rng() });
+        if (!isShooterAlcove(maze, w, h, gx, gz)) continue;
+        const c = cellCenter(ctx, gx, gz);
+        const hBox = cell * (0.45 + rng() * 0.2);
+        const cloud = new THREE.Mesh(
+          new THREE.SphereGeometry(cell * 0.28, 8, 6),
+          lambertStud(0xaaddff, 0x66bbee, 0.4)
+        );
+        cloud.position.set(c.x, hBox * 0.55, c.z);
+        group.add(cloud);
+        pushLowCover(covers, group, c, cell, hBox * 0.5, cell * 0.2, cell * 0.2);
+      }
+    },
+    sniper_rocks: () => {
+      const spots = [
+        { u: 0.15, v: 0.5 }, { u: 0.85, v: 0.5 },
+        { u: 0.5, v: 0.15 }, { u: 0.5, v: 0.85 },
+      ];
+      for (const sp of spots) {
+        const { gx, gz } = resolveSpot(ctx, sp);
+        const c = cellCenter(ctx, gx, gz);
+        const hBox = cell * 0.55;
+        const rock = new THREE.Mesh(
+          new THREE.DodecahedronGeometry(cell * 0.32, 0),
+          lambertStud(0x777788, 0x555566, 0.28)
+        );
+        rock.position.set(c.x, hBox / 2, c.z);
+        group.add(rock);
+        pushLowCover(covers, group, c, cell, hBox, cell * 0.26, cell * 0.26);
+      }
+    },
+    paintball_field: () => modes.dense_crates(),
+    dense_crates: () => {
+      for (let gz = 2; gz < h - 2; gz++) {
+        for (let gx = 2; gx < w - 2; gx++) {
+          if (!isShooterAlcove(maze, w, h, gx, gz) || rng() > density + 0.15) continue;
+          const c = cellCenter(ctx, gx, gz);
+          const hBox = cell * 0.4;
+          const crate = new THREE.Mesh(
+            new THREE.BoxGeometry(cell * 0.55, hBox, cell * 0.55),
+            lambertStud(0x889977, 0x556644, 0.22)
+          );
+          crate.position.set(c.x, hBox / 2, c.z);
+          group.add(crate);
+          pushLowCover(covers, group, c, cell, hBox, cell * 0.24, cell * 0.24);
+        }
+      }
+    },
+    grey_blocks: () => modes.wall_alley(),
+    neon_pillars: () => {
+      for (let i = 0; i < Math.floor(w * 0.5); i++) {
+        const { gx, gz } = resolveSpot(ctx, { u: rng(), v: rng() });
+        if (!isShooterAlcove(maze, w, h, gx, gz)) continue;
+        const c = cellCenter(ctx, gx, gz);
+        const pillar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.35, 0.5, cell * 0.6, 8),
+          lambertStud(0xff66cc, 0xaa44ff, 0.48)
+        );
+        pillar.position.set(c.x, cell * 0.3, c.z);
+        group.add(pillar);
+        pushLowCover(covers, group, c, cell, cell * 0.55, cell * 0.2, cell * 0.2);
+      }
+    },
+    stone_keep: () => modes.wall_alley(),
+    minimal: () => { /* 開闊地圖少掩體 */ },
+  };
 
-  if (style === "arena") {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry((w * cell) * 0.22, 0.35, 8, 32),
-      new THREE.MeshBasicMaterial({ color: 0xff4466, transparent: true, opacity: 0.35 })
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(0, 0.15, 0);
-    group.add(ring);
-  }
-
-  if (style === "neon") {
-    for (let i = 0; i < Math.min(8, Math.floor(count / 4)); i++) {
-      const gx = 2 + ((i * 9) % Math.max(1, w - 4));
-      const gz = 2 + ((i * 13) % Math.max(1, h - 4));
-      const c = cellCenter(ctx, gx, gz);
-      const pillar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.4, 0.55, cell * 0.55, 8),
-        lambertStud(0xff66cc, 0xaa44ff, 0.45)
-      );
-      pillar.position.set(c.x, cell * 0.28, c.z);
-      group.add(pillar);
-      covers.push({ x: c.x, z: c.z, halfW: cell * 0.28, halfD: cell * 0.28, y: cell * 0.55 });
-    }
-  }
+  (modes[layout.coverMode] || modes.ring_sparse)();
+  addLayoutProps(ctx, maze, group, level, layout, covers, cell, w, h);
 
   scene.add(group);
-  return { group, style, covers };
+  return { group, style, covers, layoutId: level.shooterLayout };
 }
 
 function shooterPlayerLabel(p) {
-  return p?.charDef?.name || (p?.isAI ? "AI" : "玩家");
+  return p?.displayName || p?.charDef?.name || (p?.isAI ? "電腦" : "玩家");
 }
 
 /** 擊殺播報：你擊倒誰、或場上 A 擊倒 B */
