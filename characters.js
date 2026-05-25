@@ -338,7 +338,8 @@ export function buildForsakenCharacter(def, scale = 1) {
     rightArm,
     weapon,
     baseTorsoY: torsoY * s,
-    baseHeadY: (torsoY + 1.14 + 0.5) * s,
+    /** 頭部 pivot 在軀幹上的本地 Y（勿用世界累加高度） */
+    baseHeadY: 1.14 * s,
   };
   root.traverse((c) => {
     if (c.isMesh) {

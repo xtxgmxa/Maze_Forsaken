@@ -28,7 +28,8 @@ import {
   applyShooterLoadout, getShooterWeapon, cycleShooterWeapon, createShooterState,
   canShooterFire, fireShooterWeapon, updateShooterBots, buildShooterArena,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
-  assignShooterPlayer, buildShooterEndResults, onShooterDowned, tickShooterRespawns,
+  assignShooterPlayer, buildShooterEndResults, onShooterDowned, getShooterKillAnnounce,
+  tickShooterRespawns,
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
 } from "./shooterMode.js";
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
@@ -1510,10 +1511,18 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   if (target.hp <= 0) {
     if (isShooterMode() && shooterState) {
-      const toastMsg = onShooterDowned(killer, target, shooterState, elapsed, (x, z) => {
+      onShooterDowned(killer, target, shooterState, elapsed, (x, z) => {
         spawnShooterHealOrb(scene, x, z, worldHeight(target));
       });
-      if (toastMsg && !target.isAI) showToast(toastMsg, 1100);
+      const human = getHumanSurvivor();
+      const victimToast = !target.isAI
+        ? `${killer?.charDef?.name || "敵人"} 擊倒了你 · ${Math.ceil(shooterState.respawnDelay ?? 2.2)} 秒後重生`
+        : null;
+      const killAnnounce = getShooterKillAnnounce(killer, target, human);
+      if (victimToast) showToast(victimToast, 1200, "kill");
+      else if (killAnnounce) {
+        showToast(killAnnounce, killer === human ? 1100 : 820, "kill");
+      }
       return;
     }
     if (isKeyHuntMode()) {
@@ -3328,8 +3337,8 @@ function updateEntity(p, dt, move) {
     p.yaw = Math.atan2(p.slideDir.x, p.slideDir.z);
     if (parts) {
       parts.torso.rotation.x = 0.55;
-      parts.torso.position.y = (parts.baseTorsoY ?? 1.55) * 0.38;
-      parts.head.position.y = (parts.baseHeadY ?? 2) * 0.55;
+      parts.torso.position.y = (parts.baseTorsoY ?? 1.38) * 0.92;
+      parts.head.position.y = (parts.baseHeadY ?? 1.14) * 0.96;
       parts.head.rotation.x = 0.12;
       parts.leftArm.rotation.x = 0.45;
       parts.rightArm.rotation.x = 0.45;
@@ -3348,8 +3357,8 @@ function updateEntity(p, dt, move) {
     parts.leftLeg.position.z = 0;
     parts.rightLeg.position.z = 0;
     parts.torso.rotation.x *= 0.82;
-    parts.torso.position.y += ((parts.baseTorsoY ?? 1.55) - parts.torso.position.y) * 0.12;
-    if (parts.head) parts.head.position.y += ((parts.baseHeadY ?? 2) - parts.head.position.y) * 0.12;
+    parts.torso.position.y += ((parts.baseTorsoY ?? 1.38) - parts.torso.position.y) * 0.12;
+    if (parts.head) parts.head.position.y += ((parts.baseHeadY ?? 1.14) - parts.head.position.y) * 0.12;
   }
 
   if (p.role === "killer" && p.attackState) {

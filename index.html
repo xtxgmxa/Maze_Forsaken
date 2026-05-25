@@ -847,6 +847,7 @@
       top: 38%;
       left: 50%;
       transform: translateX(-50%);
+      height: auto;
     }
     #abilityToast[data-toast-kind="item"] {
       bottom: auto;
@@ -855,6 +856,18 @@
       right: auto;
       transform: none;
       border-color: #8866cc;
+    }
+    #abilityToast[data-toast-kind="kill"] {
+      bottom: auto;
+      top: 36%;
+      left: 50%;
+      right: auto;
+      transform: translateX(-50%);
+      height: auto;
+      border-color: #ff6688;
+      color: #ffddcc;
+      background: rgba(28, 10, 18, 0.92);
+      font-weight: 600;
     }
     body.keyhunt-has-keys #abilityToast[data-toast-kind="key"] {
       top: 7%;
@@ -1167,19 +1180,21 @@
     #shooterScoreboard tr.you td { border-left: 3px solid var(--row-team, #66ccff); }
     body.touch-ui.shooter-play #btnTouchScoreboard {
       display: flex;
-      position: fixed;
-      right: max(72px, calc(env(safe-area-inset-right, 0px) + 58px));
-      top: max(52px, calc(env(safe-area-inset-top, 0px) + 44px));
-      z-index: 92;
-      width: 42px;
-      height: 42px;
-      border-radius: 8px;
+      position: static;
+      width: 100%;
+      min-width: 52px;
+      height: 28px;
+      margin: 0;
+      z-index: 1;
+      border-radius: 6px;
       border: 1px solid rgba(102, 255, 204, 0.45);
       background: rgba(12, 20, 36, 0.88);
       color: #88ffdd;
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       align-items: center;
       justify-content: center;
+      pointer-events: auto;
+      touch-action: manipulation;
     }
     body:not(.touch-ui) #btnTouchScoreboard { display: none !important; }
     #crosshair.hit::before, #crosshair.hit::after {
@@ -1211,6 +1226,10 @@
     body.touch-ui.shooter-play #touchItem { display: none !important; }
     body.touch-ui.shooter-play .hud-top .hud-block:last-child { display: none !important; }
     body.touch-ui.shooter-play #minimap-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 3px;
       top: max(44px, calc(40px + env(safe-area-inset-top, 0px)));
       right: max(4px, calc(4px + env(safe-area-inset-right, 0px)));
       left: auto;
@@ -2237,15 +2256,42 @@
       bottom: max(150px, calc(140px + env(safe-area-inset-bottom, 0px)));
     }
     body.touch-ui #abilityToast {
-      top: 52px !important; left: 50% !important; right: auto !important;
+      top: 52px !important;
+      bottom: auto !important;
+      height: auto !important;
+      min-height: 0 !important;
+      left: 50% !important;
+      right: auto !important;
       transform: translateX(-50%) !important;
-      font-size: 0.78rem; padding: 6px 12px; max-width: 70vw;
+      font-size: 0.78rem;
+      line-height: 1.25;
+      padding: 5px 12px !important;
+      max-width: 70vw;
+      white-space: nowrap;
+      width: max-content;
+    }
+    body.touch-ui.shooter-play #abilityToast {
+      top: max(42px, calc(38px + env(safe-area-inset-top, 0px))) !important;
+      bottom: auto !important;
+      padding: 4px 10px !important;
+      font-size: 0.72rem !important;
+      border-radius: 6px;
+      max-width: min(78vw, 260px);
+    }
+    body.touch-ui #abilityToast[data-toast-kind="kill"] {
+      top: max(44px, calc(40px + env(safe-area-inset-top, 0px))) !important;
+      bottom: auto !important;
+      height: auto !important;
+      padding: 5px 12px !important;
+      font-size: 0.74rem !important;
     }
     body.touch-ui #abilityToast[data-toast-kind="key"] {
       top: 48px !important; right: auto !important; left: 50% !important;
     }
     body.touch-ui #abilityToast[data-toast-kind="door"] {
       top: 56px !important;
+      bottom: auto !important;
+      height: auto !important;
     }
     body.touch-ui #abilityToast[data-toast-kind="mission"] {
       top: max(72px, calc(68px + env(safe-area-inset-top, 0px))) !important;
@@ -2481,7 +2527,6 @@
     <span id="spectateHint" class="spectate-hint">[ ] 或 ← → 切換視角</span>
   </div>
   <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
-  <button type="button" id="btnTouchScoreboard" class="touch-only" hidden title="戰績">戰績</button>
   <div id="puzzleWaypoint" hidden></div>
   <p id="touchMissionBanner" class="touch-only" hidden></p>
   <button type="button" id="btnTouchMission" class="touch-only" hidden>⚡ 解任務</button>
@@ -2591,6 +2636,7 @@
       <label>小地圖</label>
       <canvas id="minimap" width="140" height="140"></canvas>
       <p class="legend">白箭頭=朝向 · 黃?=可達謎門 · 橘?=需繞路 · 綠=出口</p>
+      <button type="button" id="btnTouchScoreboard" class="touch-only" hidden title="戰績">戰績</button>
     </div>
     <div id="compass"><div id="compassArrow"></div></div>
     <div id="inventoryBar"></div>

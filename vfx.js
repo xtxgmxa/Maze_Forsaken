@@ -142,8 +142,8 @@ export function applyLocomotionAnim(p, dt) {
     lerpRot(parts.leftArm, 0, dt);
     lerpRot(parts.rightArm, 0, dt);
     const k = 1 - Math.exp(-dt * 10);
-    parts.torso.position.y += ((parts.baseTorsoY ?? 1.55) - parts.torso.position.y) * k;
-    parts.head.position.y += ((parts.baseHeadY ?? 2) - parts.head.position.y) * k;
+    parts.torso.position.y += ((parts.baseTorsoY ?? 1.38) - parts.torso.position.y) * k;
+    parts.head.position.y += ((parts.baseHeadY ?? 1.14) - parts.head.position.y) * k;
     parts.torso.rotation.z += (0 - parts.torso.rotation.z) * k;
     if (!p.sliding) lerpRot(parts.torso, 0, dt, 8);
     return;
@@ -156,7 +156,7 @@ export function applyLocomotionAnim(p, dt) {
   parts.leftArm.rotation.x = Math.sin(t + Math.PI) * (sprinting ? 0.48 : 0.32);
   parts.rightArm.rotation.x = Math.sin(t) * (sprinting ? 0.48 : 0.32);
   const bob = Math.abs(Math.sin(t * 2)) * (sprinting ? 0.14 : 0.08);
-  parts.torso.position.y = (parts.baseTorsoY ?? 1.55) + bob;
-  parts.head.position.y = (parts.baseHeadY ?? 2) + bob * 0.45;
+  parts.torso.position.y = (parts.baseTorsoY ?? 1.38) + bob;
+  parts.head.position.y = (parts.baseHeadY ?? 1.14) + bob * 0.12;
   parts.torso.rotation.z = Math.sin(t) * (sprinting ? 0.06 : 0.035);
 }

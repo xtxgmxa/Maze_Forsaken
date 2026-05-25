@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { cellCenter } from "./maze.js";
+import { cellCenter, bfsNextStep } from "./maze.js";
 import { lambertStud } from "./mapTextures.js";
 import { PAINT_PALETTE } from "./paintballSplats.js";
 
@@ -406,25 +406,85 @@ export function buildShooterArena(ctx, maze, scene, level = {}) {
   return { group, style, covers };
 }
 
+function shooterPlayerLabel(p) {
+  return p?.charDef?.name || (p?.isAI ? "AI" : "玩家");
+}
+
+/** 擊殺播報：你擊倒誰、或場上 A 擊倒 B */
+export function getShooterKillAnnounce(killer, victim, human) {
+  if (!killer || !victim || killer === victim) return null;
+  const vName = shooterPlayerLabel(victim);
+  if (killer === human) return `☠ 你擊倒了 ${vName}`;
+  if (victim === human) return null;
+  return `${shooterPlayerLabel(killer)} 擊倒 ${vName}`;
+}
+
+function pickShooterBotTarget(bot, players, style) {
+  let target = null;
+  let best = Infinity;
+  for (const other of players) {
+    if (!isShooterEnemy(bot, other, style)) continue;
+    const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
+    if (d < best) {
+      best = d;
+      target = other;
+    }
+  }
+  return target;
+}
+
+function pickShooterRoamCell(ctx, maze, bot, players) {
+  const { w, h } = ctx;
+  let best = null;
+  let bestScore = -Infinity;
+  for (let t = 0; t < 24; t++) {
+    const gx = 1 + Math.floor(Math.random() * Math.max(1, w - 2));
+    const gz = 1 + Math.floor(Math.random() * Math.max(1, h - 2));
+    const c = cellCenter(ctx, gx, gz);
+    let minEnemy = Infinity;
+    for (const p of players) {
+      if (p === bot || p.caught || (p.hp ?? 0) <= 0) continue;
+      const d = Math.hypot(p.pos.x - c.x, p.pos.z - c.z);
+      if (d < minEnemy) minEnemy = d;
+    }
+    const selfD = Math.hypot(bot.pos.x - c.x, bot.pos.z - c.z);
+    const score = minEnemy * 0.55 + selfD * 0.2 + Math.random() * 4;
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return best || cellCenter(ctx, Math.floor(w / 2), Math.floor(h / 2));
+}
+
+function dirToward(bot, tx, tz) {
+  const dx = tx - bot.pos.x;
+  const dz = tz - bot.pos.z;
+  const len = Math.hypot(dx, dz) || 1;
+  return { x: dx / len, z: dz / len, len };
+}
+
 export function updateShooterBots(dt, players, ctx, maze, state, api) {
   const style = state.playStyle ?? "teams";
   for (const bot of players) {
     if (!bot.isAI || bot.caught || (bot.hp ?? 0) <= 0) continue;
     if (bot._respawnUntil > api.elapsed) continue;
 
-    let target = null;
-    let bd = Infinity;
-    for (const other of players) {
-      if (!isShooterEnemy(bot, other, style)) continue;
-      const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
-      if (d < bd) { bd = d; target = other; }
-    }
+    const lx = bot._shooterLastX ?? bot.pos.x;
+    const lz = bot._shooterLastZ ?? bot.pos.z;
+    if (Math.hypot(bot.pos.x - lx, bot.pos.z - lz) > 0.4) bot._shooterStuckT = 0;
+    else bot._shooterStuckT = (bot._shooterStuckT ?? 0) + dt;
+    bot._shooterLastX = bot.pos.x;
+    bot._shooterLastZ = bot.pos.z;
+
+    let target = pickShooterBotTarget(bot, players, style);
     if (!target) continue;
 
     const wId = getShooterWeapon(bot.weaponId).id;
     const ideal = { smg: 12, rifle: 18, shotgun: 8, sniper: 26 }[wId] ?? 15;
-    const minR = ideal * 0.62;
-    const maxR = ideal * 1.28;
+    const minR = ideal * 0.55;
+    const maxR = ideal * 1.22;
+    const bd = Math.hypot(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
     const yawTo = Math.atan2(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
     bot.yaw = yawTo;
 
@@ -434,34 +494,64 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     let mz = 0;
     let sprint = false;
 
-    if (bd < minR) {
-      mx = -fwd.x * 0.92;
-      mz = -fwd.z * 0.92;
-      const strafe = Math.sin(api.elapsed * 1.4 + (bot.pos.x + bot.pos.z) * 0.1) > 0 ? 1 : -1;
-      mx += right.x * strafe * 0.35;
-      mz += right.z * strafe * 0.35;
-    } else if (bd > maxR && bd < 38) {
-      mx = fwd.x * 0.55;
-      mz = fwd.z * 0.55;
-      sprint = bd > ideal * 1.6;
-    } else if (bd >= minR && bd <= maxR) {
-      const strafe = Math.sin(api.elapsed * 1.1 + bot.pos.x * 0.07) > 0 ? 1 : -1;
-      mx = right.x * strafe * 0.62;
-      mz = right.z * strafe * 0.62;
-      if (Math.random() < 0.012) {
-        mx += -fwd.x * 0.25;
-        mz += -fwd.z * 0.25;
+    const huntRefresh = (bot._shooterHuntRefresh ?? 0) <= api.elapsed;
+    if (huntRefresh) {
+      bot._shooterHuntRefresh = api.elapsed + 0.45 + Math.random() * 0.25;
+      bot._shooterPathStep = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, target.pos.x, target.pos.z);
+      if (!bot._shooterPathStep && bd > 8) {
+        const roam = pickShooterRoamCell(ctx, maze, bot, players);
+        bot._shooterPathStep = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, roam.x, roam.z)
+          || roam;
       }
-    } else if (bd > 38) {
-      mx = fwd.x * 0.72;
-      mz = fwd.z * 0.72;
-      sprint = true;
+    }
+
+    const inCombat = bd <= maxR + 2;
+    const needHunt = bd > maxR + 1 || (bd > ideal * 1.35 && !inCombat);
+
+    if (needHunt || (bot._shooterStuckT ?? 0) > 1.8) {
+      if ((bot._shooterStuckT ?? 0) > 1.8) {
+        const roam = pickShooterRoamCell(ctx, maze, bot, players);
+        bot._shooterPathStep = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, roam.x, roam.z) || roam;
+        bot._shooterStuckT = 0;
+        bot._shooterHuntRefresh = api.elapsed + 0.5;
+      }
+      const step = bot._shooterPathStep;
+      if (step) {
+        const d = dirToward(bot, step.x, step.z);
+        mx = d.x * 0.9;
+        mz = d.z * 0.9;
+        bot.yaw = Math.atan2(mx, mz);
+        sprint = bd > ideal * 1.5 || bd > 22;
+        if (d.len < 1.1) bot._shooterHuntRefresh = 0;
+      } else {
+        const d = dirToward(bot, target.pos.x, target.pos.z);
+        mx = d.x * 0.75;
+        mz = d.z * 0.75;
+        sprint = bd > 18;
+      }
+    } else if (bd < minR) {
+      mx = -fwd.x * 0.75;
+      mz = -fwd.z * 0.75;
+      if (Math.random() < 0.2) {
+        const s = Math.sin(api.elapsed * 2.5) > 0 ? 1 : -1;
+        mx += right.x * s * 0.18;
+        mz += right.z * s * 0.18;
+      }
+    } else {
+      mx = fwd.x * 0.22;
+      mz = fwd.z * 0.22;
+      if (Math.random() < 0.35) {
+        const s = Math.sin(api.elapsed * 1.8 + bot.pos.x) > 0 ? 1 : -1;
+        mx += right.x * s * 0.28;
+        mz += right.z * s * 0.28;
+      }
     }
 
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
-    const canShoot = bd >= minR * 0.85 && bd <= maxR * 1.15 + (wId === "sniper" ? 18 : 6);
-    if (canShoot && bd < 34 && canShooterFire(bot, api.elapsed)) {
+    const canShoot = bd >= minR * 0.75 && bd <= maxR * 1.2 + (wId === "sniper" ? 20 : 8);
+    if (canShoot && bd < 40 && canShooterFire(bot, api.elapsed)) {
+      bot.yaw = yawTo;
       api.fire(bot, bot.yaw);
       muzzleFlash(bot);
       bot._shootCd = api.elapsed + (bot._shooterFireCd ?? 0.25);
