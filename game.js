@@ -1203,7 +1203,9 @@ function isShooterMode() {
 /** 槍戰倒地／等待重生：不應使用 chase 模式的 caught 擋移動 */
 function isShooterPlayerDown(p) {
   if (!p) return false;
-  return !!(p._shooterDowned || p._awaitingRespawn || (p.hp ?? 0) <= 0);
+  if (p._awaitingRespawn) return true;
+  if (p._shooterDowned && (p.hp ?? 0) <= 0) return true;
+  return false;
 }
 
 function isClassicMode() {
@@ -4654,6 +4656,19 @@ function updateHUD() {
 let last = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
+  try {
+  loopFrame(now);
+  } catch (err) {
+    console.error("遊戲迴圈錯誤", err);
+    if (gameState === "play" || gameState === "paused") {
+      showToast(`遊戲發生錯誤：${err?.message || err}`, 5000);
+      gameState = "paused";
+      document.getElementById("pausePanel")?.classList.add("show");
+    }
+  }
+}
+
+function loopFrame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   frameCount++;

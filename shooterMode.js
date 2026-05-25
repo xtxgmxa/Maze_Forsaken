@@ -562,11 +562,11 @@ export function getShooterKillAnnounce(killer, victim, human) {
   return `${shooterPlayerLabel(killer)} 擊倒 ${vName}`;
 }
 
-function pickShooterBotTarget(bot, players, style) {
+function pickShooterBotTarget(bot, players, style, state) {
   let target = null;
   let best = Infinity;
   for (const other of players) {
-      if (!isShooterEnemy(bot, other, style, state)) continue;
+    if (!isShooterEnemy(bot, other, style, state)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
     if (d < best) {
       best = d;
@@ -620,7 +620,7 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     bot._shooterLastX = bot.pos.x;
     bot._shooterLastZ = bot.pos.z;
 
-    let target = pickShooterBotTarget(bot, players, style);
+    let target = pickShooterBotTarget(bot, players, style, state);
     if (!target) continue;
 
     const wId = getShooterWeapon(bot.weaponId).id;
