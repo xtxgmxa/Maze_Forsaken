@@ -2326,7 +2326,7 @@ function tryShooterFire(p) {
   }
   const aimDir = getShooterAimDirForPlayer(p);
   p._lastFireDir = aimDir.clone();
-  const yaw = Math.atan2(aimDir.x, aimDir.z);
+  const aimYaw = Math.atan2(aimDir.x, aimDir.z);
   const eyeY = 1.52 + worldHeight(p);
   spawnPaintFromAim(
     scene, ctx, maze,
@@ -2337,7 +2337,7 @@ function tryShooterFire(p) {
     p.paintColor ?? p._shooterColor,
     p.mesh
   );
-  for (const pr of fireShooterWeapon(p, yaw, aimDir)) {
+  for (const pr of fireShooterWeapon(p, aimYaw, aimDir)) {
     pr.color = p.paintColor ?? pr.color;
     projectiles.push(pr);
   }
