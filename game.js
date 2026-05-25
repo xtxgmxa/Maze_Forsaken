@@ -38,8 +38,7 @@ import {
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
-  clearShooterTeamMarkers, syncAllShooterTeamMarkers, syncShooterTeamMarker,
-  revealMoleOnHit, updateShooterMarkerHp,
+  clearShooterTeamMarkers, syncShooterOverheadLabels, revealMoleOnHit,
 } from "./shooterMarkers.js";
 import { playShooterResultMusic, stopShooterResultMusic } from "./shooterResultMusic.js";
 import {
@@ -155,7 +154,7 @@ function loadShooterSettings() {
       autoAimDeg: Math.max(8, Math.min(28, s.autoAimDeg ?? 16)),
     };
   } catch {
-    return { fov: 94, scopeFov: 44, invertY: false, autoAim: false, autoAimDeg: 16 };
+    return { fov: 94, scopeFov: 44, invertY: false, autoAim: false, autoAimDeg: 18 };
   }
 }
 
@@ -1173,7 +1172,7 @@ function renderSettingsForm() {
       </label>
       <label class="vol-row" style="margin-top:6px">
         <input type="checkbox" id="setAutoAim" ${shooterSettings.autoAim ? "checked" : ""} />
-        手機槍戰自動瞄準（可關閉）
+        手機槍戰自動瞄準＋鎖定開火（可關閉）
       </label>
     </div>
     ${profiles
@@ -1415,11 +1414,12 @@ function getShooterAimYaw() {
   return Math.atan2(dir.x, dir.z);
 }
 
-function applyShooterAutoAim(p, baseYaw) {
-  if (!p || !shooterSettings.autoAim || !isTouchUiEnabled()) return baseYaw;
+function getShooterAutoAimTarget(p, baseYaw) {
+  if (!p || !shooterSettings.autoAim || !isTouchUiEnabled()) return null;
   const style = shooterState?.playStyle ?? shooterPlayStyle;
-  const maxAng = (shooterSettings.autoAimDeg ?? 16) * (Math.PI / 180);
-  let best = null;
+  const maxAng = (shooterSettings.autoAimDeg ?? 18) * (Math.PI / 180);
+  const maxDist = 26;
+  let bestOther = null;
   let bestAng = maxAng;
   for (const other of survivors) {
     if (!isShooterEnemy(p, other, style, shooterState)) continue;
@@ -1427,7 +1427,7 @@ function applyShooterAutoAim(p, baseYaw) {
     const dx = other.pos.x - p.pos.x;
     const dz = other.pos.z - p.pos.z;
     const dist = Math.hypot(dx, dz);
-    if (dist > 42 || dist < 0.5) continue;
+    if (dist > maxDist || dist < 0.5) continue;
     const tyaw = Math.atan2(dx, dz);
     let d = tyaw - baseYaw;
     while (d > Math.PI) d -= Math.PI * 2;
@@ -1435,10 +1435,68 @@ function applyShooterAutoAim(p, baseYaw) {
     const ang = Math.abs(d);
     if (ang < bestAng) {
       bestAng = ang;
-      best = tyaw;
+      bestOther = other;
     }
   }
-  return best ?? baseYaw;
+  return bestOther;
+}
+
+function applyShooterAutoAim(p, baseYaw) {
+  const other = getShooterAutoAimTarget(p, baseYaw);
+  if (!other) return baseYaw;
+  return Math.atan2(other.pos.x - p.pos.x, other.pos.z - p.pos.z);
+}
+
+function tickShooterAutoFire() {
+  if (!isShooterMode() || gameState !== "play" || !isTouchUiEnabled() || !shooterSettings.autoAim) return;
+  if (isSpectating()) return;
+  const locals = isShooterSplitView() ? getLocalHumanPlayers() : [getHumanSurvivor()].filter(Boolean);
+  for (const human of locals) {
+    if (!human || isShooterPlayerDown(human)) continue;
+    const { yaw } = getPlayerCamAngles(human);
+    if (!getShooterAutoAimTarget(human, yaw)) continue;
+    if (canShooterFire(human, elapsed, shooterState)) tryShooterFire(human);
+  }
+}
+
+function getShooterLabelViewports(W, H) {
+  const human = getHumanSurvivor();
+  const locals = isSpectating() ? [] : getLocalHumanPlayers();
+  if (!isShooterSplitView() || locals.length < 2) {
+    const viewer = locals[0] || human;
+    if (viewer && camera) {
+      const ang = getPlayerCamAngles(viewer);
+      updateCameraForPlayer(camera, viewer, ang.yaw, ang.pitch);
+    }
+    return [{ viewer, camera, x: 0, y: 0, w: W, h: H }];
+  }
+  ensureSplitCameras(locals.length);
+  const cams = [camera, camera2, camera3, camera4];
+  if (locals.length === 2) {
+    const halfH = Math.floor((H - COOP_SPLIT_GAP) / 2);
+    const bottomH = H - halfH - COOP_SPLIT_GAP;
+    const a1 = getPlayerCamAngles(locals[0]);
+    const a2 = getPlayerCamAngles(locals[1]);
+    updateCameraForPlayer(cams[0], locals[0], a1.yaw, a1.pitch);
+    updateCameraForPlayer(cams[1], locals[1], a2.yaw, a2.pitch);
+    return [
+      { viewer: locals[0], camera: cams[0], x: 0, y: halfH + COOP_SPLIT_GAP, w: W, h: halfH },
+      { viewer: locals[1], camera: cams[1], x: 0, y: 0, w: W, h: bottomH },
+    ];
+  }
+  const halfW = Math.floor(W / 2);
+  const halfH = Math.floor(H / 2);
+  const slots = [
+    { x: 0, y: halfH, w: halfW, h: halfH },
+    { x: halfW, y: halfH, w: W - halfW, h: halfH },
+    { x: 0, y: 0, w: halfW, h: halfH },
+    { x: halfW, y: 0, w: W - halfW, h: halfH },
+  ];
+  return locals.slice(0, 4).map((viewer, i) => {
+    const ang = getPlayerCamAngles(viewer);
+    updateCameraForPlayer(cams[i], viewer, ang.yaw, ang.pitch);
+    return { viewer, camera: cams[i], ...slots[i] };
+  });
 }
 
 function getShooterAimDirForPlayer(p) {
@@ -1743,7 +1801,7 @@ function eliminateShooterForTeamkill(p, reason) {
   p._shooterDowned = true;
   p._shooterDownedAt = elapsed;
   p._shooterDownedYaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
-  p._shooterBodyHideAt = elapsed + 4.5;
+  p._shooterBodyHideAt = elapsed + 5.5;
   p._awaitingRespawn = false;
   p.vel = { x: 0, z: 0 };
   p.velY = 0;
@@ -2990,7 +3048,6 @@ async function runStartGame() {
       camera.updateProjectionMatrix();
     }
     if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
-    syncAllShooterTeamMarkers(survivors, humanShooter, playStyle, shooterState);
     if (humanShooter) {
       const teamLine = playStyle === "ffa"
         ? "自由混戰（每人不同色）"
@@ -4363,9 +4420,12 @@ function updateProjectiles(dt) {
       continue;
     }
     if (pr.fromShooter && pr.owner) {
+      const style = shooterState?.playStyle ?? shooterPlayStyle;
+      const moleMode = isShooterMoleMode(shooterState);
       for (const s of survivors) {
-        if (s === pr.owner || s.caught || (s.hp ?? 0) <= 0) continue;
-        if (!isShooterEnemy(pr.owner, s, shooterState?.playStyle ?? shooterPlayStyle, shooterState)) continue;
+        if (s === pr.owner || isShooterPlayerDown(s) || (s.hp ?? 0) <= 0) continue;
+        if (!moleMode && !isShooterEnemy(pr.owner, s, style, shooterState)) continue;
+        if (moleMode && !isShooterCombatActive(s)) continue;
         if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
           const hitY = worldHeight(s) + 1.05;
           if (shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z)) continue;
@@ -5170,7 +5230,6 @@ function loopFrame(now) {
       const pf = getHumanSurvivor() || survivors[0];
       if (pf) tickZoneParticles(dt, pf.pos.x, pf.pos.z);
     }
-    syncShooterPlayerVisibility();
     handleZoomKeys();
     if (keyHuntState) {
       updateKeyHuntDoorHints();
@@ -5210,11 +5269,14 @@ function loopFrame(now) {
       });
     }
     if (isShooterMode() && shooterState) {
-      if (frameCount % 18 === 0) {
-        syncAllShooterTeamMarkers(
-          survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle, shooterState
-        );
-      }
+      tickShooterAutoFire();
+      syncShooterOverheadLabels({
+        players: survivors,
+        viewports: getShooterLabelViewports(window.innerWidth, window.innerHeight),
+        playStyle: shooterState?.playStyle ?? shooterPlayStyle,
+        state: shooterState,
+        active: gameState === "play",
+      });
       if (shooterScoreboardOpen) {
         renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
       }
@@ -5224,12 +5286,10 @@ function loopFrame(now) {
       });
       tickShooterRespawns(survivors, ctx, maze, elapsed);
       tickMoleAlerts(shooterState, elapsed, (msg, ms) => showToast(msg, ms, "kill"));
-      if (frameCount % 6 === 0) {
-        for (const s of survivors) updateShooterMarkerHp(s);
-      }
       for (const s of survivors) {
         if (s._shooterDowned) tickShooterDownedPose(s, elapsed, worldHeight);
       }
+      syncShooterPlayerVisibility();
       syncShooterRespawnUi();
       updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,

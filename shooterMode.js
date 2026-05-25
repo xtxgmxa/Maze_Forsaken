@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { cellCenter, bfsNextStep } from "./maze.js";
+import { cellCenter, bfsNextStep, shooterLineBlocked } from "./maze.js";
 import { lambertStud } from "./mapTextures.js";
 import { PAINT_PALETTE } from "./paintballSplats.js";
 
@@ -262,16 +262,25 @@ export function canShooterFire(p, elapsed, state = null) {
     && (p.hp ?? 0) > 0 && !(p._respawnUntil > elapsed);
 }
 
-/** 倒地動畫：先側躺再隱藏模型（玩家需手動重生） */
+/** 倒地動畫：先側躺約 5 秒再隱藏模型 */
 export function tickShooterDownedPose(p, elapsed, worldHeightFn) {
   if (!p?._shooterDowned || !p.mesh) return;
   const wh = worldHeightFn ? worldHeightFn(p) : (p.elev ?? 0);
   const t0 = p._shooterDownedAt ?? elapsed;
-  const layT = Math.min(1, (elapsed - t0) / 0.5);
-  const lay = layT * (Math.PI / 2) * 0.88;
-  p.mesh.rotation.x = -lay;
-  p.mesh.position.y = wh + layT * 0.15;
+  const layT = Math.min(1, (elapsed - t0) / 0.7);
+  const parts = p.mesh.userData?.parts;
+  if (parts?.torso) {
+    parts.torso.rotation.x = -layT * 1.35;
+    if (parts.head) parts.head.rotation.x = layT * 0.4;
+    if (parts.leftLeg) parts.leftLeg.rotation.x = layT * 0.55;
+    if (parts.rightLeg) parts.rightLeg.rotation.x = layT * 0.55;
+    p.mesh.rotation.x = 0;
+  } else {
+    p.mesh.rotation.x = -layT * (Math.PI / 2) * 0.9;
+  }
+  p.mesh.position.y = wh - layT * 0.42;
   p.mesh.rotation.y = p._shooterDownedYaw ?? p.yaw ?? p.mesh.rotation.y;
+  p.mesh.visible = true;
   if (p._shooterBodyHideAt != null && elapsed >= p._shooterBodyHideAt) {
     p.mesh.visible = false;
   }
@@ -583,7 +592,29 @@ export function getShooterKillAnnounce(killer, victim, human) {
   return `${shooterPlayerLabel(killer)} 擊倒 ${vName}`;
 }
 
-function pickShooterBotTarget(bot, players, style, state) {
+const BOT_VISION = { smg: 20, rifle: 26, shotgun: 14, sniper: 30 };
+
+function botEyeY(bot) {
+  return 1.52 + (bot._jumpY ?? 0) + (bot.elev ?? 0);
+}
+
+function botTargetHeadY(target) {
+  return 1.05 + (target._jumpY ?? 0) + (target.elev ?? 0);
+}
+
+function botCanSeeTarget(bot, other, ctx, maze) {
+  const bd = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
+  const wId = getShooterWeapon(bot.weaponId).id;
+  const maxD = BOT_VISION[wId] ?? 22;
+  if (bd > maxD || bd < 0.6) return false;
+  return !shooterLineBlocked(
+    ctx, maze,
+    bot.pos.x, bot.pos.z, botEyeY(bot),
+    other.pos.x, botTargetHeadY(other), other.pos.z
+  );
+}
+
+function pickShooterBotTarget(bot, players, style, state, ctx, maze) {
   const moleMode = isShooterMoleMode(state) || style === "mole";
 
   if (bot.isMole && moleMode && state?.moleCanShoot) {
@@ -604,7 +635,7 @@ function pickShooterBotTarget(bot, players, style, state) {
         bestMate = other;
       }
     }
-    if (bestMate && bestScore < 24) return bestMate;
+    if (bestMate && bestScore < 24 && botCanSeeTarget(bot, bestMate, ctx, maze)) return bestMate;
   }
 
   let target = null;
@@ -612,8 +643,9 @@ function pickShooterBotTarget(bot, players, style, state) {
   for (const other of players) {
     if (!isShooterEnemy(bot, other, style, state)) continue;
     if (!isShooterCombatActive(other)) continue;
+    if (!botCanSeeTarget(bot, other, ctx, maze)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
-    const bias = other.isAI ? 0 : -14;
+    const bias = other.isAI ? 0 : -12;
     const score = d + bias;
     if (score < best) {
       best = score;
@@ -638,7 +670,8 @@ function pickShooterRoamCell(ctx, maze, bot, players) {
       if (d < minEnemy) minEnemy = d;
     }
     const selfD = Math.hypot(bot.pos.x - c.x, bot.pos.z - c.z);
-    const score = minEnemy * 0.55 + selfD * 0.2 + Math.random() * 4;
+    const huntDist = minEnemy < 999 ? minEnemy : 18;
+    const score = -Math.abs(huntDist - 15) * 2 + selfD * 0.15 + Math.random() * 2;
     if (score > bestScore) {
       bestScore = score;
       best = c;
@@ -689,8 +722,20 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     bot._shooterLastX = bot.pos.x;
     bot._shooterLastZ = bot.pos.z;
 
-    let target = pickShooterBotTarget(bot, players, style, state);
-    if (!target) continue;
+    let target = pickShooterBotTarget(bot, players, style, state, ctx, maze);
+    if (!target) {
+      if ((bot._shooterPatrolUntil ?? 0) <= api.elapsed) {
+        bot._shooterPatrolUntil = api.elapsed + 1.8 + Math.random() * 1.6;
+        bot._shooterPatrol = pickShooterRoamCell(ctx, maze, bot, players);
+      }
+      const patrol = bot._shooterPatrol || pickShooterRoamCell(ctx, maze, bot, players);
+      const step = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, patrol.x, patrol.z) || patrol;
+      const d = dirToward(bot, step.x, step.z);
+      if (Math.hypot(d.x, d.z) > 0.1) smoothBotYaw(bot, Math.atan2(d.x, d.z), dt, 5);
+      api.moveEntity(bot, dt, { x: d.x * 0.92, z: d.z * 0.92, sprint: Math.random() < 0.35 });
+      if (d.len < 1.1) bot._shooterPatrolUntil = api.elapsed;
+      continue;
+    }
 
     const wId = getShooterWeapon(bot.weaponId).id;
     const ideal = { smg: 12, rifle: 18, shotgun: 8, sniper: 26 }[wId] ?? 15;
@@ -769,15 +814,17 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     }
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
-    const inRange = bd >= minR * 0.7 && bd <= maxR * 1.25 + (wId === "sniper" ? 22 : 10);
-    const wantShoot = inRange && bd < 42;
+    const visionMax = BOT_VISION[wId] ?? 22;
+    const inRange = bd >= minR * 0.65 && bd <= Math.min(maxR * 1.15, visionMax);
+    const hasLos = botCanSeeTarget(bot, target, ctx, maze);
+    const wantShoot = inRange && hasLos;
     const moleSnipe = bot.isMole && moleMode && state?.moleCanShoot && isSameShooterTeam(bot, target);
     const fireDelay = moleSnipe ? 0.55 : wId === "sniper" ? 0.45 : 0.28;
     if (wantShoot && canShooterFire(bot, api.elapsed, state)) {
       const readyAt = bot._nextShotReady ?? 0;
       if (api.elapsed >= readyAt) {
-        smoothBotYaw(bot, yawTo, dt, 12);
-        api.fire(bot, bot.yaw);
+        smoothBotYaw(bot, yawTo, dt, 10);
+        api.fire(bot, yawTo);
         muzzleFlash(bot);
         const baseCd = (bot._shooterFireCd ?? 0.28) + fireDelay;
         bot._shootCd = api.elapsed + baseCd * (0.85 + Math.random() * 0.45);
@@ -888,7 +935,7 @@ export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   victim._shooterDowned = true;
   victim._shooterDownedAt = elapsed;
   victim._shooterDownedYaw = victim.yaw ?? 0;
-  victim._shooterBodyHideAt = elapsed + 4.8;
+  victim._shooterBodyHideAt = elapsed + 5.5;
   victim._respawnUntil = 0;
 
   if (victim.mesh) {

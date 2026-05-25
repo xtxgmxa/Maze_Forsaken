@@ -1,164 +1,113 @@
 import * as THREE from "three";
-import { SHOOTER_TEAMS, isShooterMoleMode } from "./shooterMode.js";
+import { isShooterMoleMode, isSameShooterTeam } from "./shooterMode.js";
 
-const MARKER_Y = 2.35;
+const _proj = new THREE.Vector3();
+const labelPool = new Map();
 
-function teamColor(teamId) {
-  return SHOOTER_TEAMS[teamId ?? 0]?.color ?? 0xffffff;
+function ensureLabelLayer() {
+  let layer = document.getElementById("shooterLabelLayer");
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "shooterLabelLayer";
+    layer.setAttribute("aria-hidden", "true");
+    document.body.appendChild(layer);
+  }
+  return layer;
 }
 
-function disposeMarker(p) {
-  if (!p._teamMarker) return;
-  p._teamMarker.traverse((c) => {
-    c.geometry?.dispose?.();
-    if (c.material) {
-      if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose?.());
-      else c.material.dispose?.();
+/** 相對於觀察者的頭頂文字：敵人 / 隊友 / 內鬼 */
+export function getShooterRelationLabel(viewer, target, playStyle, state) {
+  if (!viewer || !target || viewer === target) return null;
+  if (isShooterMoleMode(state) && target.isMole && target._moleRevealed) {
+    return { text: "內鬼", cls: "mole" };
+  }
+  if (playStyle === "ffa") return { text: "敵人", cls: "enemy" };
+  if (isSameShooterTeam(viewer, target)) return { text: "隊友", cls: "teammate" };
+  return { text: "敵人", cls: "enemy" };
+}
+
+function hideAllLabels() {
+  for (const el of labelPool.values()) el.style.display = "none";
+}
+
+function getLabelEl(key) {
+  if (labelPool.has(key)) return labelPool.get(key);
+  const layer = ensureLabelLayer();
+  const el = document.createElement("span");
+  el.className = "shooter-lbl";
+  el.dataset.key = key;
+  layer.appendChild(el);
+  labelPool.set(key, el);
+  return el;
+}
+
+/** 依各玩家視窗投影頭頂文字（分割畫面各自判斷敵友） */
+export function syncShooterOverheadLabels({
+  players,
+  viewports,
+  playStyle,
+  state,
+  active,
+}) {
+  const layer = ensureLabelLayer();
+  if (!active || !players?.length || !viewports?.length) {
+    hideAllLabels();
+    layer.style.display = "none";
+    return;
+  }
+  layer.style.display = "block";
+  const used = new Set();
+
+  for (const vp of viewports) {
+    const { viewer, camera, x, y, w, h } = vp;
+    if (!viewer || !camera || w <= 0 || h <= 0) continue;
+    for (const target of players) {
+      if (!target?.mesh || target === viewer) continue;
+      if (target._shooterDowned || target._awaitingRespawn || (target.hp ?? 0) <= 0) continue;
+      const rel = getShooterRelationLabel(viewer, target, playStyle, state);
+      if (!rel) continue;
+      _proj.set(target.pos.x, 2.55 + (target._jumpY ?? 0) + (target.elev ?? 0), target.pos.z);
+      _proj.project(camera);
+      if (_proj.z < -1 || _proj.z > 1) continue;
+      const sx = x + (_proj.x * 0.5 + 0.5) * w;
+      const sy = y + (-_proj.y * 0.5 + 0.5) * h;
+      if (sx < x - 8 || sx > x + w + 8 || sy < y - 8 || sy > y + h + 8) continue;
+      const key = `${viewer.profile || viewer.id || "v"}:${target.profile || target.charDef?.id || target.pos.x}`;
+      used.add(key);
+      const el = getLabelEl(key);
+      el.className = `shooter-lbl ${rel.cls}`;
+      el.textContent = rel.text;
+      el.style.display = "block";
+      el.style.left = `${sx}px`;
+      el.style.top = `${sy}px`;
     }
-  });
-  p.mesh?.remove(p._teamMarker);
-  p._teamMarker = null;
-  p._hpBarFg = null;
+  }
+
+  for (const [key, el] of labelPool) {
+    if (!used.has(key)) el.style.display = "none";
+  }
 }
 
 export function clearShooterTeamMarkers(players) {
-  for (const p of players || []) disposeMarker(p);
-}
-
-function buildMarkerMeshes(p, human, playStyle, state) {
-  const group = new THREE.Group();
-  group.name = "teamMarker";
-
-  const ffa = playStyle === "ffa";
-  const moleMode = isShooterMoleMode(state);
-  const revealed = !!p._moleRevealed;
-  const showMole = moleMode && p.isMole && revealed;
-  const hideTeam = moleMode && p.isMole && !revealed;
-
-  const col = ffa ? (p.paintColor ?? 0x88aaff) : teamColor(p.teamId);
-  const ringCol = showMole ? 0xff2244 : col;
-
-  const matRing = new THREE.MeshBasicMaterial({
-    color: ringCol,
-    transparent: true,
-    opacity: showMole ? 0.98 : 0.88,
-  });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.08, 10, 22), matRing);
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = MARKER_Y;
-  group.add(ring);
-
-  const hpBg = new THREE.Mesh(
-    new THREE.BoxGeometry(0.62, 0.08, 0.05),
-    new THREE.MeshBasicMaterial({ color: 0x111118, transparent: true, opacity: 0.9 })
-  );
-  hpBg.position.y = MARKER_Y + 0.52;
-  group.add(hpBg);
-
-  const hpFg = new THREE.Mesh(
-    new THREE.BoxGeometry(0.58, 0.06, 0.06),
-    new THREE.MeshBasicMaterial({ color: showMole ? 0xff3355 : 0x44ee88, transparent: true, opacity: 0.95 })
-  );
-  hpFg.position.y = MARKER_Y + 0.52;
-  group.add(hpFg);
-  p._hpBarFg = hpFg;
-
-  const badgeMat = new THREE.MeshBasicMaterial({
-    color: showMole ? 0xff1133 : col,
-    transparent: true,
-    opacity: 0.96,
-  });
-  const badge = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.18, 0.07), badgeMat);
-  badge.position.y = MARKER_Y + 0.28;
-  group.add(badge);
-
-  if (showMole) {
-    const skull = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.28, 0.1),
-      new THREE.MeshBasicMaterial({ color: 0xffee22 })
-    );
-    skull.position.y = MARKER_Y + 0.72;
-    group.add(skull);
-    const tag = new THREE.Mesh(
-      new THREE.BoxGeometry(0.36, 0.1, 0.06),
-      new THREE.MeshBasicMaterial({ color: 0xff1133 })
-    );
-    tag.position.y = MARKER_Y + 0.9;
-    group.add(tag);
-  } else if (!ffa && p.teamId >= 0 && !hideTeam) {
-    const dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 })
-    );
-    dot.position.y = MARKER_Y + 0.68;
-    group.add(dot);
-  } else if (hideTeam && moleMode) {
-    const dot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.12, 8, 8),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85 })
-    );
-    dot.position.y = MARKER_Y + 0.68;
-    group.add(dot);
-  }
-
-  const isHuman = p === human || (!p.isAI && ["p1", "p2", "p3", "p4"].includes(p.profile));
-  if (isHuman) {
-    const you = new THREE.Mesh(
-      new THREE.RingGeometry(0.58, 0.78, 16),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
-    );
-    you.rotation.x = -Math.PI / 2;
-    you.position.y = MARKER_Y - 0.08;
-    group.add(you);
-  }
-
-  return group;
-}
-
-export function updateShooterMarkerHp(p) {
-  const fg = p?._hpBarFg;
-  if (!fg) return;
-  const maxHp = p.maxHp ?? 140;
-  const hp = Math.max(0, Math.min(maxHp, p.hp ?? maxHp));
-  const t = maxHp > 0 ? hp / maxHp : 0;
-  fg.scale.x = Math.max(0.05, t);
-  fg.position.x = -0.29 * (1 - t);
-  if (t < 0.35) fg.material.color.setHex(0xff4444);
-  else if (t < 0.65) fg.material.color.setHex(0xffcc44);
-  else fg.material.color.setHex(p.isMole && p._moleRevealed ? 0xff3355 : 0x44ee88);
-}
-
-/** 頭頂隊伍／血量／內鬼標記 */
-export function syncShooterTeamMarker(p, human, playStyle = "teams", state = null) {
-  if (!p?.mesh) return;
-  const down = p._shooterDowned || p._awaitingRespawn || (p.hp ?? 0) <= 0;
-  if (down) {
-    if (p._teamMarker) p._teamMarker.visible = false;
-    return;
-  }
-  const moleMode = isShooterMoleMode(state);
-  const needRebuild = moleMode && p.isMole && p._moleRevealed && !p._teamMarker;
-  if (!p._teamMarker || needRebuild) {
-    disposeMarker(p);
-    p._teamMarker = buildMarkerMeshes(p, human, playStyle, state);
-    p.mesh.add(p._teamMarker);
-  }
-  p._teamMarker.visible = true;
-  p._teamMarker.position.y = 0;
-  updateShooterMarkerHp(p);
-}
-
-export function syncAllShooterTeamMarkers(players, human, playStyle, state) {
+  hideAllLabels();
+  const layer = document.getElementById("shooterLabelLayer");
+  if (layer) layer.innerHTML = "";
+  labelPool.clear();
   for (const p of players || []) {
-    if (!p?.mesh) continue;
-    syncShooterTeamMarker(p, human, playStyle, state);
+    if (p._teamMarker) {
+      p.mesh?.remove(p._teamMarker);
+      p._teamMarker = null;
+    }
+    p._hpBarFg = null;
   }
 }
+
+export function syncShooterTeamMarker() {}
+export function syncAllShooterTeamMarkers() {}
+export function updateShooterMarkerHp() {}
 
 export function revealMoleOnHit(target, human, playStyle, state) {
   if (!target?.isMole || target._moleRevealed) return;
   target._moleRevealed = true;
-  disposeMarker(target);
-  syncShooterTeamMarker(target, human, playStyle, state);
 }
 

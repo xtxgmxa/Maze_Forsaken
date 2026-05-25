@@ -684,7 +684,7 @@
       position: fixed;
       z-index: 128;
       pointer-events: auto !important;
-      top: max(78px, calc(72px + env(safe-area-inset-top, 0px)));
+      top: max(118px, calc(108px + env(safe-area-inset-top, 0px)));
       right: max(6px, calc(4px + env(safe-area-inset-right, 0px)));
       width: 54px;
       height: 34px;
@@ -1407,6 +1407,30 @@
     body.touch-ui.shooter-play #touchRowDoor { display: none !important; }
     body.touch-ui.shooter-play #touchItem { display: none !important; }
     body.touch-ui.shooter-play .hud-top .hud-block:last-child { display: none !important; }
+    #shooterLabelLayer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 14;
+      overflow: hidden;
+    }
+    .shooter-lbl {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      font-weight: 800;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 6px #000, 0 1px 3px #000, 0 0 12px #000;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .shooter-lbl.enemy { color: #ff3344; }
+    .shooter-lbl.teammate { color: #44ee77; }
+    .shooter-lbl.mole {
+      color: #ffdd22;
+      font-size: 0.88rem;
+      text-shadow: 0 0 8px #ff8800, 0 0 4px #000;
+    }
     body.touch-ui.shooter-play #minimap-wrap {
       display: flex;
       flex-direction: column;
@@ -2673,7 +2697,7 @@
       <input type="range" id="mobileSfxVol" min="0" max="100" value="100" step="1" />
       <label class="mobile-check-row" style="display:flex;align-items:center;gap:8px;margin:10px 0 4px">
         <input type="checkbox" id="mobileAutoAim" />
-        <span>槍戰自動瞄準（輔助鎖敵，可關閉）</span>
+        <span>槍戰自動瞄準＋鎖定開火（可關閉）</span>
       </label>
       <p class="mobile-settings-hint">任務：走近發電站 → 技2 會變「任務」，點擊答題</p>
       <div class="modal-actions">
