@@ -909,7 +909,11 @@ function getHumanFocus() {
   }
   const human = getHumanSurvivor();
   if (human) {
-    if (isShooterMode() && human._awaitingRespawn) return human;
+    if (isShooterMode()) {
+      if (human._awaitingRespawn) return human;
+      if (isShooterPlayerDown(human)) return null;
+      return human;
+    }
     return human.caught ? null : human;
   }
   return survivors.find((s) => !s.caught) || survivors[0];
@@ -1186,6 +1190,12 @@ function isShooterMode() {
   return gameMode === "shooter" || levelCategory === "shooter";
 }
 
+/** 槍戰倒地／等待重生：不應使用 chase 模式的 caught 擋移動 */
+function isShooterPlayerDown(p) {
+  if (!p) return false;
+  return !!(p._shooterDowned || p._awaitingRespawn || (p.hp ?? 0) <= 0);
+}
+
 function isClassicMode() {
   return gameMode === "classic";
 }
@@ -1246,12 +1256,12 @@ function syncShooterPlayerVisibility() {
   if (!isShooterMode()) return;
   const human = getHumanSurvivor();
   const spectating = isSpectating();
-  const showFp = human && !spectating && !human.caught && (human.hp ?? 0) > 0;
+  const showFp = human && !spectating && !isShooterPlayerDown(human);
   setFpGunVisible(showFp);
   for (const s of survivors) {
     if (!s.mesh) continue;
     if (s === human && !spectating) s.mesh.visible = false;
-    else s.mesh.visible = !s.caught && (s.hp ?? 0) > 0;
+    else s.mesh.visible = !isShooterPlayerDown(s);
   }
 }
 
@@ -1302,7 +1312,11 @@ function usesExitWin() {
 }
 
 function getAliveSurvivors() {
-  return survivors.filter((s) => !s.caught && (s.hp ?? 100) > 0);
+  return survivors.filter((s) => {
+    if ((s.hp ?? 100) <= 0) return false;
+    if (isShooterMode()) return !isShooterPlayerDown(s);
+    return !s.caught;
+  });
 }
 
 function updatePerfTier() {
@@ -1500,13 +1514,17 @@ function restartMoleRound(winTeam) {
 function eliminateShooterForTeamkill(p, reason) {
   if (!p || !isShooterMode() || !shooterState) return;
   p.hp = 0;
-  p.caught = true;
+  p.caught = false;
   p._shooterDowned = true;
+  p._awaitingRespawn = false;
+  p.vel = { x: 0, z: 0 };
+  if (!p.isAI) syncShooterRespawnUi();
   showToast(reason || `${p.charDef?.name || "玩家"} 誤傷隊友，立刻淘汰！`, 1400, "kill");
 }
 
 function damageSurvivor(target, killer, amount, opts = {}) {
-  if (!target || target.caught || elapsed < MATCH_START_GRACE) return;
+  if (!target || elapsed < MATCH_START_GRACE) return;
+  if (isShooterMode() ? isShooterPlayerDown(target) : target.caught) return;
   if ((target.invuln ?? 0) > 0.05) return;
   const headshot = !!opts.headshot;
   const envKiller = killer || { charDef: { name: "環境" }, pos: target.pos };
@@ -1807,7 +1825,8 @@ function findUnstuckSpot(pos) {
 }
 
 function tickEntityUnstuck(p, dt) {
-  if (!p || p.caught || gameState !== "play") return;
+  if (!p || gameState !== "play") return;
+  if (isShooterMode() ? isShooterPlayerDown(p) : p.caught) return;
   const spd = Math.hypot(p.vel?.x ?? 0, p.vel?.z ?? 0);
   const moved = p._unstuckPrev
     ? Math.hypot(p.pos.x - p._unstuckPrev.x, p.pos.z - p._unstuckPrev.z)
@@ -2113,7 +2132,8 @@ function tryShooterWeaponSwitch(slot) {
 }
 
 function tryJump(p, profile, gp = null) {
-  if (!p || p.caught || p.role === "killer" || p.sliding) return;
+  if (!p || p.role === "killer" || p.sliding) return;
+  if (isShooterMode() ? isShooterPlayerDown(p) : p.caught) return;
   const jumpDown = keyDown(keys, profile, "jump") || !!gp?.jump;
   if (!jumpDown) return;
   if (p._jumpHeld) return;
@@ -2155,7 +2175,8 @@ function getSlideDirection(move, profile) {
 }
 
 function applySlideInput(p, profile, move, dt, gp = null) {
-  if (p.role === "killer" || p.caught || playAsKiller || p._shooterDowned) return move;
+  if (p.role === "killer" || playAsKiller) return move;
+  if (isShooterMode() ? isShooterPlayerDown(p) : p.caught) return move;
   if (p.slideTimer == null) p.slideTimer = 0;
   if (p.slideCd == null) p.slideCd = 0;
 
@@ -2637,6 +2658,8 @@ async function runStartGame() {
     }
     const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
+      clearShooterDownedState(s);
+      s.caught = false;
       initShooterStats(s);
       assignShooterPlayer(s, i, survivors.length, playStyle);
       const startGun = !s.isAI ? "rifle" : ["smg", "rifle", "shotgun", "sniper"][i % 4];
@@ -3362,7 +3385,7 @@ function updateMissionsProximity() {
     if (missionBtn) missionBtn.hidden = true;
     if (missionBanner) missionBanner.hidden = true;
   };
-  if (playAsKiller || activeQuiz || isKeyHuntMode() || isPuzzleDoorMode()) {
+  if (playAsKiller || activeQuiz || isKeyHuntMode() || isPuzzleDoorMode() || isShooterMode()) {
     const hint = document.getElementById("missionInteractHint");
     if (hint) hint.style.display = "none";
     hideMissionTouchUi();
@@ -3404,7 +3427,7 @@ function updateMissionsProximity() {
 }
 
 function updateEntity(p, dt, move) {
-  if (p.caught) return;
+  if (isShooterMode() ? isShooterPlayerDown(p) : p.caught) return;
   tickCooldowns(p, dt);
   if (p.elev == null) p.elev = 0;
   if (p._jumpY == null) p._jumpY = 0;
@@ -3516,7 +3539,8 @@ function updateEntity(p, dt, move) {
     p.mesh.rotation.y = Math.atan2(p.vel.x, p.vel.z);
   }
 
-  if (p.onGround && spd > 1.4 && !p.caught && !p.sliding) {
+  const canStep = isShooterMode() ? !isShooterPlayerDown(p) : !p.caught;
+  if (p.onGround && spd > 1.4 && canStep && !p.sliding) {
     p._stepCd = (p._stepCd ?? 0) - dt;
     const stepGap = sprinting ? 0.28 : 0.38;
     if (p._stepCd <= 0) {
@@ -3763,7 +3787,8 @@ function updateSurvivors(dt) {
   const gp1 = pollGamepad(1);
 
   survivors.forEach((s) => {
-    if (s.caught) return;
+    if (!isShooterMode() && s.caught) return;
+    if (isShooterMode() && isShooterPlayerDown(s)) return;
     const profile = s.profile;
     const gp = profile === "p1" ? gp0 : gp1;
     const useCam = profile === "p1" || gameMode === "coop";
@@ -4181,7 +4206,7 @@ function drawShooterRadar() {
 
   const human = getHumanSurvivor();
   for (const s of survivors) {
-    if (s.caught || (s.hp ?? 0) <= 0) continue;
+    if (isShooterPlayerDown(s)) continue;
     const [px, py] = toMap(s.pos.x, s.pos.z);
     const isYou = s === human;
     ctx2.fillStyle = paintColorCss(s.paintColor ?? s.charDef?.accent ?? 0xffffff);

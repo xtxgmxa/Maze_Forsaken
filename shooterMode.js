@@ -29,7 +29,7 @@ export function isShooterMoleMode(stateOrStyle) {
 
 export function isShooterEnemy(a, b, playStyle = "teams", state = null) {
   if (!a || !b || a === b) return false;
-  if (a.caught || b.caught) return false;
+  if (a._shooterDowned || a._awaitingRespawn || b._shooterDowned || b._awaitingRespawn) return false;
   if ((a.hp ?? 0) <= 0 || (b.hp ?? 0) <= 0) return false;
   const mole = isShooterMoleMode(state) || playStyle === "mole";
   if (mole && a.isMole && state?.moleCanShoot) return true;
@@ -99,13 +99,13 @@ export function scoreMoleKill(killer, victim, state) {
 export function checkMoleRoundEnd(players, state) {
   if (!isShooterMoleMode(state)) return null;
   const mole = state.moleRef || players.find((p) => p.isMole);
-  if (mole && (mole.caught || mole._shooterDowned || (mole.hp ?? 0) <= 0)) {
+  if (mole && (mole._shooterDowned || mole._awaitingRespawn || (mole.hp ?? 0) <= 0)) {
     const win = mole.teamId === 0 ? 1 : 0;
     state.teamRoundScore[win] = (state.teamRoundScore[win] || 0) + 3;
     return { winTeam: win, reason: "內鬼被擊殺，對方隊伍贏得本局" };
   }
-  const alive0 = players.filter((p) => (p.teamId ?? 0) === 0 && !p.caught && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
-  const alive1 = players.filter((p) => (p.teamId ?? 0) === 1 && !p.caught && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
+  const alive0 = players.filter((p) => (p.teamId ?? 0) === 0 && !p._shooterDowned && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
+  const alive1 = players.filter((p) => (p.teamId ?? 0) === 1 && !p._shooterDowned && (p.hp ?? 0) > 0 && !p._awaitingRespawn);
   if (!alive0.length) return { winTeam: 1, reason: "紅隊全滅" };
   if (!alive1.length) return { winTeam: 0, reason: "藍隊全滅" };
   return null;
@@ -237,7 +237,7 @@ export function respawnShooterPlayer(p, ctx, maze, players) {
 
 export function canShooterFire(p, elapsed, state = null) {
   if (p.isMole && isShooterMoleMode(state) && !state.moleCanShoot) return false;
-  return (p._shootCd ?? 0) <= elapsed && !p.caught && !p._shooterDowned
+  return (p._shootCd ?? 0) <= elapsed && !p._shooterDowned && !p._awaitingRespawn
     && (p.hp ?? 0) > 0 && !(p._respawnUntil > elapsed);
 }
 
@@ -258,6 +258,7 @@ export function tickShooterDownedPose(p, elapsed, worldHeightFn) {
 
 export function clearShooterDownedState(p) {
   if (!p) return;
+  p.caught = false;
   p._shooterDowned = false;
   p._awaitingRespawn = false;
   p._autoRespawnAt = 0;
@@ -585,7 +586,7 @@ function pickShooterRoamCell(ctx, maze, bot, players) {
     const c = cellCenter(ctx, gx, gz);
     let minEnemy = Infinity;
     for (const p of players) {
-      if (p === bot || p.caught || (p.hp ?? 0) <= 0) continue;
+      if (p === bot || p._shooterDowned || p._awaitingRespawn || (p.hp ?? 0) <= 0) continue;
       const d = Math.hypot(p.pos.x - c.x, p.pos.z - c.z);
       if (d < minEnemy) minEnemy = d;
     }
@@ -609,7 +610,7 @@ function dirToward(bot, tx, tz) {
 export function updateShooterBots(dt, players, ctx, maze, state, api) {
   const style = state.playStyle ?? "teams";
   for (const bot of players) {
-    if (!bot.isAI || bot.caught || (bot.hp ?? 0) <= 0) continue;
+    if (!bot.isAI || bot._shooterDowned || bot._awaitingRespawn || (bot.hp ?? 0) <= 0) continue;
     if (bot._respawnUntil > api.elapsed) continue;
 
     const lx = bot._shooterLastX ?? bot.pos.x;
@@ -770,7 +771,7 @@ export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   else if (killer?.isAI && !victim?.isAI) state.botKills = (state.botKills || 0) + 1;
 
   victim.hp = 0;
-  victim.caught = true;
+  victim.caught = false;
   victim.vel = { x: 0, z: 0 };
   victim.velY = 0;
   victim._shooterDowned = true;
