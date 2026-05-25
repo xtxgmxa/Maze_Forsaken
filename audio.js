@@ -91,6 +91,22 @@ export function resetMusicZoneTint() {
   setMusicZoneTint(null);
 }
 
+/** 回選單／結算時停止 BGM，避免音樂繼續播 */
+export function stopGameMusic(musicEl = null) {
+  if (musicEl) {
+    try {
+      musicEl.pause();
+      musicEl.currentTime = 0;
+    } catch { /* */ }
+  }
+}
+
+export async function suspendGameAudio() {
+  try {
+    if (actx?.state === "running") await actx.suspend();
+  } catch { /* */ }
+}
+
 export async function initAudioEngine() {
   try {
     if (!actx) {

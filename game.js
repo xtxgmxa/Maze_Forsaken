@@ -38,6 +38,10 @@ import {
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
+  clearShooterTeamMarkers, syncAllShooterTeamMarkers, syncShooterTeamMarker, revealMoleOnHit,
+} from "./shooterMarkers.js";
+import { playShooterResultMusic, stopShooterResultMusic } from "./shooterResultMusic.js";
+import {
   initShooterStats, renderShooterScoreboard, setShooterScoreboardVisible, resetShooterScoreboardUi,
   bindShooterScoreboardUi,
 } from "./shooterScoreboard.js";
@@ -50,6 +54,7 @@ import {
 import {
   initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings,
   setAudioSettings, resetAudioSettings, applyAudioSettings, connectMusicElement, setMusicZoneTint,
+  stopGameMusic, suspendGameAudio,
 } from "./audio.js";
 import {
   loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
@@ -144,9 +149,11 @@ function loadShooterSettings() {
       fov: Math.max(70, Math.min(115, s.fov ?? 94)),
       scopeFov: Math.max(28, Math.min(65, s.scopeFov ?? 44)),
       invertY: !!s.invertY,
+      autoAim: !!s.autoAim,
+      autoAimDeg: Math.max(8, Math.min(28, s.autoAimDeg ?? 16)),
     };
   } catch {
-    return { fov: 94, scopeFov: 44, invertY: false };
+    return { fov: 94, scopeFov: 44, invertY: false, autoAim: false, autoAimDeg: 16 };
   }
 }
 
@@ -268,6 +275,11 @@ function updateCrosshair() {
   const ch = document.getElementById("crosshair");
   const scopeOv = document.getElementById("scopeOverlay");
   if (!ch) return;
+  if (isSpectating()) {
+    ch.classList.remove("show", "sniper", "sniper-scope");
+    if (scopeOv) scopeOv.classList.remove("show");
+    return;
+  }
   const hk = killers.find((k) => !k.isAI);
   const prof = playAsKiller ? "p1" : "killer";
   const killerAim = !!(
@@ -275,7 +287,7 @@ function updateCrosshair() {
     (playAsKiller || gameMode === "versus") &&
     keyDown(keys, prof, "slide")
   );
-  const shooterAim = isShooterMode() && gameState === "play" && !isSpectating();
+  const shooterAim = isShooterMode() && gameState === "play";
   ch.classList.toggle("show", killerAim || shooterAim);
   const human = getHumanSurvivor();
   const sniper = shooterAim && getShooterWeapon(human?.weaponId)?.id === "sniper";
@@ -952,6 +964,9 @@ function resolvePlayFocus() {
 
 function returnToMenu() {
   hideLoading();
+  stopShooterResultMusic();
+  stopGameMusic(musicEl);
+  suspendGameAudio();
   gameState = "menu";
   closeMathQuiz();
   keyHuntState = null;
@@ -972,11 +987,13 @@ function returnToMenu() {
   menu.style.display = "flex";
   hud.classList.remove("show");
   clickPrompt.classList.remove("show");
-  if (musicEl) { musicEl.pause(); musicEl.currentTime = 0; }
   document.exitPointerLock?.();
   clearVfxPool();
+  clearShooterTeamMarkers(survivors);
   document.getElementById("hudEscHint")?.classList.remove("show");
-  document.body.classList.remove("keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play");
+  document.body.classList.remove(
+    "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui", "scoreboard-open"
+  );
   refreshMenuForMode();
 }
 
@@ -1039,6 +1056,10 @@ function renderSettingsForm() {
         <input type="checkbox" id="setInvertY" ${shooterSettings.invertY ? "checked" : ""} />
         反轉上下視角（滑鼠／觸控）
       </label>
+      <label class="vol-row" style="margin-top:6px">
+        <input type="checkbox" id="setAutoAim" ${shooterSettings.autoAim ? "checked" : ""} />
+        手機槍戰自動瞄準（可關閉）
+      </label>
     </div>
     ${profiles
     .map(
@@ -1098,6 +1119,10 @@ function renderSettingsForm() {
   });
   inv?.addEventListener("change", (e) => {
     shooterSettings.invertY = e.target.checked;
+    saveShooterSettings();
+  });
+  document.getElementById("setAutoAim")?.addEventListener("change", (e) => {
+    shooterSettings.autoAim = e.target.checked;
     saveShooterSettings();
   });
 
@@ -1275,7 +1300,50 @@ function getShooterAimYaw() {
   return Math.atan2(dir.x, dir.z);
 }
 
+function applyShooterAutoAim(p, baseYaw) {
+  if (!p || !shooterSettings.autoAim || !isTouchUiEnabled()) return baseYaw;
+  const style = shooterState?.playStyle ?? shooterPlayStyle;
+  const maxAng = (shooterSettings.autoAimDeg ?? 16) * (Math.PI / 180);
+  let best = null;
+  let bestAng = maxAng;
+  for (const other of survivors) {
+    if (!isShooterEnemy(p, other, style, shooterState)) continue;
+    if (!isShooterCombatActive(other)) continue;
+    const dx = other.pos.x - p.pos.x;
+    const dz = other.pos.z - p.pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 42 || dist < 0.5) continue;
+    const tyaw = Math.atan2(dx, dz);
+    let d = tyaw - baseYaw;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const ang = Math.abs(d);
+    if (ang < bestAng) {
+      bestAng = ang;
+      best = tyaw;
+    }
+  }
+  return best ?? baseYaw;
+}
+
 function getShooterAimDir() {
+  let baseYaw = camYaw;
+  if (camera) {
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    baseYaw = Math.atan2(dir.x, dir.z);
+    if (!isTouchUiEnabled() || !shooterSettings.autoAim) return dir.normalize();
+  }
+  const human = getHumanSurvivor();
+  if (human && isShooterMode()) {
+    const aimYaw = applyShooterAutoAim(human, baseYaw);
+    if (aimYaw !== baseYaw) {
+      const cosP = Math.cos(camPitch);
+      return new THREE.Vector3(
+        Math.sin(aimYaw) * cosP, Math.sin(camPitch), Math.cos(aimYaw) * cosP
+      ).normalize();
+    }
+  }
   if (!camera) {
     const cosP = Math.cos(camPitch);
     return new THREE.Vector3(Math.sin(camYaw) * cosP, Math.sin(camPitch), Math.cos(camYaw) * cosP).normalize();
@@ -1565,6 +1633,10 @@ function damageSurvivor(target, killer, amount, opts = {}) {
     eliminateShooterForTeamkill(killer, `${killer.charDef?.name || "玩家"} 射擊隊友！立刻淘汰`);
     return;
   }
+  if (isShooterMode() && killer && target?.isMole && !killer.isMole) {
+    revealMoleOnHit(target);
+    syncShooterTeamMarker(target, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle, shooterState);
+  }
   if (isShooterMode()) {
     playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
     target._hitFlash = headshot ? 0.48 : 0.4;
@@ -1613,6 +1685,7 @@ function damageSurvivor(target, killer, amount, opts = {}) {
     if (isShooterMode() && shooterState) {
       onShooterDowned(killer, target, shooterState, elapsed, (x, z) => {
         spawnShooterHealOrb(scene, x, z, worldHeight(target));
+        if (killer && !killer.isAI) showToast("擊倒！地上出現綠色補血包", 1100);
       });
       const human = getHumanSurvivor();
       syncShooterRespawnUi();
@@ -1932,8 +2005,7 @@ function checkMatchEnd(msgIfLose) {
       const res = isShooterMoleMode(shooterState)
         ? buildMoleEndResults(survivors, human, shooterState)
         : buildShooterEndResults(survivors, human, shooterState?.playStyle ?? shooterPlayStyle);
-      playSfx("exit");
-      endGame(res.won, res.msg);
+      endGame(res.won, res.msg, { shooter: true, ...res });
       return;
     }
     return;
@@ -2706,7 +2778,6 @@ async function runStartGame() {
       } else {
         showToast("無間道：找出並擊殺內鬼！誤傷隊友者立刻淘汰。", 3200);
       }
-      if (mole) mole._moleRevealed = true;
     }
     const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
@@ -2745,9 +2816,17 @@ async function runStartGame() {
       camera.updateProjectionMatrix();
     }
     if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
+    syncAllShooterTeamMarkers(survivors, humanShooter, playStyle, shooterState);
+    if (humanShooter) {
+      const teamLine = playStyle === "ffa"
+        ? "自由混戰（每人不同色）"
+        : `${SHOOTER_TEAMS[humanShooter.teamId ?? 0]?.name || "隊伍"} · 同色環＝隊友`;
+      showToast(`你屬於：${teamLine} · 誤射隊友會立刻淘汰`, 3600);
+    }
     syncShooterRespawnUi();
     bindShooterRespawnUi();
   } else {
+    clearShooterTeamMarkers(survivors);
     showShooterScoreboard(false);
     resetShooterScoreboardUi();
     syncShooterRespawnUi();
@@ -3086,17 +3165,38 @@ function updateAbilityBar() {
     .join("");
 }
 
-function endGame(won, message) {
+function endGame(won, message, opts = {}) {
   gameState = "end";
+  stopGameMusic(musicEl);
+  document.exitPointerLock?.();
+
+  if (opts.shooter) {
+    document.body.classList.add("shooter-end-ui");
+    overlay.classList.add("show", "shooter-end");
+    overlay.classList.toggle("win", won);
+    overlay.classList.toggle("lose", !won);
+    clickPrompt.classList.remove("show");
+    const title = opts.shortTitle || (won ? "勝利" : "落敗");
+    const sub = opts.shortSub || message || "";
+    document.getElementById("overlayTitle").textContent = title;
+    document.getElementById("overlayText").textContent = sub;
+    renderShooterScoreboard(survivors, getHumanSurvivor(), opts.playStyle ?? shooterPlayStyle);
+    showShooterScoreboard(true);
+    const audio = getAudioSettings();
+    playShooterResultMusic(won, audio.music ?? 0.28);
+    return;
+  }
+
+  stopShooterResultMusic();
   showShooterScoreboard(false);
   resetShooterScoreboardUi();
+  document.body.classList.remove("shooter-end-ui");
   overlay.classList.add("show");
   overlay.classList.toggle("win", won);
   overlay.classList.toggle("lose", !won);
   clickPrompt.classList.remove("show");
-  document.getElementById("overlayTitle").textContent = won ? "任務完成" : "被遺棄了";
+  document.getElementById("overlayTitle").textContent = won ? "任務完成" : "未能通關";
   document.getElementById("overlayText").textContent = message;
-  document.exitPointerLock?.();
 }
 
 // ─── Input ──────────────────────────────────────────────────────────────────
@@ -4469,12 +4569,14 @@ function updateHUD() {
   if (!focus) return;
   if (!exitPos && usesExitWin()) return;
 
-  const hp = Math.round(focus.hp ?? 100);
+  const maxHp = Math.max(1, focus.maxHp ?? 100);
+  const hp = Math.round(focus.hp ?? maxHp);
+  const hpPct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
   const hpEl = document.getElementById("hudHp");
-  if (hpEl) hpEl.textContent = String(hp);
+  if (hpEl) hpEl.textContent = isShooterMode() ? `${hp}/${maxHp}` : String(hp);
   const hpBar = document.getElementById("hudHpBar");
   if (hpBar) {
-    hpBar.style.width = `${hp}%`;
+    hpBar.style.width = `${hpPct}%`;
     hpBar.style.background =
       hp > 60 ? "linear-gradient(90deg,#9a1520,#e82238)" :
       hp > 30 ? "linear-gradient(90deg,#7a1018,#cc3344)" :
@@ -4793,6 +4895,11 @@ function loopFrame(now) {
       });
     }
     if (isShooterMode() && shooterState) {
+      if (frameCount % 18 === 0) {
+        syncAllShooterTeamMarkers(
+          survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle, shooterState
+        );
+      }
       if (shooterScoreboardOpen) {
         renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
       }
@@ -4873,6 +4980,16 @@ function boot() {
   bindMobileAudioElement(musicEl);
   bindAudioUnlock();
   initMenu();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && (gameState === "menu" || gameState === "end")) {
+      stopGameMusic(musicEl);
+      stopShooterResultMusic();
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    stopGameMusic(musicEl);
+    stopShooterResultMusic();
+  });
   try {
     ensureGraphics();
     setupLights();
@@ -4886,6 +5003,11 @@ function boot() {
     getContext: () => ({
       gameState,
       playAsKiller,
+      getShooterSettings: () => shooterSettings,
+      setShooterAutoAim: (on) => {
+        shooterSettings.autoAim = !!on;
+        saveShooterSettings();
+      },
       isKeyHunt: isKeyHuntMode,
       isShooterMode,
       isHumanKiller: isHumanKillerControl,

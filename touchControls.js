@@ -328,6 +328,11 @@ export function openMobileSettingsPanel() {
   if (dead) dead.value = String(mobileSettings.stickDead ?? DEFAULT_MOBILE.stickDead);
   if (music) music.value = String(Math.round((audio.music ?? 0.28) * 100));
   if (sfx) sfx.value = String(Math.round((audio.sfx ?? 1) * 100));
+  const autoAim = document.getElementById("mobileAutoAim");
+  const ctx = getCtx();
+  if (autoAim && ctx.getShooterSettings) {
+    autoAim.checked = !!ctx.getShooterSettings()?.autoAim;
+  }
   syncMobileSettingsLabels();
   panel.classList.add("show");
 }
@@ -369,6 +374,9 @@ export function initMobileSettingsUI() {
       music: Number(music?.value ?? 28) / 100,
       sfx: Number(sfx?.value ?? 100) / 100,
     }, musicElRef);
+    const ctx = getCtx();
+    const autoAim = document.getElementById("mobileAutoAim");
+    if (ctx.setShooterAutoAim && autoAim) ctx.setShooterAutoAim(autoAim.checked);
     syncMobileSettingsLabels();
   };
 

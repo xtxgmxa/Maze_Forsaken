@@ -118,16 +118,29 @@ export function buildMoleEndResults(players, human, state) {
   if (s0 !== s1) teamWin = s0 > s1 ? 0 : 1;
   const mole = state.moleRef;
   const moleName = mole?.charDef?.name || "?";
-  let msg = `無間道結束 · 紅隊 ${s0} 分 · 藍隊 ${s1} 分\n`;
-  msg += `內鬼：${moleName}（${SHOOTER_TEAMS[state.moleTeamId ?? 0]?.name || "—"}）\n`;
+  const moleTeam = SHOOTER_TEAMS[state.moleTeamId ?? 0]?.name || "—";
   if (teamWin != null) {
     const youWin = human && (human.teamId ?? 0) === teamWin;
-    msg += `${SHOOTER_TEAMS[teamWin].name} 總分獲勝！`;
-    if (human) msg += youWin ? "\n你：勝利隊伍！" : "\n你：落敗隊伍…";
-    return { won: !!youWin, msg, teamWin, playStyle: "mole" };
+    const wonTeam = SHOOTER_TEAMS[teamWin];
+    return {
+      won: !!youWin,
+      msg: `紅 ${s0} · 藍 ${s1} · 內鬼 ${moleName}`,
+      shortTitle: `${wonTeam.name} 獲勝`,
+      shortSub: `紅 ${s0} · 藍 ${s1} · 內鬼 ${moleName}（${moleTeam}）`,
+      teamWin,
+      playStyle: "mole",
+      teamKills: [s0, s1],
+    };
   }
-  msg += "平手！";
-  return { won: false, msg, teamWin: null, playStyle: "mole" };
+  return {
+    won: false,
+    msg: `平手 · 內鬼 ${moleName}`,
+    shortTitle: "平手",
+    shortSub: `紅 ${s0} · 藍 ${s1} · 內鬼 ${moleName}（${moleTeam}）`,
+    teamWin: null,
+    playStyle: "mole",
+    teamKills: [s0, s1],
+  };
 }
 
 export const SHOOTER_WEAPONS = [
@@ -638,6 +651,15 @@ function dirToward(bot, tx, tz) {
   return { x: dx / len, z: dz / len, len };
 }
 
+function smoothBotYaw(bot, targetYaw, dt, rate = 5.5) {
+  const cur = bot.yaw ?? 0;
+  let d = targetYaw - cur;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  if (Math.abs(d) < 0.04) bot.yaw = targetYaw;
+  else bot.yaw = cur + d * Math.min(1, dt * rate);
+}
+
 export function updateShooterBots(dt, players, ctx, maze, state, api) {
   const style = state.playStyle ?? "teams";
   const moleMode = isShooterMoleMode(state) || style === "mole";
@@ -673,7 +695,6 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     const maxR = ideal * 1.22;
     const bd = Math.hypot(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
     const yawTo = Math.atan2(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
-    bot.yaw = yawTo;
 
     const fwd = { x: Math.sin(yawTo), z: Math.cos(yawTo) };
     const right = { x: Math.cos(yawTo), z: -Math.sin(yawTo) };
@@ -707,9 +728,9 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
         const d = dirToward(bot, step.x, step.z);
         mx = d.x * 0.9;
         mz = d.z * 0.9;
-        bot.yaw = Math.atan2(mx, mz);
+        if (Math.hypot(mx, mz) > 0.12) smoothBotYaw(bot, Math.atan2(mx, mz), dt, 6);
         sprint = bd > ideal * 1.5 || bd > 22;
-        if (d.len < 1.1) bot._shooterHuntRefresh = 0;
+        if (d.len < 1.05) bot._shooterHuntRefresh = api.elapsed + 0.35;
       } else {
         const d = dirToward(bot, target.pos.x, target.pos.z);
         mx = d.x * 0.75;
@@ -734,6 +755,11 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
       }
     }
 
+    if (Math.hypot(mx, mz) > 0.08) {
+      smoothBotYaw(bot, Math.atan2(mx, mz), dt, 5.5);
+    } else {
+      smoothBotYaw(bot, yawTo, dt, 3.5);
+    }
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
     const inRange = bd >= minR * 0.7 && bd <= maxR * 1.25 + (wId === "sniper" ? 22 : 10);
@@ -743,7 +769,7 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     if (wantShoot && canShooterFire(bot, api.elapsed, state)) {
       const readyAt = bot._nextShotReady ?? 0;
       if (api.elapsed >= readyAt) {
-        bot.yaw = yawTo;
+        smoothBotYaw(bot, yawTo, dt, 12);
         api.fire(bot, bot.yaw);
         muzzleFlash(bot);
         const baseCd = (bot._shooterFireCd ?? 0.28) + fireDelay;
@@ -784,10 +810,19 @@ export function buildShooterEndResults(players, human, playStyle = "teams") {
 
   if (playStyle === "ffa") {
     const youWon = human && human === top;
-    let msg = `自由混戰結束！${top?.charDef?.name || "—"} 第一名（${topKills} 分）\n`;
-    msg += lines.join("\n");
-    if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分`;
-    return { won: youWon, msg, ranked, teamWin: null, humanRank, playStyle };
+    const shortTitle = `${top?.charDef?.name || "—"} 奪冠`;
+    const shortSub = `積分 ${topKills} · 你第 ${humanRank} 名（${humanKills} 分）`;
+    return {
+      won: youWon,
+      msg: shortSub,
+      shortTitle,
+      shortSub,
+      ranked,
+      teamWin: null,
+      humanRank,
+      playStyle,
+      teamKills,
+    };
   }
 
   let teamWin = null;
@@ -796,18 +831,35 @@ export function buildShooterEndResults(players, human, playStyle = "teams") {
   if (teamWin != null) {
     const wonTeam = SHOOTER_TEAMS[teamWin];
     const youWin = human && (human.teamId ?? 0) === teamWin;
-    let msg = `${wonTeam.name} 總分 ${teamKills[teamWin]} 獲勝！\n`;
-    msg += `紅隊 ${teamKills[0]} · 藍隊 ${teamKills[1]}\n`;
-    msg += lines.join("\n");
-    if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分${youWin ? " · 勝利隊伍！" : ""}`;
-    return { won: !!youWin, msg, ranked, teamWin, humanRank, playStyle };
+    const shortTitle = `${wonTeam.name} 獲勝`;
+    const shortSub = `紅 ${teamKills[0]} · 藍 ${teamKills[1]}${youWin ? " · 你在勝利隊" : ""}`;
+    return {
+      won: !!youWin,
+      msg: shortSub,
+      shortTitle,
+      shortSub,
+      ranked,
+      teamWin,
+      humanRank,
+      playStyle,
+      teamKills,
+    };
   }
 
   const youWon = human && human === top;
-  let msg = `時間到！${top?.charDef?.name || "—"} 第一名（${topKills} 分）\n`;
-  msg += lines.join("\n");
-  if (human) msg += `\n你：第 ${humanRank} 名 · ${humanKills} 分`;
-  return { won: youWon, msg, ranked, teamWin: null, humanRank, playStyle };
+  const shortTitle = "平手";
+  const shortSub = `最高 ${topKills} 分 · 你第 ${humanRank} 名`;
+  return {
+    won: youWon,
+    msg: shortSub,
+    shortTitle,
+    shortSub,
+    ranked,
+    teamWin: null,
+    humanRank,
+    playStyle,
+    teamKills,
+  };
 }
 
 export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {

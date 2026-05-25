@@ -115,25 +115,15 @@ export function bindShooterScoreboardUi(onToggle) {
 
   if (sbBtn) {
     sbBtn.onclick = null;
-    sbBtn.onpointerdown = null;
-    let touchHandled = false;
-    const onTouchEnd = (ev) => {
+    const toggle = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      touchHandled = true;
       openToggle(ev);
     };
-    sbBtn.addEventListener("pointerdown", (ev) => {
-      ev.stopPropagation();
-    }, { passive: true });
-    sbBtn.addEventListener("touchend", onTouchEnd, { passive: false });
-    sbBtn.addEventListener("click", (ev) => {
-      if (touchHandled) {
-        touchHandled = false;
-        return;
-      }
-      openToggle(ev);
-    });
+    sbBtn.addEventListener("pointerdown", (ev) => ev.stopPropagation(), { passive: true });
+    sbBtn.addEventListener("pointerup", toggle, { passive: false });
+    sbBtn.addEventListener("touchend", toggle, { passive: false });
+    sbBtn.addEventListener("click", toggle);
   }
   if (closeBtn) {
     closeBtn.onclick = forceClose;
