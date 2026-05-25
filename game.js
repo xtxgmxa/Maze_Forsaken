@@ -663,6 +663,11 @@ function initMenu() {
   document.getElementById("btnQuitMenu")?.addEventListener("click", () => returnToMenu());
   document.getElementById("btnSpectatePrev")?.addEventListener("click", () => cycleSpectate(-1));
   document.getElementById("btnSpectateNext")?.addEventListener("click", () => cycleSpectate(1));
+  bindShooterScoreboardUi((force) => {
+    if (!isShooterMode()) return;
+    if (force === false) showShooterScoreboard(false);
+    else showShooterScoreboard(!shooterScoreboardOpen);
+  });
   document.getElementById("btnCloseQuiz")?.addEventListener("click", () => closeMathQuiz());
   document.getElementById("btnRefreshQuiz")?.addEventListener("click", () => {
     if (activeQuiz) renderQuizQuestion(activeQuiz);
@@ -794,13 +799,21 @@ function getHumanSurvivor() {
 
 function isSpectating() {
   if (playAsKiller || gameMode === "versus" || gameState !== "play") return false;
-  if (isShooterMode()) return false;
   const human = getHumanSurvivor();
+  if (isShooterMode()) return !!(human && human._awaitingRespawn);
   return !!(human && human.caught);
 }
 
 function getSpectateTargets() {
+  if (isShooterMode()) {
+    const human = getHumanSurvivor();
+    return survivors.filter((s) => isShooterCombatActive(s) && s !== human);
+  }
   return getAliveSurvivors();
+}
+
+function isShooterCombatActive(p) {
+  return p && !isShooterPlayerDown(p);
 }
 
 function getCameraFocus() {
@@ -910,7 +923,7 @@ function getHumanFocus() {
   const human = getHumanSurvivor();
   if (human) {
     if (isShooterMode()) {
-      if (human._awaitingRespawn) return human;
+      if (human._awaitingRespawn) return null;
       if (isShooterPlayerDown(human)) return null;
       return human;
     }
@@ -925,7 +938,15 @@ function resolvePlayFocus() {
     return killers.find((k) => !k.isAI) || killers[0];
   }
   const human = getHumanSurvivor();
-  if (isShooterMode() && human) return human;
+  if (isShooterMode()) {
+    if (human?._awaitingRespawn) {
+      const watch = getCameraFocus();
+      if (watch) return watch;
+      return survivors.find((s) => isShooterCombatActive(s)) || human;
+    }
+    if (human && !isShooterPlayerDown(human)) return human;
+    return human || survivors.find((s) => isShooterCombatActive(s)) || survivors[0];
+  }
   return getCameraFocus() || human || survivors.find((s) => !s.caught) || survivors[0];
 }
 
@@ -1546,8 +1567,9 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   if (isShooterMode()) {
     playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
-    target._hitFlash = 0.28;
-    target._hitFlashColor = killer?.paintColor ?? 0xff4466;
+    target._hitFlash = headshot ? 0.48 : 0.4;
+    target._hitFlashColor = headshot ? 0xff2244 : 0xffffff;
+    target._hitFlashHead = !!headshot;
     spawnHitVfx(scene, target.pos.x, target.pos.z);
     if (killer && !killer.isAI) {
       showHitMarker();
@@ -1558,7 +1580,7 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   if (!target.isAI) {
     playSfx("hurt", 0.12);
-    target._hitFlash = 0.35;
+    if (!isShooterMode()) target._hitFlash = 0.35;
     if (killer?.pos) {
       const dx = target.pos.x - killer.pos.x;
       const dz = target.pos.z - killer.pos.z;
@@ -2029,6 +2051,16 @@ function syncShooterRespawnUi() {
   const deskBtn = document.getElementById("btnRespawn");
   if (touchBtn) touchBtn.hidden = !waiting || !isTouchUiEnabled();
   if (deskBtn) deskBtn.hidden = !waiting || isTouchUiEnabled();
+  if (waiting) {
+    const targets = getSpectateTargets();
+    if (targets.length) {
+      spectateIndex = Math.min(spectateIndex, targets.length - 1);
+      if (spectateIndex < 0) spectateIndex = 0;
+      const focus = targets[spectateIndex];
+      if (focus?.yaw != null) camYaw = focus.yaw;
+    }
+    syncSpectateUi();
+  }
 }
 
 function tryShooterRespawnInput() {
@@ -3592,13 +3624,19 @@ function updateEntity(p, dt, move) {
     if (p.mesh.scale.x !== 1) p.mesh.scale.set(1, 1, 1);
     if (p._hitFlash > 0) {
       p._hitFlash -= dt;
-      const flashCol = p._hitFlashColor ?? 0xff2244;
-      const pulse = 0.35 + (p._hitFlash / 0.35) * 0.55;
+      const maxFlash = p._hitFlashHead ? 0.48 : 0.4;
+      const flashCol = p._hitFlashColor ?? (p._hitFlashHead ? 0xff2244 : 0xffffff);
+      const t = Math.min(1, p._hitFlash / maxFlash);
+      const pulse = isShooterMode()
+        ? 1.1 + t * 3.2 + Math.sin(t * Math.PI) * 1.5
+        : 0.35 + t * 0.55;
       p.mesh.traverse((c) => {
         if (c === p.gunMesh) return;
-        if (c.material?.emissive) c.material.emissive.setHex(flashCol);
-        if (c.material?.emissiveIntensity != null) {
-          c.material.emissiveIntensity = isShooterMode() ? pulse : 0.6;
+        const mat = c.material;
+        if (!mat) return;
+        if (mat.emissive) mat.emissive.setHex(flashCol);
+        if (mat.emissiveIntensity != null) {
+          mat.emissiveIntensity = isShooterMode() ? pulse : 0.6;
         }
       });
     } else if (p.role === "survivor") {

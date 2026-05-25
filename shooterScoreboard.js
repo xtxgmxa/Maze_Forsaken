@@ -78,17 +78,14 @@ export function renderShooterScoreboard(players, human, playStyle = "teams") {
     const kd = st.deaths > 0 ? (st.kills / st.deaths).toFixed(1) : String(st.kills);
     const name = p.charDef?.name || (p.isAI ? "Bot" : "Player");
     const gun = getShooterWeapon(p.weaponId)?.name || "—";
-    const hp = Math.max(0, Math.round(p.hp ?? 0));
-    const you = p === human || (!p.isAI && human === p);
-    const dead = p.caught || hp <= 0;
-    const rowColor = ffa ? playerColorCss(p) : teamColorCss(p.teamId);
-    const teamLabel = mole
-      ? (p.isMole ? "內鬼" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—"))
-      : ffa ? "混戰" : (SHOOTER_TEAMS[p.teamId ?? 0]?.name ?? "—");
-    return `<tr class="${you ? "you" : ""} ${dead ? "dead" : ""}" style="--row-team:${rowColor}">
+    const you = p === human;
+    const dead = (p.hp ?? 0) <= 0 || p._shooterDowned;
+    const teamCss = p.teamId >= 0 ? teamColorCss(p.teamId) : playerColorCss(p);
+    const hp = Math.round(p.hp ?? 0);
+    const moleTag = p.isMole ? ' <span class="sb-mole">內鬼</span>' : "";
+    return `<tr class="${you ? "you" : ""} ${dead ? "dead" : ""}" style="--row-team:${teamCss}">
       <td>${i + 1}</td>
-      <td class="sb-name"><span class="sb-team-dot"></span>${you ? "▸ " : ""}${name}${p.isAI ? " <span class='sb-bot'>AI</span>" : ""}</td>
-      <td class="sb-team">${teamLabel}</td>
+      <td class="sb-name">${name}${p.isAI ? ' <span class="sb-bot">AI</span>' : ""}${moleTag}</td>
       <td><b>${st.kills}</b></td>
       <td>${st.deaths}</td>
       <td>${kd}</td>
@@ -110,21 +107,33 @@ export function bindShooterScoreboardUi(onToggle) {
     onToggle?.(false);
   };
 
+  const openToggle = (ev) => {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    onToggle?.();
+  };
+
   if (sbBtn) {
-    sbBtn.onpointerdown = null;
-    sbBtn.onpointerup = null;
-    sbBtn.onpointercancel = null;
     sbBtn.onclick = null;
-    const openToggle = (ev) => {
-      ev?.preventDefault?.();
-      ev?.stopPropagation?.();
-      onToggle?.();
+    sbBtn.onpointerdown = null;
+    let touchHandled = false;
+    const onTouchEnd = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      touchHandled = true;
+      openToggle(ev);
     };
-    if (document.body.classList.contains("touch-ui")) {
-      sbBtn.addEventListener("touchend", openToggle, { passive: false });
-    } else {
-      sbBtn.onclick = openToggle;
-    }
+    sbBtn.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+    }, { passive: true });
+    sbBtn.addEventListener("touchend", onTouchEnd, { passive: false });
+    sbBtn.addEventListener("click", (ev) => {
+      if (touchHandled) {
+        touchHandled = false;
+        return;
+      }
+      openToggle(ev);
+    });
   }
   if (closeBtn) {
     closeBtn.onclick = forceClose;
@@ -136,5 +145,6 @@ export function bindShooterScoreboardUi(onToggle) {
   }
   if (panel) {
     panel.onclick = (ev) => ev.stopPropagation();
+    panel.addEventListener("touchend", (ev) => ev.stopPropagation(), { passive: true });
   }
 }

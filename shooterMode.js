@@ -201,6 +201,8 @@ export function createShooterState(level = {}, playStyle = "teams") {
     moleRef: null,
     moleTeamId: 0,
     teamRoundScore: [0, 0],
+    /** 開局幾秒內 AI 不開火，先走位（無間道較不易暴露內鬼） */
+    aiWarmupUntil: ps === "mole" ? 22 : 12,
   };
 }
 
@@ -235,8 +237,13 @@ export function respawnShooterPlayer(p, ctx, maze, players) {
   }
 }
 
+function isShooterCombatActive(p) {
+  return p && !p._shooterDowned && !p._awaitingRespawn && (p.hp ?? 0) > 0;
+}
+
 export function canShooterFire(p, elapsed, state = null) {
   if (p.isMole && isShooterMoleMode(state) && !state.moleCanShoot) return false;
+  if (state && p.isAI && elapsed < (state.aiWarmupUntil ?? 10)) return false;
   return (p._shootCd ?? 0) <= elapsed && !p._shooterDowned && !p._awaitingRespawn
     && (p.hp ?? 0) > 0 && !(p._respawnUntil > elapsed);
 }
@@ -563,10 +570,34 @@ export function getShooterKillAnnounce(killer, victim, human) {
 }
 
 function pickShooterBotTarget(bot, players, style, state) {
+  const moleMode = isShooterMoleMode(state) || style === "mole";
+
+  if (bot.isMole && moleMode && state?.moleCanShoot) {
+    let bestMate = null;
+    let bestScore = Infinity;
+    for (const other of players) {
+      if (other === bot || !isSameShooterTeam(bot, other) || !isShooterCombatActive(other)) continue;
+      const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
+      let witnesses = 0;
+      for (const w of players) {
+        if (w === bot || w === other || !isShooterCombatActive(w)) continue;
+        if (isSameShooterTeam(w, bot)) continue;
+        if (Math.hypot(w.pos.x - bot.pos.x, w.pos.z - bot.pos.z) < 16) witnesses += 1;
+      }
+      const score = d + witnesses * 30;
+      if (score < bestScore) {
+        bestScore = score;
+        bestMate = other;
+      }
+    }
+    if (bestMate && bestScore < 24) return bestMate;
+  }
+
   let target = null;
   let best = Infinity;
   for (const other of players) {
     if (!isShooterEnemy(bot, other, style, state)) continue;
+    if (!isShooterCombatActive(other)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
     if (d < best) {
       best = d;
@@ -609,9 +640,22 @@ function dirToward(bot, tx, tz) {
 
 export function updateShooterBots(dt, players, ctx, maze, state, api) {
   const style = state.playStyle ?? "teams";
+  const moleMode = isShooterMoleMode(state) || style === "mole";
+  const warmupUntil = state.aiWarmupUntil ?? 10;
+  const inWarmup = api.elapsed < warmupUntil;
   for (const bot of players) {
     if (!bot.isAI || bot._shooterDowned || bot._awaitingRespawn || (bot.hp ?? 0) <= 0) continue;
     if (bot._respawnUntil > api.elapsed) continue;
+
+    if (inWarmup) {
+      const roam = pickShooterRoamCell(ctx, maze, bot, players);
+      const step = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, roam.x, roam.z) || roam;
+      const d = dirToward(bot, step.x, step.z);
+      bot.yaw = Math.atan2(d.x, d.z);
+      api.moveEntity(bot, dt, { x: d.x * 0.85, z: d.z * 0.85, sprint: Math.random() < 0.12 });
+      if (d.len < 1.2) bot._shooterHuntRefresh = 0;
+      continue;
+    }
 
     const lx = bot._shooterLastX ?? bot.pos.x;
     const lz = bot._shooterLastZ ?? bot.pos.z;
@@ -673,31 +717,39 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
         sprint = bd > 18;
       }
     } else if (bd < minR) {
-      mx = -fwd.x * 0.75;
-      mz = -fwd.z * 0.75;
-      if (Math.random() < 0.2) {
-        const s = Math.sin(api.elapsed * 2.5) > 0 ? 1 : -1;
-        mx += right.x * s * 0.18;
-        mz += right.z * s * 0.18;
-      }
+      const back = 0.82;
+      const strafe = Math.sin(api.elapsed * 3.1 + bot.pos.x * 0.2) > 0 ? 1 : -1;
+      mx = -fwd.x * back + right.x * strafe * 0.55;
+      mz = -fwd.z * back + right.z * strafe * 0.55;
+      sprint = bd < minR * 0.65;
     } else {
-      mx = fwd.x * 0.22;
-      mz = fwd.z * 0.22;
-      if (Math.random() < 0.35) {
-        const s = Math.sin(api.elapsed * 1.8 + bot.pos.x) > 0 ? 1 : -1;
-        mx += right.x * s * 0.28;
-        mz += right.z * s * 0.28;
+      const strafe = Math.sin(api.elapsed * 2.6 + bot.pos.z * 0.15) > 0 ? 1 : -1;
+      const press = bd > ideal * 1.05 ? 0.62 : 0.38;
+      mx = fwd.x * press + right.x * strafe * 0.8;
+      mz = fwd.z * press + right.z * strafe * 0.8;
+      sprint = bd > ideal * 0.85 || Math.random() < 0.07;
+      if (Math.random() < 0.01 && (bot.onGround || (bot._jumpY ?? 0) <= 0.1)) {
+        bot.velY = 13 + Math.random() * 5;
+        bot.onGround = false;
       }
     }
 
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
-    const canShoot = bd >= minR * 0.75 && bd <= maxR * 1.2 + (wId === "sniper" ? 20 : 8);
-    if (canShoot && bd < 40 && canShooterFire(bot, api.elapsed, state)) {
-      bot.yaw = yawTo;
-      api.fire(bot, bot.yaw);
-      muzzleFlash(bot);
-      bot._shootCd = api.elapsed + (bot._shooterFireCd ?? 0.25);
+    const inRange = bd >= minR * 0.7 && bd <= maxR * 1.25 + (wId === "sniper" ? 22 : 10);
+    const wantShoot = inRange && bd < 42;
+    const moleSnipe = bot.isMole && moleMode && state?.moleCanShoot && isSameShooterTeam(bot, target);
+    const fireDelay = moleSnipe ? 0.55 : wId === "sniper" ? 0.45 : 0.28;
+    if (wantShoot && canShooterFire(bot, api.elapsed, state)) {
+      const readyAt = bot._nextShotReady ?? 0;
+      if (api.elapsed >= readyAt) {
+        bot.yaw = yawTo;
+        api.fire(bot, bot.yaw);
+        muzzleFlash(bot);
+        const baseCd = (bot._shooterFireCd ?? 0.28) + fireDelay;
+        bot._shootCd = api.elapsed + baseCd * (0.85 + Math.random() * 0.45);
+        bot._nextShotReady = bot._shootCd + 0.15 + Math.random() * 0.35;
+      }
     }
   }
 }

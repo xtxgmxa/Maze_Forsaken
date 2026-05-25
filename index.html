@@ -1192,10 +1192,11 @@
     }
     body.touch-ui.shooter-play.shooter-awaiting-respawn #btnTouchRespawn {
       position: fixed;
-      left: 50%;
-      bottom: max(108px, calc(100px + env(safe-area-inset-bottom, 0px)));
-      transform: translateX(-50%);
-      min-width: 120px;
+      left: auto;
+      right: max(10px, calc(8px + env(safe-area-inset-right, 0px)));
+      bottom: max(72px, calc(68px + env(safe-area-inset-bottom, 0px)));
+      transform: none;
+      min-width: 96px;
       height: 40px;
       padding: 0 20px;
       border-radius: 10px;
@@ -1223,16 +1224,16 @@
     }
     body.touch-ui.shooter-play #minimap-wrap {
       pointer-events: auto;
-      z-index: 94;
+      z-index: 96;
     }
     body.touch-ui.shooter-play #btnTouchScoreboard {
       display: flex;
-      position: static;
+      position: relative;
       width: 100%;
       min-width: 52px;
       height: 28px;
       margin: 0;
-      z-index: 1;
+      z-index: 2;
       border-radius: 6px;
       border: 1px solid rgba(102, 255, 204, 0.45);
       background: rgba(12, 20, 36, 0.88);
@@ -1280,8 +1281,12 @@
       top: max(44px, calc(40px + env(safe-area-inset-top, 0px)));
       right: max(4px, calc(4px + env(safe-area-inset-right, 0px)));
       left: auto;
-      z-index: 22;
+      z-index: 96;
       padding: 2px 4px;
+      pointer-events: auto;
+    }
+    body.shooter-awaiting-respawn.spectating #spectateBanner {
+      bottom: max(124px, calc(118px + env(safe-area-inset-bottom, 0px)));
     }
     body.touch-ui.shooter-play #minimap { width: 56px; height: 56px; }
     body.touch-ui.shooter-play #btnHudPause {
