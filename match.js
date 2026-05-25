@@ -55,9 +55,19 @@ export function spawnMatch({
   };
 
   if (gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter") {
-    addSurvivor(selectedChar, "p1", true, 0, 0);
+    const localProfiles = ["p1", "p2", "p3", "p4"];
+    const localChars = [selectedChar, selectedChar2, survivorRoster[2], survivorRoster[3]];
+    const couchLocals = gameMode === "shooter" && numSurvivors >= 2 && numSurvivors <= 4
+      ? numSurvivors
+      : 1;
+    for (let li = 0; li < couchLocals; li++) {
+      const def = localChars[li] || survivorRoster[li % survivorRoster.length];
+      const gx = 1 + ((li * 4) % Math.max(2, ctx.w - 2));
+      const gz = 1 + ((li * 3) % Math.max(2, ctx.h - 2));
+      addSurvivor(def, localProfiles[li], true, gx, gz);
+    }
     const botTarget = gameMode === "shooter"
-      ? Math.max(3, Math.min(12, numSurvivors))
+      ? Math.max(couchLocals >= 2 ? couchLocals : 3, Math.min(12, numSurvivors))
       : Math.max(1, Math.min(numSurvivors, survivorRoster.length));
     let guard = 0;
     while (survivors.length < botTarget && guard < 500) {

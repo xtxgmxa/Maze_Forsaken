@@ -289,7 +289,7 @@ export function updateTouchSkillLabels(abilities = []) {
   }
 }
 
-/** 靠近任務站時高亮技2，不再另顯浮動「解任務」鈕 */
+/** 靠近任務站時高亮技2；解題闖關高亮「解題」鈕 */
 export function setTouchMissionHighlight(active) {
   missionHighlight = !!active;
   const ab2 = document.getElementById("touchAb2");
@@ -297,6 +297,28 @@ export function setTouchMissionHighlight(active) {
   const touchOpen = document.getElementById("touchOpen");
   if (touchOpen) touchOpen.classList.toggle("mission-ready", missionHighlight);
   getCtx().updateTouchSkillLabels?.();
+}
+
+/** 解題闖關：頂部橫幅 + 浮動解題鈕 */
+export function setTouchPuzzleHighlight(active, label = "") {
+  const banner = document.getElementById("touchMissionBanner");
+  const btn = document.getElementById("btnTouchMission");
+  const touchOpen = document.getElementById("touchOpen");
+  if (banner) {
+    banner.hidden = !active;
+    if (active) {
+      banner.textContent = label || "靠近 ? 門 · 點右下「解題」按鈕開始答題";
+    }
+  }
+  if (btn) {
+    btn.hidden = !active;
+    if (active) btn.textContent = "🔐 解題";
+  }
+  if (touchOpen) touchOpen.classList.toggle("mission-ready", !!active);
+  if (touchOpen && active) {
+    const nm = touchOpen.querySelector(".touch-skill-name");
+    if (nm) nm.textContent = "解題";
+  }
 }
 
 export function updateTouchAbilityCooldowns(slots = []) {

@@ -76,8 +76,9 @@ import {
   initTouchControls, touchControlsTick, consumeTouchLook, isTouchUiEnabled, applyMobileCameraDefaults, updateTouchGunHighlight,
   syncTouchButtonBindings, updateTouchSkillLabels, updateTouchAbilityCooldowns,
   syncFullscreenButtonLabel, setTouchMissionHighlight, openMobileSettingsPanel,
-  updateTouchAttackVisibility, bindMobileAudioElement,
+  updateTouchAttackVisibility, bindMobileAudioElement, setTouchPuzzleHighlight,
 } from "./touchControls.js";
+import { tickGamepadHud, hideGamepadHud } from "./gamepadHud.js";
 import {
   assignPaintColor, spawnPaintSplat, spawnPaintAtHit, spawnPaintFromAim, spawnPaintOnBody, clearPaintSplats,
 } from "./paintballSplats.js";
@@ -195,7 +196,7 @@ let playAsKiller = false;
 let gameState = "menu";
 let nearMissionStation = null;
 
-let renderer, scene, camera, camera2;
+let renderer, scene, camera, camera2, camera3, camera4;
 const COOP_SPLIT_GAP = 5;
 const DOUBLE_JUMP_RECHARGE = 8;
 let ctx, maze, exitPos, exitGroup;
@@ -287,7 +288,7 @@ function updateCrosshair() {
     (playAsKiller || gameMode === "versus") &&
     keyDown(keys, prof, "slide")
   );
-  const shooterAim = isShooterMode() && gameState === "play";
+  const shooterAim = isShooterMode() && gameState === "play" && !isShooterSplitView();
   ch.classList.toggle("show", killerAim || shooterAim);
   const human = getHumanSurvivor();
   const sniper = shooterAim && getShooterWeapon(human?.weaponId)?.id === "sniper";
@@ -386,10 +387,10 @@ function getKillerAITarget(k) {
     const d = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
     candidates.push({ entity: s, x: s.pos.x, z: s.pos.z, d, isClone: false });
     if (s.cloneMesh && (s._cloneUntil ?? 0) > elapsed) {
-      const cx = s.cloneMesh.position.x;
-      const cz = s.cloneMesh.position.z;
+      const cx = s._clonePos?.x ?? s.cloneMesh.position.x;
+      const cz = s._clonePos?.z ?? s.cloneMesh.position.z;
       const dc = Math.hypot(cx - k.pos.x, cz - k.pos.z);
-      candidates.push({ entity: s, x: cx, z: cz, d: dc * 0.82, isClone: true });
+      candidates.push({ entity: s, x: cx, z: cz, d: dc * 0.68, isClone: true });
     }
   }
   candidates.sort((a, b) => a.d - b.d);
@@ -456,7 +457,9 @@ function syncPlayerCountOptions() {
   for (let i = 1; i <= maxS; i++) {
     const opt = document.createElement("option");
     opt.value = String(i);
-    opt.textContent = isSh && i >= 9 ? `${i} 人（較吃效能）` : String(i);
+    if (isSh && i <= 4) opt.textContent = `${i} 人${i >= 2 ? "（同機分割·手把②~④）" : ""}`;
+    else if (isSh && i >= 9) opt.textContent = `${i} 人（較吃效能）`;
+    else opt.textContent = String(i);
     ns.appendChild(opt);
   }
   ns.value = String(isSh ? Math.max(6, cur) : cur);
@@ -675,6 +678,18 @@ function initMenu() {
   document.getElementById("btnQuitMenu")?.addEventListener("click", () => returnToMenu());
   document.getElementById("btnSpectatePrev")?.addEventListener("click", () => cycleSpectate(-1));
   document.getElementById("btnSpectateNext")?.addEventListener("click", () => cycleSpectate(1));
+  document.getElementById("btnTouchMission")?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (nearPuzzleDoor && isPuzzleDoorMode()) openMathQuiz(nearPuzzleDoor);
+    else if (nearMissionStation) openMathQuiz(nearMissionStation);
+  });
+  document.getElementById("btnTouchMission")?.addEventListener("touchend", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (nearPuzzleDoor && isPuzzleDoorMode()) openMathQuiz(nearPuzzleDoor);
+    else if (nearMissionStation) openMathQuiz(nearMissionStation);
+  });
   bindShooterScoreboardUi((force) => {
     if (!isShooterMode()) return;
     if (force === false) showShooterScoreboard(false);
@@ -877,13 +892,79 @@ function syncSpectateUi() {
 }
 
 function getNearestKiller(s) {
+  const pos = s?.pos ?? s;
   let best = null;
   let bestD = Infinity;
   for (const k of killers) {
-    const d = Math.hypot(s.pos.x - k.pos.x, s.pos.z - k.pos.z);
+    const d = Math.hypot(pos.x - k.pos.x, pos.z - k.pos.z);
     if (d < bestD) { bestD = d; best = k; }
   }
   return { killer: best, dist: bestD };
+}
+
+/** 007n7 等分身：獨立走位引開獵人 */
+function tickCloneDecoy(p, dt) {
+  if (!p.cloneMesh || !p._clonePos || (p._cloneUntil ?? 0) <= elapsed) return;
+
+  p._cloneAiT = (p._cloneAiT ?? 0) - dt;
+  const { killer, dist: kDist } = getNearestKiller({ pos: p._clonePos });
+  let mx = 0;
+  let mz = 0;
+  const mapScale = getMapMoveScale();
+  const speed = SPRINT_SPEED * 0.88 * mapScale;
+
+  if (killer && kDist < 24) {
+    const dx = p._clonePos.x - killer.pos.x;
+    const dz = p._clonePos.z - killer.pos.z;
+    const len = Math.hypot(dx, dz) || 1;
+    mx = dx / len;
+    mz = dz / len;
+    if (kDist < 10) {
+      const strafe = Math.sin(elapsed * 3.8 + p._clonePos.x * 0.1) > 0 ? 1 : -1;
+      const yaw = Math.atan2(mx, mz);
+      mx = mx * 0.55 + Math.cos(yaw) * strafe * 0.45;
+      mz = mz * 0.55 - Math.sin(yaw) * strafe * 0.45;
+    }
+  } else {
+    if (p._cloneAiT <= 0) {
+      p._cloneAiT = 0.6 + Math.random() * 1.4;
+      const away = Math.atan2(p._clonePos.x - p.pos.x, p._clonePos.z - p.pos.z);
+      p._cloneWanderYaw = away + (Math.random() - 0.5) * 1.6;
+    }
+    mx = Math.sin(p._cloneWanderYaw);
+    mz = Math.cos(p._cloneWanderYaw);
+  }
+
+  const pdx = p._clonePos.x - p.pos.x;
+  const pdz = p._clonePos.z - p.pos.z;
+  const pd = Math.hypot(pdx, pdz);
+  if (pd < 7) {
+    mx += (pdx / (pd || 1)) * 0.55;
+    mz += (pdz / (pd || 1)) * 0.55;
+  }
+
+  const mlen = Math.hypot(mx, mz) || 1;
+  mx /= mlen;
+  mz /= mlen;
+  p._cloneYaw = Math.atan2(mx, mz);
+  playerMove(p._clonePos, mx * speed, mz * speed, dt, 0, 0);
+
+  const cy = worldHeight({ pos: p._clonePos, elev: 0, _jumpY: 0 });
+  p.cloneMesh.position.set(p._clonePos.x, cy, p._clonePos.z);
+  p.cloneMesh.rotation.y = p._cloneYaw;
+  p.cloneMesh.visible = true;
+
+  const proxy = {
+    mesh: p.cloneMesh,
+    vel: { x: mx * speed, z: mz * speed },
+    yaw: p._cloneYaw,
+    role: "survivor",
+    onGround: true,
+    _jumpY: 0,
+    sliding: false,
+    attackState: null,
+  };
+  applyLocomotionAnim(proxy, dt);
 }
 
 function aiSurvivorIndex(s) {
@@ -990,6 +1071,7 @@ function returnToMenu() {
   document.exitPointerLock?.();
   clearVfxPool();
   clearShooterTeamMarkers(survivors);
+  hideGamepadHud();
   document.getElementById("hudEscHint")?.classList.remove("show");
   document.body.classList.remove(
     "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui", "scoreboard-open"
@@ -1326,31 +1408,33 @@ function applyShooterAutoAim(p, baseYaw) {
   return best ?? baseYaw;
 }
 
-function getShooterAimDir() {
-  let baseYaw = camYaw;
-  if (camera) {
+function getShooterAimDirForPlayer(p) {
+  const human = p || getHumanSurvivor();
+  const { yaw, pitch } = getPlayerCamAngles(human);
+  let baseYaw = yaw;
+  if (human === getHumanSurvivor() && camera && !isShooterSplitView()) {
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
     baseYaw = Math.atan2(dir.x, dir.z);
     if (!isTouchUiEnabled() || !shooterSettings.autoAim) return dir.normalize();
   }
-  const human = getHumanSurvivor();
-  if (human && isShooterMode()) {
+  if (human && isShooterMode() && isTouchUiEnabled() && shooterSettings.autoAim) {
     const aimYaw = applyShooterAutoAim(human, baseYaw);
     if (aimYaw !== baseYaw) {
-      const cosP = Math.cos(camPitch);
+      const cosP = Math.cos(pitch);
       return new THREE.Vector3(
-        Math.sin(aimYaw) * cosP, Math.sin(camPitch), Math.cos(aimYaw) * cosP
+        Math.sin(aimYaw) * cosP, Math.sin(pitch), Math.cos(aimYaw) * cosP
       ).normalize();
     }
   }
-  if (!camera) {
-    const cosP = Math.cos(camPitch);
-    return new THREE.Vector3(Math.sin(camYaw) * cosP, Math.sin(camPitch), Math.cos(camYaw) * cosP).normalize();
-  }
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  return dir.normalize();
+  const cosP = Math.cos(pitch);
+  return new THREE.Vector3(
+    Math.sin(baseYaw) * cosP, Math.sin(pitch), Math.cos(baseYaw) * cosP
+  ).normalize();
+}
+
+function getShooterAimDir() {
+  return getShooterAimDirForPlayer(getHumanSurvivor());
 }
 
 function syncShooterPlayerVisibility() {
@@ -1807,10 +1891,38 @@ function refreshGameplayHints() {
 }
 
 function applyGamepadCamera(dt) {
-  if (!isGamepadConnected() || gameState !== "play" || isCoopSplitView()) return;
+  if (!isGamepadConnected() || gameState !== "play") return;
+  const sens = 2.4 * dt;
+  const inv = shooterSettings.invertY ? -1 : 1;
+
+  if (isShooterSplitView()) {
+    const locals = getLocalHumanPlayers();
+    locals.forEach((p, i) => {
+      const gp = pollGamepad(i);
+      if (!gp?.lookX && !gp?.lookY) return;
+      const { yaw, pitch } = getPlayerCamAngles(p);
+      const ny = yaw - gp.lookX * sens;
+      const np = Math.max(
+        isShooterMode() ? SHOOTER_PITCH_MIN : CAM_PITCH_MIN,
+        Math.min(isShooterMode() ? SHOOTER_PITCH_MAX : CAM_PITCH_MAX, pitch + gp.lookY * sens * inv)
+      );
+      if (p.profile === "p1") {
+        if (!isTouchUiEnabled() || i > 0) {
+          camYaw = ny;
+          camPitch = np;
+        }
+      } else {
+        p._camYaw = ny;
+        p._camPitch = np;
+        p.yaw = ny;
+      }
+    });
+    return;
+  }
+
+  if (isCoopSplitView()) return;
   const gp = pollGamepad(0);
   if (!gp?.lookX && !gp?.lookY) return;
-  const sens = 2.4 * dt;
   camYaw -= gp.lookX * sens;
   applyLookPitch(gp.lookY, sens);
 }
@@ -2208,8 +2320,11 @@ function canUseAirJump(p) {
 
 function tryShooterFire(p) {
   if (!p || !isShooterMode() || !canShooterFire(p, elapsed, shooterState)) return;
-  if (camera) updateCameraForPlayer(camera, p, camYaw, camPitch);
-  const aimDir = getShooterAimDir();
+  const { yaw, pitch } = getPlayerCamAngles(p);
+  if (camera && p.profile === "p1" && !isShooterSplitView()) {
+    updateCameraForPlayer(camera, p, yaw, pitch);
+  }
+  const aimDir = getShooterAimDirForPlayer(p);
   p._lastFireDir = aimDir.clone();
   const yaw = Math.atan2(aimDir.x, aimDir.z);
   const eyeY = 1.52 + worldHeight(p);
@@ -2362,9 +2477,17 @@ const gameApi = {
   spawnClone(p) {
     if (p.cloneMesh) scene.remove(p.cloneMesh);
     p.cloneMesh = buildForsakenCharacter(p.charDef);
-    p.cloneMesh.position.set(p.pos.x + 2.8, worldHeight(p), p.pos.z + 1.2);
+    const ox = p.pos.x + Math.sin((p.yaw ?? 0) + 0.6) * 3.2;
+    const oz = p.pos.z + Math.cos((p.yaw ?? 0) + 0.6) * 3.2;
+    p._clonePos = { x: ox, z: oz };
+    p._cloneVel = { x: 0, z: 0 };
+    p._cloneYaw = p.yaw ?? 0;
+    p._cloneAiT = 0;
+    p._cloneWanderYaw = (p.yaw ?? 0) + Math.PI * 0.5;
+    p.cloneMesh.position.set(ox, worldHeight({ pos: p._clonePos, elev: 0, _jumpY: 0 }), oz);
     scene.add(p.cloneMesh);
     p._cloneUntil = elapsed + 8;
+    if (!p.isAI) showToast("分身出動！會跑開引開獵人", 900);
   },
   healNearby(p, range) {
     for (const s of survivors) {
@@ -2822,6 +2945,19 @@ async function runStartGame() {
         ? "自由混戰（每人不同色）"
         : `${SHOOTER_TEAMS[humanShooter.teamId ?? 0]?.name || "隊伍"} · 同色環＝隊友`;
       showToast(`你屬於：${teamLine} · 誤射隊友會立刻淘汰`, 3600);
+    }
+    const locals = getLocalHumanPlayers();
+    if (locals.length >= 2) {
+      for (const lp of locals) {
+        if (lp.profile !== "p1") {
+          lp._camYaw = lp.yaw ?? Math.PI;
+          lp._camPitch = 0;
+        }
+      }
+      showToast(
+        `${locals.length}P 分割畫面：P1 鍵鼠／手把① · P2~P${locals.length} 手把②~④ · RT 開火`,
+        4200
+      );
     }
     syncShooterRespawnUi();
     bindShooterRespawnUi();
@@ -3349,7 +3485,7 @@ function setupInput() {
     const W = window.innerWidth;
     const H = window.innerHeight;
     renderer.setSize(W, H);
-    if (!isCoopSplitView()) {
+    if (!isSplitScreenView()) {
       camera.aspect = W / H;
       camera.updateProjectionMatrix();
     }
@@ -3437,7 +3573,7 @@ function handleAbilityKeys(code, down) {
     }
   };
   const survivorModes = new Set([
-    "solo", "coop", "versus", "mob", "hardcore", "practice",
+    "solo", "classic", "coop", "versus", "mob", "hardcore", "practice",
   ]);
   for (const s of survivors) {
     if (!s.isAI && !s.caught && !playAsKiller && survivorModes.has(gameMode)) {
@@ -3504,7 +3640,10 @@ function updatePuzzleDoorProximity() {
   if (!isPuzzleDoorMode() || !puzzleDoorState || playAsKiller || activeQuiz) {
     const hint = document.getElementById("missionInteractHint");
     if (hint && isPuzzleDoorMode()) hint.style.display = "none";
-    if (isTouchUiEnabled()) setTouchMissionHighlight(false);
+    if (isTouchUiEnabled()) {
+      setTouchMissionHighlight(false);
+      setTouchPuzzleHighlight(false);
+    }
     return;
   }
   const p = getHumanFocus();
@@ -3530,7 +3669,11 @@ function updatePuzzleDoorProximity() {
     }
   }
   if (isTouchUiEnabled()) {
-    setTouchMissionHighlight(!!nearPuzzleDoor);
+    setTouchPuzzleHighlight(
+      !!nearPuzzleDoor,
+      nearPuzzleDoor ? `謎題門 #${nearPuzzleDoor.label} · 點右下「解題」` : ""
+    );
+    setTouchMissionHighlight(false);
   }
 }
 
@@ -3754,11 +3897,9 @@ function updateEntity(p, dt, move) {
       if ((p._cloneUntil ?? 0) <= elapsed) {
         scene.remove(p.cloneMesh);
         p.cloneMesh = null;
+        p._clonePos = null;
       } else {
-        p.cloneMesh.visible = true;
-        p.cloneMesh.position.x += (p.pos.x + 2.8 - p.cloneMesh.position.x) * dt * 0.55;
-        p.cloneMesh.position.z += (p.pos.z + 1.2 - p.cloneMesh.position.z) * dt * 0.55;
-        p.cloneMesh.position.y = worldHeight(p);
+        tickCloneDecoy(p, dt);
       }
     }
     const invisible = p.effects.invisible > 0;
@@ -3954,13 +4095,18 @@ function updateSurvivors(dt) {
     if (isShooterMode() && isShooterPlayerDown(s)) return;
     const profile = s.profile;
     const gp = profile === "p1" ? gp0 : gp1;
-    const useCam = profile === "p1" || gameMode === "coop";
-    const move = getMoveFromProfile(profile, useCam ? camYaw : s.yaw, gp);
+    const useCam = profile === "p1" || gameMode === "coop" || isShooterSplitView();
+    const { yaw: moveYaw } = getPlayerCamAngles(s);
+    const move = getMoveFromProfile(profile, useCam ? moveYaw : s.yaw, gp);
     if (!s._gpPrev) s._gpPrev = {};
     const missionLock = (nearMissionStation || nearPuzzleDoor) && !activeQuiz && !playAsKiller;
     if (!s.isAI) {
       const ctrlProfile = playAsKiller && s.profile === "p1" ? "p1" : profile;
-      if (isKeyHuntMode()) {
+      if (isShooterMode() && gp) {
+        const shootBtn = gp.sprint || gp.confirm;
+        if (shootBtn && !s._gpShootHeld) tryShooterFire(s);
+        s._gpShootHeld = !!shootBtn;
+      } else if (isKeyHuntMode()) {
         if (gp?.openDoor && !s._gpOpenDoor) {
           s._gpOpenDoor = true;
           tryOpenDoorInput();
@@ -4088,6 +4234,10 @@ function updateOneKiller(k, dt) {
   k._aiAtkCd = (k._aiAtkCd ?? 0) - dt;
   if (!chase.isClone && toSurvivor < KILLER_MELEE_RANGE + 0.5) {
     tryKillerMeleeAttack(k, target, KILLER_MELEE_DAMAGE);
+  } else if (chase.isClone && toChase < 2.8 && k._aiAtkCd <= 0) {
+    k._aiAtkCd = perfTier === "low" ? 0.9 : 0.55;
+    playSfx("swing_wind", 0.05);
+    spawnHitVfx(scene, chaseX, chaseZ);
   } else if (toSurvivor < 12 && k._aiAtkCd <= 0) {
     k._aiAtkCd = perfTier === "low" ? 0.85 : 0.55;
     const slot = toSurvivor < 6 ? 0 : toSurvivor < 10 ? 1 : 2;
@@ -4222,8 +4372,37 @@ function isCoopSplitView() {
   return gameMode === "coop" && !playAsKiller && gameState === "play" && !isSpectating();
 }
 
+function getLocalHumanPlayers() {
+  return survivors.filter((s) => !s.isAI && ["p1", "p2", "p3", "p4"].includes(s.profile));
+}
+
+function isShooterSplitView() {
+  return isShooterMode() && gameState === "play" && !isSpectating() && getLocalHumanPlayers().length >= 2;
+}
+
+function isSplitScreenView() {
+  return isCoopSplitView() || isShooterSplitView();
+}
+
+function getSplitGamepadSlots() {
+  if (isShooterSplitView()) return getLocalHumanPlayers().length;
+  if (isCoopSplitView()) return 2;
+  return isGamepadConnected() ? 1 : 0;
+}
+
 function ensureCoopCamera() {
   if (!camera2) camera2 = new THREE.PerspectiveCamera(68, 1, 0.1, 150);
+}
+
+function ensureSplitCameras(n = 4) {
+  ensureCoopCamera();
+  if (n >= 3 && !camera3) camera3 = new THREE.PerspectiveCamera(68, 1, 0.1, 150);
+  if (n >= 4 && !camera4) camera4 = new THREE.PerspectiveCamera(68, 1, 0.1, 150);
+}
+
+function getPlayerCamAngles(p) {
+  if (!p || p.profile === "p1") return { yaw: camYaw, pitch: camPitch };
+  return { yaw: p._camYaw ?? p.yaw ?? 0, pitch: p._camPitch ?? 0 };
 }
 
 function updateCameraForPlayer(cam, focus, yaw, pitch) {
@@ -4272,10 +4451,83 @@ function snapCameraToPlayer() {
 }
 
 function updateCamera() {
-  if (isCoopSplitView()) return;
+  if (isSplitScreenView()) return;
   const focus = getCameraFocus();
   if (!focus || !camera) return;
-  updateCameraForPlayer(camera, focus, camYaw, camPitch);
+  const { yaw, pitch } = getPlayerCamAngles(focus);
+  updateCameraForPlayer(camera, focus, yaw, pitch);
+}
+
+function renderShooterSplitView(W, H) {
+  const locals = getLocalHumanPlayers();
+  const line = document.getElementById("coopSplitLine");
+  if (locals.length < 2) {
+    if (line) line.style.display = "none";
+    renderer.setScissorTest(false);
+    updateCamera();
+    renderer.setViewport(0, 0, W, H);
+    renderer.render(scene, camera);
+    return;
+  }
+  ensureSplitCameras(locals.length);
+  const bg = scene.background?.isColor ? scene.background.getHex() : 0x1a1228;
+  const cams = [camera, camera2, camera3, camera4];
+  renderer.setScissorTest(true);
+
+  if (locals.length === 2) {
+    if (line) line.style.display = "block";
+    const halfW = Math.floor((W - COOP_SPLIT_GAP) / 2);
+    const rightW = W - halfW - COOP_SPLIT_GAP;
+    const [p1, p2] = locals;
+    const a1 = getPlayerCamAngles(p1);
+    const a2 = getPlayerCamAngles(p2);
+    updateCameraForPlayer(camera, p1, a1.yaw, a1.pitch);
+    camera.aspect = halfW / H;
+    camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, halfW, H);
+    renderer.setScissor(0, 0, halfW, H);
+    renderer.setClearColor(bg);
+    renderer.clear(true, true, true);
+    renderer.render(scene, camera);
+    renderer.setViewport(halfW, 0, COOP_SPLIT_GAP, H);
+    renderer.setScissor(halfW, 0, COOP_SPLIT_GAP, H);
+    renderer.setClearColor(0x000000);
+    renderer.clear(true, true, true);
+    updateCameraForPlayer(camera2, p2, a2.yaw, a2.pitch);
+    camera2.aspect = rightW / H;
+    camera2.updateProjectionMatrix();
+    const x0 = halfW + COOP_SPLIT_GAP;
+    renderer.setViewport(x0, 0, rightW, H);
+    renderer.setScissor(x0, 0, rightW, H);
+    renderer.setClearColor(bg);
+    renderer.clear(true, true, true);
+    renderer.render(scene, camera2);
+  } else {
+    if (line) line.style.display = "none";
+    const halfW = Math.floor(W / 2);
+    const halfH = Math.floor(H / 2);
+    const slots = [
+      { x: 0, y: halfH, w: halfW, h: halfH },
+      { x: halfW, y: halfH, w: W - halfW, h: halfH },
+      { x: 0, y: 0, w: halfW, h: halfH },
+      { x: halfW, y: 0, w: W - halfW, h: halfH },
+    ];
+    for (let i = 0; i < locals.length && i < 4; i++) {
+      const p = locals[i];
+      const cam = cams[i];
+      const ang = getPlayerCamAngles(p);
+      updateCameraForPlayer(cam, p, ang.yaw, ang.pitch);
+      const s = slots[i];
+      cam.aspect = s.w / s.h;
+      cam.updateProjectionMatrix();
+      renderer.setViewport(s.x, s.y, s.w, s.h);
+      renderer.setScissor(s.x, s.y, s.w, s.h);
+      renderer.setClearColor(bg);
+      renderer.clear(true, true, true);
+      renderer.render(scene, cam);
+    }
+  }
+  renderer.setScissorTest(false);
 }
 
 function renderGameView() {
@@ -4283,6 +4535,13 @@ function renderGameView() {
   const W = window.innerWidth;
   const H = window.innerHeight;
   const line = document.getElementById("coopSplitLine");
+
+  if (isShooterSplitView()) {
+    document.body.classList.toggle("split-2p", getLocalHumanPlayers().length === 2);
+    renderShooterSplitView(W, H);
+    return;
+  }
+  document.body.classList.remove("split-2p");
 
   if (!isCoopSplitView()) {
     if (line) line.style.display = "none";
@@ -4824,7 +5083,7 @@ function loopFrame(now) {
     }
   });
   const touchLook = consumeTouchLook();
-  if (touchLook && gameState === "play" && !isCoopSplitView()) {
+  if (touchLook && gameState === "play" && !isCoopSplitView() && !isShooterSplitView()) {
     const lookK = 0.0048;
     camYaw -= touchLook.dx * lookK;
     applyLookPitch(touchLook.dy, lookK);
@@ -4963,6 +5222,12 @@ function loopFrame(now) {
     }
     animTime += dt;
     checkMatchEnd();
+  }
+  if (gameState === "play") {
+    if (gamepadActive) tickGamepadHud(getSplitGamepadSlots());
+    else hideGamepadHud();
+  } else {
+    hideGamepadHud();
   }
   if (gameState === "play" || gameState === "paused") {
     updateHUD();

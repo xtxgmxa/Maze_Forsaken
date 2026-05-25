@@ -1109,6 +1109,65 @@
     #mathChoices button:hover { border-color: #ffaa44; background: #443360; }
     #hudKillerTimer { color: #ff8866; font-size: 0.85rem; margin-top: 4px; }
     #hudCaught { color: #ff6688; font-size: 0.75rem; }
+    #gamepadHudRoot {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 22;
+    }
+    .gamepad-hud-panel {
+      position: absolute;
+      width: min(168px, 38vw);
+      height: min(120px, 26vw);
+      opacity: 0.82;
+      transition: opacity 0.15s;
+    }
+    .gamepad-hud-panel[data-slot="0"] { left: max(6px, env(safe-area-inset-left, 6px)); bottom: max(118px, calc(110px + env(safe-area-inset-bottom, 0px))); }
+    .gamepad-hud-panel[data-slot="1"] { right: max(6px, env(safe-area-inset-right, 6px)); bottom: max(118px, calc(110px + env(safe-area-inset-bottom, 0px))); }
+    .gamepad-hud-panel[data-slot="2"] { left: max(6px, env(safe-area-inset-left, 6px)); top: max(72px, calc(68px + env(safe-area-inset-top, 0px))); }
+    .gamepad-hud-panel[data-slot="3"] { right: max(6px, env(safe-area-inset-right, 6px)); top: max(72px, calc(68px + env(safe-area-inset-top, 0px))); }
+    body.shooter-play .gamepad-hud-panel[data-slot="0"],
+    body.shooter-play .gamepad-hud-panel[data-slot="1"] { bottom: max(88px, calc(82px + env(safe-area-inset-bottom, 0px))); }
+    body.split-2p .gamepad-hud-panel[data-slot="0"] { left: 2%; bottom: 28%; width: min(140px, 34vw); }
+    body.split-2p .gamepad-hud-panel[data-slot="1"] { right: 2%; left: auto; bottom: 28%; width: min(140px, 34vw); }
+    .gamepad-hud-title {
+      display: block;
+      font-size: 0.52rem;
+      color: #99aacc;
+      margin-bottom: 2px;
+      text-align: center;
+    }
+    .gamepad-hud-grid {
+      position: relative;
+      width: 100%;
+      height: calc(100% - 14px);
+      border: 1px solid #44556688;
+      border-radius: 10px;
+      background: #0a0e18aa;
+    }
+    .gamepad-hud-btn {
+      position: absolute;
+      min-width: 26px;
+      min-height: 22px;
+      padding: 2px 5px;
+      font-size: 0.58rem;
+      font-weight: bold;
+      color: #8899bb;
+      border: 1px solid #556688;
+      border-radius: 6px;
+      background: #1a2438cc;
+      text-align: center;
+      transition: background 0.05s, color 0.05s, box-shadow 0.05s, transform 0.05s;
+    }
+    .gamepad-hud-btn.lit {
+      color: #fff;
+      border-color: #ffcc44;
+      background: #554422ee;
+      box-shadow: 0 0 14px #ffcc44cc, 0 0 4px #ffffffaa;
+      transform: scale(1.08);
+    }
+    body.gamepad-hud-on #gamepadHudRoot { display: block; }
+    body:not(.gamepad-hud-on) #gamepadHudRoot { display: none; }
     #crosshair {
       display: none; position: fixed; left: 50%; top: 50%;
       transform: translate(-50%, -50%); z-index: 50;
@@ -1735,8 +1794,8 @@
     body.touch-ui .pause-desktop-hint { display: none !important; }
     body:not(.touch-ui) .pause-touch-hint { display: none !important; }
     body.touch-ui #btnMobileSettings.touch-only:not([hidden]) { display: inline-block !important; }
-    body.touch-ui #btnTouchMission,
-    body.touch-ui #touchMissionBanner { display: none !important; }
+    body.touch-ui #btnTouchMission:not([hidden]) { display: flex !important; }
+    body.touch-ui #touchMissionBanner:not([hidden]) { display: block !important; }
     body.touch-ui .touch-btn.touch-skill.mission-ready {
       border-color: #ffcc44 !important;
       box-shadow: 0 0 16px #ffcc4488;
@@ -2314,21 +2373,23 @@
       bottom: 38%;
     }
     body.touch-ui #mathQuiz {
-      align-items: flex-end;
-      justify-content: flex-end;
-      padding: 0;
-      background: #00000099;
+      align-items: center;
+      justify-content: center;
+      padding: max(10px, env(safe-area-inset-top, 10px)) 10px;
+      background: #000000aa;
     }
     body.touch-ui #mathQuiz .quiz-box {
-      width: 100%;
-      max-width: 100%;
-      max-height: min(52vh, 420px);
+      width: min(88vw, 320px);
+      max-width: 320px;
+      height: auto;
+      max-height: min(88vw, 340px);
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      border-radius: 14px 14px 0 0;
-      padding: 10px 12px max(12px, env(safe-area-inset-bottom, 12px));
-      border-width: 1px;
-      box-shadow: 0 -8px 32px #00000088;
+      border-radius: 14px;
+      padding: 12px 14px max(14px, env(safe-area-inset-bottom, 12px));
+      border-width: 2px;
+      box-shadow: 0 8px 40px #000000aa;
+      margin: auto;
     }
     body.touch-ui #mathQuiz h3 {
       font-size: 0.88rem;
@@ -2810,6 +2871,7 @@
 
   <div id="quizGpPointer" aria-hidden="true"></div>
   <div id="coopSplitLine" aria-hidden="true"></div>
+  <div id="gamepadHudRoot" aria-hidden="true"></div>
   <div id="crosshair" aria-hidden="true"><span class="ch-dot"></span></div>
   <div id="scopeOverlay" aria-hidden="true"></div>
   <div id="damageLayer"></div>
