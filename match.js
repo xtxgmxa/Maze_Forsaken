@@ -68,7 +68,7 @@ export function spawnMatch({
       addSurvivor(def, localProfiles[li], true, gx, gz);
     }
     const botTarget = gameMode === "shooter"
-      ? Math.max(couchLocals >= 2 ? couchLocals : 3, Math.min(12, numSurvivors))
+      ? Math.max(couchLocals, Math.min(12, numSurvivors))
       : Math.max(1, Math.min(numSurvivors, survivorRoster.length));
     let guard = 0;
     while (survivors.length < botTarget && guard < 500) {

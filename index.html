@@ -1650,6 +1650,47 @@
       left: auto;
       top: 6px;
     }
+    #shooterSplitHud {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 14;
+      pointer-events: none;
+    }
+    .shooter-split-slot {
+      position: fixed;
+      display: none;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+      padding: 4px;
+      background: #00000088;
+      border: 1px solid #665588;
+      border-radius: 8px;
+      font-size: 0.62rem;
+      color: #eeddff;
+    }
+    .shooter-split-radar {
+      display: block;
+      border-radius: 6px;
+      background: #1a1028;
+    }
+    .shooter-split-tag { color: #ffcc66; font-weight: bold; }
+    #shooterSplitGrid {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 4;
+      pointer-events: none;
+    }
+    .shooter-split-bar {
+      position: absolute;
+      background: #000;
+      box-shadow: 0 0 10px #000;
+    }
+    .shooter-split-bar.v { top: 0; bottom: 0; width: 5px; margin-left: -2px; }
+    .shooter-split-bar.h { left: 0; right: 0; height: 5px; margin-top: -2px; }
+    body.split-4p #coopSplitLine { display: none !important; }
     #coopSplitLine::before,
     #coopSplitLine::after {
       content: "P1";
@@ -2860,6 +2901,7 @@
       <button type="button" id="touchGun2" class="touch-btn touch-gun active-gun">2</button>
       <button type="button" id="touchGun3" class="touch-btn touch-gun">3</button>
       <button type="button" id="touchGun4" class="touch-btn touch-gun">4</button>
+      <button type="button" id="touchGun5" class="touch-btn touch-gun" title="放置彈跳板">5</button>
     </div>
   </div>
 

@@ -17,10 +17,10 @@ export function updateShooterLadderClimb(p, dt, state, move) {
     return false;
   }
   p._onLadder = true;
-  const up = (move?.z ?? 0) < -0.25 || (move?.y ?? 0) > 0.05;
-  const down = (move?.z ?? 0) > 0.25;
+  const up = (move?.z ?? 0) < -0.2 || (move?.y ?? 0) > 0.05 || (move?.jump ?? false);
+  const down = (move?.z ?? 0) > 0.2;
   if (up && p.elev < lad.y1 - 0.25) {
-    p.elev = Math.min(lad.y1, p.elev + dt * 11);
+    p.elev = Math.min(lad.y1, p.elev + dt * (lad.climbSpeed ?? 12));
     p._jumpY = 0;
     p.velY = 0;
     p.onGround = true;

@@ -7,17 +7,19 @@ function insideAabb(px, pz, x, z, halfW, halfD) {
 /** 掩體／立柱：腳下高度低於台面時擋住水平移動（不可穿進長方體） */
 export function collidesShooterSolid(px, pz, radius, footElev, jumpY, state) {
   if (!state?.platforms?.length) return false;
-  const feet = (footElev ?? 0) + Math.min(jumpY ?? 0, 0.12);
-  const head = feet + 1.55;
+  const feet = (footElev ?? 0);
+  const crest = feet + (jumpY ?? 0);
+  const head = crest + 1.55;
   for (const pl of state.platforms) {
     if (pl.solidSides === false) continue;
-    const hw = (pl.halfW ?? 1) + radius * 0.9;
-    const hd = (pl.halfD ?? 1) + radius * 0.9;
+    const hw = (pl.halfW ?? 1) + radius * 0.72;
+    const hd = (pl.halfD ?? 1) + radius * 0.72;
     if (!insideAabb(px, pz, pl.x, pl.z, hw, hd)) continue;
     const top = pl.blockTop ?? pl.y ?? 1;
-    if (feet >= top - 0.42) continue;
+    if (crest >= top - 0.5) continue;
+    if ((jumpY ?? 0) > 0.12 && crest >= top - 1.35) continue;
     const base = pl.baseY ?? 0;
-    if (head > base + 0.15 && feet < top + 0.2) return true;
+    if (head > base + 0.15 && crest < top + 0.15) return true;
   }
   return false;
 }
