@@ -13,6 +13,7 @@ export function spawnMatch({
   killerRoster,
   survivorRoster,
   numSurvivors,
+  numLocalPlayers = 1,
   numKillers,
 }) {
   if (!scene) throw new Error("spawnMatch: scene 未定義");
@@ -28,7 +29,7 @@ export function spawnMatch({
     const p = createPlayerState(def, "survivor", profile, human);
     p.isAI = !human;
     p.pos = { x: c.x, z: c.z };
-    p.invuln = 3;
+    p.invuln = gameMode === "shooter" ? 0.4 : 3;
     p.caught = false;
     p.hp = 100;
     p.maxHp = 100;
@@ -57,8 +58,8 @@ export function spawnMatch({
   if (gameMode === "keyhunt" || gameMode === "platformer" || gameMode === "puzzle" || gameMode === "shooter") {
     const localProfiles = ["p1", "p2", "p3", "p4"];
     const localChars = [selectedChar, selectedChar2, survivorRoster[2], survivorRoster[3]];
-    const couchLocals = gameMode === "shooter" && numSurvivors >= 2 && numSurvivors <= 4
-      ? numSurvivors
+    const couchLocals = gameMode === "shooter"
+      ? Math.min(4, Math.max(1, numLocalPlayers ?? 1))
       : 1;
     for (let li = 0; li < couchLocals; li++) {
       const def = localChars[li] || survivorRoster[li % survivorRoster.length];

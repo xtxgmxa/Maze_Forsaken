@@ -682,7 +682,8 @@
     body.touch-ui.shooter-play #btnTouchScoreboard {
       display: flex;
       position: fixed;
-      z-index: 102;
+      z-index: 128;
+      pointer-events: auto !important;
       top: max(78px, calc(72px + env(safe-area-inset-top, 0px)));
       right: max(6px, calc(4px + env(safe-area-inset-right, 0px)));
       width: 54px;
@@ -1188,9 +1189,16 @@
     body.shooter-play #crosshair::before,
     body.shooter-play #crosshair::after { background: #66ffcc; box-shadow: 0 0 10px #22ffaa; }
     body.scoreboard-open #crosshair { opacity: 0.35; }
+    body.touch-ui.shooter-play.scoreboard-open #touchControls {
+      pointer-events: none;
+    }
+    body.touch-ui.shooter-play.scoreboard-open #btnTouchScoreboard {
+      z-index: 140;
+    }
     #shooterScoreboard {
       display: none;
       position: fixed;
+      pointer-events: none;
       inset: 0;
       z-index: 200;
       align-items: flex-start;
@@ -1201,6 +1209,8 @@
     }
     #shooterScoreboard.show {
       display: flex;
+      pointer-events: auto;
+      z-index: 135;
       pointer-events: auto;
     }
     #shooterScoreboardBackdrop {
@@ -1562,6 +1572,24 @@
       box-shadow: 0 0 12px #000;
       z-index: 3;
       pointer-events: none;
+    }
+    body.split-2p-v #coopSplitLine {
+      top: 50%;
+      bottom: auto;
+      left: 0;
+      right: 0;
+      width: auto;
+      height: 5px;
+      margin: -2px 0 0;
+    }
+    body.split-2p-v #coopSplitLine::before {
+      left: 10px;
+      top: -22px;
+    }
+    body.split-2p-v #coopSplitLine::after {
+      right: 10px;
+      left: auto;
+      top: 6px;
     }
     #coopSplitLine::before,
     #coopSplitLine::after {
@@ -2542,6 +2570,9 @@
       </button>
       <p class="step-hint match-config-hint">人數與時間</p>
       <div class="match-config menu-row-wrap">
+        <label id="numLocalPlayersLabel" style="display:none">同機玩家 <select id="numLocalPlayers">
+          <option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+        </select></label>
         <label>倖存者 <select id="numSurvivors">
           <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
           <option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option>

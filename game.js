@@ -38,7 +38,8 @@ import {
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
-  clearShooterTeamMarkers, syncAllShooterTeamMarkers, syncShooterTeamMarker, revealMoleOnHit,
+  clearShooterTeamMarkers, syncAllShooterTeamMarkers, syncShooterTeamMarker,
+  revealMoleOnHit, updateShooterMarkerHp,
 } from "./shooterMarkers.js";
 import { playShooterResultMusic, stopShooterResultMusic } from "./shooterResultMusic.js";
 import {
@@ -207,6 +208,7 @@ let worldItems = [];
 let traps = [];
 let matchHumanRole = "survivor";
 let numSurvivors = 1;
+let numLocalPlayers = 1;
 let shooterPlayStyle = "teams";
 let numKillers = 1;
 let camDist = 11;
@@ -444,25 +446,41 @@ function syncPlayerCountOptions() {
   const ns = document.getElementById("numSurvivors");
   const nk = document.getElementById("numKillers");
   const nkLabel = nk?.closest("label");
+  const lp = document.getElementById("numLocalPlayers");
+  const lpLabel = document.getElementById("numLocalPlayersLabel");
   if (!ns) return;
   const isSh = isShooterMode();
   const maxS = isSh ? 12 : 4;
-  const cur = Math.min(maxS, Math.max(1, parseInt(ns.value, 10) || (isSh ? 8 : 1)));
+  const curLocal = Math.min(4, Math.max(1, parseInt(lp?.value, 10) || numLocalPlayers || 1));
+  const curTotal = Math.min(maxS, Math.max(isSh ? curLocal : 1, parseInt(ns.value, 10) || (isSh ? 6 : 1)));
   const label = ns.closest("label");
   if (label) {
     const t = label.childNodes[0];
-    if (t?.nodeType === Node.TEXT_NODE) t.textContent = isSh ? "對戰人數 " : "倖存者 ";
+    if (t?.nodeType === Node.TEXT_NODE) t.textContent = isSh ? "總人數（含電腦） " : "倖存者 ";
+  }
+  if (lpLabel) lpLabel.style.display = isSh ? "" : "none";
+  if (lp) {
+    lp.innerHTML = "";
+    for (let i = 1; i <= 4; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = i === 1
+        ? "1（單人 + 電腦）"
+        : `${i}（同機 ${i}P 分割 · 手把②~④）`;
+      lp.appendChild(opt);
+    }
+    lp.value = String(curLocal);
   }
   ns.innerHTML = "";
-  for (let i = 1; i <= maxS; i++) {
+  for (let i = (isSh ? curLocal : 1); i <= maxS; i++) {
     const opt = document.createElement("option");
     opt.value = String(i);
-    if (isSh && i <= 4) opt.textContent = `${i} 人${i >= 2 ? "（同機分割·手把②~④）" : ""}`;
-    else if (isSh && i >= 9) opt.textContent = `${i} 人（較吃效能）`;
+    if (isSh && i >= 9) opt.textContent = `${i} 人（較吃效能）`;
+    else if (isSh) opt.textContent = `${i} 人（${i - curLocal} 電腦）`;
     else opt.textContent = String(i);
     ns.appendChild(opt);
   }
-  ns.value = String(isSh ? Math.max(6, cur) : cur);
+  ns.value = String(Math.max(isSh ? curLocal : 1, curTotal));
   if (nkLabel) nkLabel.style.display = isSh ? "none" : "";
 }
 
@@ -571,6 +589,21 @@ function initMenu() {
       winGoal = winEl.value;
       refreshMenuForMode();
     };
+  }
+  const localEl = document.getElementById("numLocalPlayers");
+  if (localEl && !localEl.dataset.bound) {
+    localEl.dataset.bound = "1";
+    localEl.addEventListener("change", () => {
+      syncPlayerCountOptions();
+      playSfx("ui");
+    });
+  }
+  const survEl = document.getElementById("numSurvivors");
+  if (survEl && !survEl.dataset.shBound) {
+    survEl.dataset.shBound = "1";
+    survEl.addEventListener("change", () => {
+      if (isShooterMode()) syncPlayerCountOptions();
+    });
   }
 
   rebuildLevelGrid();
@@ -1440,13 +1473,20 @@ function getShooterAimDir() {
 function syncShooterPlayerVisibility() {
   if (!isShooterMode()) return;
   const human = getHumanSurvivor();
+  const locals = getLocalHumanPlayers();
   const spectating = isSpectating();
-  const showFp = human && !spectating && !isShooterPlayerDown(human);
+  const split = isShooterSplitView();
+  const showFp = human && !spectating && !isShooterPlayerDown(human) && !split;
   setFpGunVisible(showFp);
   for (const s of survivors) {
     if (!s.mesh) continue;
-    if (s === human && !spectating) s.mesh.visible = false;
-    else s.mesh.visible = !isShooterPlayerDown(s);
+    if (s._shooterDowned) {
+      const hideAt = s._shooterBodyHideAt;
+      s.mesh.visible = hideAt == null || elapsed < hideAt;
+      continue;
+    }
+    if (!split && s === human && !spectating) s.mesh.visible = false;
+    else s.mesh.visible = true;
   }
 }
 
@@ -1701,8 +1741,16 @@ function eliminateShooterForTeamkill(p, reason) {
   p.hp = 0;
   p.caught = false;
   p._shooterDowned = true;
+  p._shooterDownedAt = elapsed;
+  p._shooterDownedYaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
+  p._shooterBodyHideAt = elapsed + 4.5;
   p._awaitingRespawn = false;
   p.vel = { x: 0, z: 0 };
+  p.velY = 0;
+  if (p.mesh) {
+    p.mesh.visible = true;
+    p.mesh.rotation.x = 0;
+  }
   if (!p.isAI) syncShooterRespawnUi();
   showToast(reason || `${p.charDef?.name || "玩家"} 誤傷隊友，立刻淘汰！`, 1400, "kill");
 }
@@ -1718,8 +1766,9 @@ function damageSurvivor(target, killer, amount, opts = {}) {
     return;
   }
   if (isShooterMode() && killer && target?.isMole && !killer.isMole) {
-    revealMoleOnHit(target);
-    syncShooterTeamMarker(target, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle, shooterState);
+    const ps = shooterState?.playStyle ?? shooterPlayStyle;
+    revealMoleOnHit(target, getHumanSurvivor(), ps, shooterState);
+    if (target._moleRevealed) showToast("內鬼身分曝光！頭頂出現標記", 1200, "kill");
   }
   if (isShooterMode()) {
     playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
@@ -2575,9 +2624,14 @@ function readMatchConfig() {
   const maxSurv = isShooterMode() ? 12 : 4;
   const psv = psEl?.value;
   shooterPlayStyle = psv === "ffa" ? "ffa" : psv === "mole" ? "mole" : "teams";
+  const lpEl = document.getElementById("numLocalPlayers");
+  numLocalPlayers = isShooterMode() && lpEl
+    ? Math.min(4, Math.max(1, parseInt(lpEl.value, 10) || 1))
+    : 1;
   numSurvivors = sEl
-    ? Math.max(1, Math.min(maxSurv, parseInt(sEl.value, 10) || (isShooterMode() ? 8 : 1)))
+    ? Math.max(1, Math.min(maxSurv, parseInt(sEl.value, 10) || (isShooterMode() ? 6 : 1)))
     : selectedLevel.survivorSlots || 1;
+  if (isShooterMode()) numSurvivors = Math.max(numSurvivors, numLocalPlayers);
   numKillers = isShooterMode()
     ? 0
     : kEl ? Math.max(1, Math.min(3, parseInt(kEl.value, 10) || 1)) : selectedLevel.killerCount || 1;
@@ -2862,6 +2916,7 @@ async function runStartGame() {
     killerRoster: KILLERS,
     survivorRoster: SURVIVORS,
     numSurvivors,
+    numLocalPlayers,
     numKillers,
   });
   survivors = spawned.survivors;
@@ -2916,10 +2971,6 @@ async function runStartGame() {
     document.body.classList.add("shooter-play");
     const sbBtn = document.getElementById("btnTouchScoreboard");
     if (sbBtn) sbBtn.hidden = !isTouchUiEnabled();
-    bindShooterScoreboardUi((force) => {
-      if (force === false) showShooterScoreboard(false);
-      else showShooterScoreboard(!shooterScoreboardOpen);
-    });
     const touchAb = document.getElementById("touchRowAbilities");
     if (touchAb) touchAb.hidden = true;
     const mmLabel = document.querySelector("#minimap-wrap label");
@@ -2954,8 +3005,9 @@ async function runStartGame() {
           lp._camPitch = 0;
         }
       }
+      const botCount = Math.max(0, survivors.length - locals.length);
       showToast(
-        `${locals.length}P 分割畫面：P1 鍵鼠／手把① · P2~P${locals.length} 手把②~④ · RT 開火`,
+        `${locals.length}P 分割（${locals.length === 2 ? "上下" : "四格"}）· 另 ${botCount} 電腦 · P1 鍵鼠／手把① · RT 開火`,
         4200
       );
     }
@@ -4475,34 +4527,36 @@ function renderShooterSplitView(W, H) {
   renderer.setScissorTest(true);
 
   if (locals.length === 2) {
+    document.body.classList.add("split-2p-v");
+    document.body.classList.remove("split-2p-h");
     if (line) line.style.display = "block";
-    const halfW = Math.floor((W - COOP_SPLIT_GAP) / 2);
-    const rightW = W - halfW - COOP_SPLIT_GAP;
+    const halfH = Math.floor((H - COOP_SPLIT_GAP) / 2);
+    const bottomH = H - halfH - COOP_SPLIT_GAP;
     const [p1, p2] = locals;
     const a1 = getPlayerCamAngles(p1);
     const a2 = getPlayerCamAngles(p2);
     updateCameraForPlayer(camera, p1, a1.yaw, a1.pitch);
-    camera.aspect = halfW / H;
+    camera.aspect = W / halfH;
     camera.updateProjectionMatrix();
-    renderer.setViewport(0, 0, halfW, H);
-    renderer.setScissor(0, 0, halfW, H);
+    renderer.setViewport(0, halfH + COOP_SPLIT_GAP, W, halfH);
+    renderer.setScissor(0, halfH + COOP_SPLIT_GAP, W, halfH);
     renderer.setClearColor(bg);
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
-    renderer.setViewport(halfW, 0, COOP_SPLIT_GAP, H);
-    renderer.setScissor(halfW, 0, COOP_SPLIT_GAP, H);
+    renderer.setViewport(0, halfH, W, COOP_SPLIT_GAP);
+    renderer.setScissor(0, halfH, W, COOP_SPLIT_GAP);
     renderer.setClearColor(0x000000);
     renderer.clear(true, true, true);
     updateCameraForPlayer(camera2, p2, a2.yaw, a2.pitch);
-    camera2.aspect = rightW / H;
+    camera2.aspect = W / bottomH;
     camera2.updateProjectionMatrix();
-    const x0 = halfW + COOP_SPLIT_GAP;
-    renderer.setViewport(x0, 0, rightW, H);
-    renderer.setScissor(x0, 0, rightW, H);
+    renderer.setViewport(0, 0, W, bottomH);
+    renderer.setScissor(0, 0, W, bottomH);
     renderer.setClearColor(bg);
     renderer.clear(true, true, true);
     renderer.render(scene, camera2);
   } else {
+    document.body.classList.remove("split-2p-v");
     if (line) line.style.display = "none";
     const halfW = Math.floor(W / 2);
     const halfH = Math.floor(H / 2);
@@ -4537,11 +4591,13 @@ function renderGameView() {
   const line = document.getElementById("coopSplitLine");
 
   if (isShooterSplitView()) {
-    document.body.classList.toggle("split-2p", getLocalHumanPlayers().length === 2);
+    const nLocal = getLocalHumanPlayers().length;
+    document.body.classList.toggle("split-2p", nLocal === 2);
+    document.body.classList.toggle("split-4p", nLocal >= 3);
     renderShooterSplitView(W, H);
     return;
   }
-  document.body.classList.remove("split-2p");
+  document.body.classList.remove("split-2p", "split-2p-v", "split-2p-h", "split-4p");
 
   if (!isCoopSplitView()) {
     if (line) line.style.display = "none";
@@ -5168,6 +5224,9 @@ function loopFrame(now) {
       });
       tickShooterRespawns(survivors, ctx, maze, elapsed);
       tickMoleAlerts(shooterState, elapsed, (msg, ms) => showToast(msg, ms, "kill"));
+      if (frameCount % 6 === 0) {
+        for (const s of survivors) updateShooterMarkerHp(s);
+      }
       for (const s of survivors) {
         if (s._shooterDowned) tickShooterDownedPose(s, elapsed, worldHeight);
       }

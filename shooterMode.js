@@ -74,11 +74,12 @@ export function tickMoleAlerts(state, elapsed, onToast) {
   }
 }
 
-/** 射擊同隊好人 → 立刻淘汰射手 */
+/** 射擊同隊好人 → 立刻淘汰射手（已識破內鬼可開槍） */
 export function isMoleTeamkillViolation(killer, target, state) {
   if (!isShooterMoleMode(state)) return false;
   if (!killer || !target || killer === target) return false;
   if (!isSameShooterTeam(killer, target)) return false;
+  if (target.isMole && target._moleRevealed) return false;
   if (killer.isMole && state.moleCanShoot) return false;
   return true;
 }
@@ -215,7 +216,7 @@ export function createShooterState(level = {}, playStyle = "teams") {
     moleTeamId: 0,
     teamRoundScore: [0, 0],
     /** 開局幾秒內 AI 不開火，先走位（無間道較不易暴露內鬼） */
-    aiWarmupUntil: ps === "mole" ? 22 : 12,
+    aiWarmupUntil: ps === "mole" ? 14 : 5,
   };
 }
 
@@ -612,8 +613,10 @@ function pickShooterBotTarget(bot, players, style, state) {
     if (!isShooterEnemy(bot, other, style, state)) continue;
     if (!isShooterCombatActive(other)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
-    if (d < best) {
-      best = d;
+    const bias = other.isAI ? 0 : -14;
+    const score = d + bias;
+    if (score < best) {
+      best = score;
       target = other;
     }
   }
@@ -716,12 +719,16 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     const inCombat = bd <= maxR + 2;
     const needHunt = bd > maxR + 1 || (bd > ideal * 1.35 && !inCombat);
 
-    if (needHunt || (bot._shooterStuckT ?? 0) > 1.8) {
-      if ((bot._shooterStuckT ?? 0) > 1.8) {
-        const roam = pickShooterRoamCell(ctx, maze, bot, players);
-        bot._shooterPathStep = bfsNextStep(ctx, maze, bot.pos.x, bot.pos.z, roam.x, roam.z) || roam;
+    if (needHunt || (bot._shooterStuckT ?? 0) > 1.2) {
+      if ((bot._shooterStuckT ?? 0) > 1.2) {
+        bot._shooterWallTurn = ((bot._shooterWallTurn ?? 0) + 1) % 4;
+        const escapeYaw = (bot.yaw ?? 0) + bot._shooterWallTurn * (Math.PI / 2);
+        bot._shooterPathStep = {
+          x: bot.pos.x + Math.sin(escapeYaw) * 3,
+          z: bot.pos.z + Math.cos(escapeYaw) * 3,
+        };
         bot._shooterStuckT = 0;
-        bot._shooterHuntRefresh = api.elapsed + 0.5;
+        bot._shooterHuntRefresh = api.elapsed + 0.35;
       }
       const step = bot._shooterPathStep;
       if (step) {
@@ -756,9 +763,9 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     }
 
     if (Math.hypot(mx, mz) > 0.08) {
-      smoothBotYaw(bot, Math.atan2(mx, mz), dt, 5.5);
-    } else {
-      smoothBotYaw(bot, yawTo, dt, 3.5);
+      smoothBotYaw(bot, Math.atan2(mx, mz), dt, 4.2);
+    } else if (inCombat) {
+      smoothBotYaw(bot, yawTo, dt, 4.5);
     }
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
 
@@ -881,7 +888,7 @@ export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   victim._shooterDowned = true;
   victim._shooterDownedAt = elapsed;
   victim._shooterDownedYaw = victim.yaw ?? 0;
-  victim._shooterBodyHideAt = elapsed + 2.4;
+  victim._shooterBodyHideAt = elapsed + 4.8;
   victim._respawnUntil = 0;
 
   if (victim.mesh) {
