@@ -1,0 +1,10 @@
+{
+  "_comment": "槍戰音效。留空 \"\" 則用內建合成音。路徑相對網站根目錄。",
+  "fire": "assets/audio/sfx/paintball_fire.mp3",
+  "hitBody": "assets/audio/sfx/paintball_hit_body.mp3",
+  "hitWall": "assets/audio/sfx/paintball_hit_wall.mp3",
+  "headshot": "assets/audio/sfx/paintball_headshot.mp3",
+  "pickupHeal": "assets/audio/sfx/paintball_pickup_heal.mp3",
+  "winMusic": "assets/audio/music/shooter_win.mp3",
+  "loseMusic": "assets/audio/music/shooter_lose.mp3"
+}

@@ -1,0 +1,17 @@
+【如何加入背景音樂】
+
+建議曲目：A GRAVE SOUL (NOW, RUN) | Last Man Standing Theme (FORSAKEN)
+YouTube: https://www.youtube.com/watch?v=F6KJJ3iwK4A
+
+步驟：
+1. 使用您合法擁有的音訊檔，或依著作權規定自行取得。
+2. 將檔案轉成 MP3 格式。
+3. 重新命名為：music.mp3
+4. 放到此資料夾（與本說明檔同一層）：
+   forsaken\assets\music.mp3
+
+5. 雙擊 start.bat 啟動遊戲，在選單按「開始逃脫」後音樂會自動播放。
+
+注意：
+- 遊戲無法直接從 YouTube 下載或播放連結，需使用本機 MP3 檔。
+- 若沒有音樂檔，遊戲仍可正常遊玩，僅無背景音樂。

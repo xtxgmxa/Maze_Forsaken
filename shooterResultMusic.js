@@ -3,6 +3,8 @@
  * 設定：assets/audio/shooter-sounds.json 的 winMusic / loseMusic
  * 留空則用內建合成音
  */
+import { audioPathCandidates } from "./audioLoad.js";
+
 const CONFIG_URL = "assets/audio/shooter-sounds.json";
 let paths = { winMusic: "", loseMusic: "" };
 let loadPromise = null;
@@ -48,12 +50,16 @@ export async function playShooterResultMusic(won, musicVolume = 0.35) {
   const el = ensureElement();
   el.volume = Math.max(0, Math.min(1, musicVolume));
   if (src) {
-    try {
-      el.src = src;
-      el.loop = false;
-      await el.play();
-      return;
-    } catch { /* fallback */ }
+    for (const url of audioPathCandidates(src)) {
+      try {
+        el.src = url;
+        el.loop = false;
+        await el.play();
+        return;
+      } catch {
+        /* try next path */
+      }
+    }
   }
   const { playSfx } = await import("./audio.js");
   playSfx(won ? "exit" : "warn", won ? 0.2 : 0.15);

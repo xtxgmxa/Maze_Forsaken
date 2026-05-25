@@ -5,11 +5,15 @@ export const PAINT_PALETTE = [
   0xff4466, 0x44ddff, 0xffcc44, 0x66ff99, 0xff66cc, 0xaa88ff, 0xff8844, 0x22ffaa,
 ];
 
-const MAX_SPLATS = 140;
+const MAX_SPLATS = 160;
+const MAX_WALL_BLOBS_PER_FACE = 28;
 const splatPool = [];
+const wallAccum = new Map();
 const _raycaster = new THREE.Raycaster();
 const _origin = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _wp = new THREE.Vector3();
+const _wn = new THREE.Vector3();
 
 export function assignPaintColor(p, index = 0) {
   if (!p) return;
@@ -18,28 +22,169 @@ export function assignPaintColor(p, index = 0) {
 
 export function clearPaintSplats(scene) {
   for (const s of splatPool) {
-    if (scene) s.mesh?.parent?.remove(s.mesh);
+    const root = s.anchor || s.mesh;
+    root?.parent?.remove(root);
   }
   splatPool.length = 0;
+  wallAccum.clear();
 }
 
-function pushSplat(mesh) {
+function pushSplat(entry) {
   while (splatPool.length >= MAX_SPLATS) {
     const old = splatPool.shift();
-    old.mesh?.parent?.remove(old.mesh);
+    const root = old.anchor || old.mesh;
+    root?.parent?.remove(root);
+    if (old.wallKey) wallAccum.delete(old.wallKey);
   }
-  splatPool.push({ mesh });
+  splatPool.push(entry);
 }
 
-function splatMat(color) {
+function splatMat(color, opacity = 0.96) {
   return new THREE.MeshBasicMaterial({
     color: color ?? 0xff4466,
     transparent: true,
-    opacity: 0.96,
+    opacity,
     side: THREE.DoubleSide,
     depthWrite: false,
     depthTest: true,
   });
+}
+
+function findSurvivorForObject(obj, players) {
+  if (!obj || !players?.length) return null;
+  let o = obj;
+  while (o) {
+    for (const p of players) {
+      if (!p?.mesh) continue;
+      let hit = false;
+      p.mesh.traverse((c) => {
+        if (c === o) hit = true;
+      });
+      if (hit) return p;
+    }
+    o = o.parent;
+  }
+  return null;
+}
+
+function buildSplatDiscs(mat, coreR, droplets = 6, spread = 0.45) {
+  const group = new THREE.Group();
+  group.name = "paintSplat";
+  const core = new THREE.Mesh(new THREE.CircleGeometry(coreR, 12), mat);
+  group.add(core);
+  for (let i = 0; i < droplets; i++) {
+    const r = 0.08 + Math.random() * 0.16;
+    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 8), mat);
+    m.position.set((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread, 0);
+    group.add(m);
+  }
+  return group;
+}
+
+/** 漆彈貼在角色網格上，會跟著人移動 */
+function attachSplatToPlayer(player, worldPoint, worldNormal, color) {
+  if (!player?.mesh) return null;
+  const mesh = player.mesh;
+  mesh.updateWorldMatrix(true, true);
+  const inv = mesh.matrixWorld.clone().invert();
+  const lp = worldPoint.clone().applyMatrix4(inv);
+  const ln = worldNormal.clone().transformDirection(inv).normalize();
+  const mat = splatMat(color);
+  const group = buildSplatDiscs(mat, 0.22 + Math.random() * 0.12, 5, 0.38);
+  const up = Math.abs(ln.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const tangent = new THREE.Vector3().crossVectors(up, ln).normalize();
+  const bitangent = new THREE.Vector3().crossVectors(ln, tangent);
+  group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(tangent, bitangent, ln));
+  group.position.copy(lp).addScaledVector(ln, 0.04);
+  mesh.add(group);
+  if (!player._paintSplats) player._paintSplats = [];
+  player._paintSplats.push(group);
+  pushSplat({ mesh: group, anchor: mesh, kind: "body" });
+  return group;
+}
+
+export function clearPlayerPaintSplats(player) {
+  if (!player?._paintSplats) return;
+  for (const g of player._paintSplats) {
+    g.parent?.remove(g);
+  }
+  player._paintSplats.length = 0;
+}
+
+function spawnPaintOnWorldSurface(scene, point, normal, color) {
+  const n = (normal && normal.lengthSq() > 0.01)
+    ? normal.clone().normalize()
+    : new THREE.Vector3(0, 1, 0);
+  const mat = splatMat(color);
+  const group = buildSplatDiscs(mat, 0.28 + Math.random() * 0.14, 7, 0.48);
+  const up = Math.abs(n.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const tangent = new THREE.Vector3().crossVectors(up, n).normalize();
+  const bitangent = new THREE.Vector3().crossVectors(n, tangent);
+  group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(tangent, bitangent, n));
+  group.position.copy(point).addScaledVector(n, 0.05);
+  scene.add(group);
+  pushSplat({ mesh: group, kind: "world" });
+}
+
+function wallFaceKey(face) {
+  const q = (v) => Math.round(v * 4);
+  return `${q(face.px)}_${q(face.pz)}_${face.nx}_${face.nz}`;
+}
+
+function orientGroupToWall(group, face) {
+  const eps = 0.26;
+  group.position.set(face.px + face.nx * eps, 0, face.pz + face.nz * eps);
+  if (face.nx > 0) group.rotation.y = -Math.PI / 2;
+  else if (face.nx < 0) group.rotation.y = Math.PI / 2;
+  else if (face.nz > 0) group.rotation.y = 0;
+  else group.rotation.y = Math.PI;
+}
+
+/** 同一面牆累積擴散漆彈 */
+function addBlobWallSplat(scene, face, color) {
+  const key = wallFaceKey(face);
+  let entry = wallAccum.get(key);
+  const mat = splatMat(color, 0.94);
+
+  if (entry?.group?.parent) {
+    const group = entry.group;
+    const count = group.children.length;
+    if (count < MAX_WALL_BLOBS_PER_FACE) {
+      const baseY = 0.35 + Math.random() * 2.5;
+      const r = 0.12 + Math.random() * 0.22;
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(r, 10), mat);
+      const ang = Math.random() * Math.PI * 2;
+      const dist = Math.random() * 0.85;
+      mesh.position.set(Math.cos(ang) * dist, baseY + (Math.random() - 0.5) * 0.9, 0.02 + Math.random() * 0.04);
+      mesh.rotation.z = Math.random() * Math.PI;
+      group.add(mesh);
+      const core = group.children[0];
+      if (core?.scale) {
+        core.scale.setScalar(Math.min(1.45, 1 + count * 0.018));
+      }
+    }
+    return;
+  }
+
+  const group = new THREE.Group();
+  group.name = "paintSplat";
+  orientGroupToWall(group, face);
+  const baseY = 0.45 + Math.random() * 2.2;
+  const core = new THREE.Mesh(new THREE.CircleGeometry(0.4 + Math.random() * 0.22, 14), mat);
+  core.position.set(0, baseY, 0.04);
+  group.add(core);
+  for (let i = 0; i < 8; i++) {
+    const r = 0.12 + Math.random() * 0.24;
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(r, 10), mat);
+    const ang = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 0.6;
+    mesh.position.set(Math.cos(ang) * dist, baseY + (Math.random() - 0.5) * 0.7, 0.02);
+    mesh.rotation.z = Math.random() * Math.PI;
+    group.add(mesh);
+  }
+  scene.add(group);
+  wallAccum.set(key, { group });
+  pushSplat({ mesh: group, kind: "wall", wallKey: key });
 }
 
 function collectPaintMeshes(scene, ignoreMesh) {
@@ -48,37 +193,13 @@ function collectPaintMeshes(scene, ignoreMesh) {
   scene.traverse((o) => {
     if (!o.isMesh || !o.visible) return;
     if (o.userData?.skipPaint || o.userData?.fpGun) return;
-    if (ignoreMesh && (o === ignoreMesh || o.parent === ignoreMesh)) return;
+    if (o.name === "paintSplat") return;
+    if (ignoreMesh && (o === ignoreMesh || ignoreMesh === o.parent)) return;
     const n = o.name || "";
     if (n === "exit" || n.startsWith("teleporter")) return;
     list.push(o);
   });
   return list;
-}
-
-function spawnPaintOnSurface(scene, point, normal, color) {
-  const n = (normal && normal.lengthSq() > 0.01)
-    ? normal.clone().normalize()
-    : new THREE.Vector3(0, 1, 0);
-  const group = new THREE.Group();
-  const mat = splatMat(color);
-  const core = new THREE.Mesh(new THREE.CircleGeometry(0.28 + Math.random() * 0.18, 12), mat);
-  group.add(core);
-  for (let i = 0; i < 7; i++) {
-    const r = 0.08 + Math.random() * 0.16;
-    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 8), mat);
-    m.position.set((Math.random() - 0.5) * 0.45, (Math.random() - 0.5) * 0.45, 0);
-    group.add(m);
-  }
-  const up = Math.abs(n.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-  const tangent = new THREE.Vector3().crossVectors(up, n).normalize();
-  const bitangent = new THREE.Vector3().crossVectors(n, tangent);
-  group.quaternion.setFromRotationMatrix(
-    new THREE.Matrix4().makeBasis(tangent, bitangent, n)
-  );
-  group.position.copy(point).addScaledVector(n, 0.05);
-  scene.add(group);
-  pushSplat(group);
 }
 
 function wallFaceFromCell(ctx, maze, gx, gz, nx, nz) {
@@ -195,38 +316,9 @@ function wallFaceFromRayPlane(ctx, maze, x0, z0, x1, z1) {
   return walls[0];
 }
 
-function orientGroupToWall(group, face) {
-  const eps = 0.26;
-  group.position.set(face.px + face.nx * eps, 0, face.pz + face.nz * eps);
-  if (face.nx > 0) group.rotation.y = -Math.PI / 2;
-  else if (face.nx < 0) group.rotation.y = Math.PI / 2;
-  else if (face.nz > 0) group.rotation.y = 0;
-  else group.rotation.y = Math.PI;
-}
-
-function addBlobWallSplat(scene, face, color) {
-  const group = new THREE.Group();
-  orientGroupToWall(group, face);
-  const mat = splatMat(color);
-  const baseY = 0.45 + Math.random() * 2.4;
-  const core = new THREE.Mesh(new THREE.CircleGeometry(0.42 + Math.random() * 0.25, 14), mat);
-  core.position.set(0, baseY, 0.04);
-  group.add(core);
-  for (let i = 0; i < 10; i++) {
-    const r = 0.14 + Math.random() * 0.28;
-    const mesh = new THREE.Mesh(new THREE.CircleGeometry(r, 10), mat);
-    const ang = Math.random() * Math.PI * 2;
-    const dist = Math.random() * 0.65;
-    mesh.position.set(Math.cos(ang) * dist, baseY + (Math.random() - 0.5) * 0.75, 0.02);
-    mesh.rotation.z = Math.random() * Math.PI;
-    group.add(mesh);
-  }
-  scene.add(group);
-  pushSplat(group);
-}
-
 function addFloorBlob(scene, x, z, color) {
   const group = new THREE.Group();
+  group.name = "paintSplat";
   group.position.set(x, 0.11, z);
   const mat = splatMat(color);
   const core = new THREE.Mesh(new THREE.CircleGeometry(0.34, 12), mat);
@@ -239,11 +331,11 @@ function addFloorBlob(scene, x, z, color) {
     group.add(m);
   }
   scene.add(group);
-  pushSplat(group);
+  pushSplat({ mesh: group, kind: "floor" });
 }
 
-/** 依瞄準線對場景網格射線 → 牆／地／角色／掩體皆可上漆 */
-export function spawnPaintFromAim(scene, ctx, maze, ox, oy, oz, dx, dy, dz, color, ignoreRoot = null) {
+/** 依瞄準線上漆；命中角色會貼在模型上 */
+export function spawnPaintFromAim(scene, ctx, maze, ox, oy, oz, dx, dy, dz, color, ignoreRoot = null, players = []) {
   if (!scene) return false;
   const col = color ?? 0xff4466;
   _origin.set(ox, oy, oz);
@@ -256,26 +348,34 @@ export function spawnPaintFromAim(scene, ctx, maze, ox, oy, oz, dx, dy, dz, colo
   const hits = _raycaster.intersectObjects(meshes, true);
   for (const hit of hits) {
     if (!hit.face) continue;
+    _wp.copy(hit.point);
     const n = hit.face.normal.clone();
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
     n.applyMatrix3(normalMatrix).normalize();
-    spawnPaintOnSurface(scene, hit.point, n, col);
+    _wn.copy(n);
+    const player = findSurvivorForObject(hit.object, players);
+    if (player) {
+      attachSplatToPlayer(player, _wp, _wn, col);
+      return true;
+    }
+    spawnPaintOnWorldSurface(scene, _wp, _wn, col);
     return true;
   }
   return spawnPaintAlongAimMaze(scene, ctx, maze, ox, oy, oz, dx, dy, dz, col);
 }
 
 export function spawnPaintOnBody(scene, target, fromX, fromZ, footY, color) {
-  if (!scene || !target) return;
+  if (!target?.mesh) return;
   const col = color ?? 0xff4466;
   const tx = target.pos.x;
   const tz = target.pos.z;
-  const ty = (footY ?? 0) + 0.9 + Math.random() * 0.7;
+  const ty = (footY ?? 0) + 0.85 + Math.random() * 0.75;
   const nx = tx - fromX;
   const nz = tz - fromZ;
   const len = Math.hypot(nx, nz) || 1;
-  const normal = new THREE.Vector3(nx / len, 0.15, nz / len);
-  spawnPaintOnSurface(scene, new THREE.Vector3(tx + (Math.random() - 0.5) * 0.35, ty, tz + (Math.random() - 0.5) * 0.35), normal, col);
+  const normal = new THREE.Vector3(nx / len, 0.12, nz / len);
+  _wp.set(tx + (Math.random() - 0.5) * 0.3, ty, tz + (Math.random() - 0.5) * 0.3);
+  attachSplatToPlayer(target, _wp, normal, col);
 }
 
 function spawnPaintAlongAimMaze(scene, ctx, maze, ox, oy, oz, dx, dy, dz, color) {

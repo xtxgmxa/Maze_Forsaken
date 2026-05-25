@@ -107,8 +107,14 @@ export function playAbilityVfx(scene, p, abId, opts = {}) {
   });
 }
 
-export function spawnHitVfx(scene, x, z) {
-  spawnVfx(scene, "hit", x, z, { life: 0.22, color: 0xffaa44, lite: true, scale: 0.5 });
+export function spawnHitVfx(scene, x, z, opts = {}) {
+  const color = opts.color ?? 0xffaa44;
+  const scale = opts.scale ?? 0.5;
+  const life = opts.life ?? 0.22;
+  spawnVfx(scene, "hit", x, z, { life, color, lite: opts.lite !== false, scale });
+  if (opts.strong) {
+    spawnVfx(scene, "hit", x, z, { life: 0.28, color: 0xff1122, lite: true, scale: scale * 1.35 });
+  }
 }
 
 export function clearVfxPool() {

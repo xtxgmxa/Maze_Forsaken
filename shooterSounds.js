@@ -3,6 +3,7 @@
  * 未配置或載入失敗時，由 audio.js 的合成音 fallback。
  */
 import { getAudioContext, getSfxBus } from "./audio.js";
+import { fetchDecodeAudio } from "./audioLoad.js";
 
 const CONFIG_URL = "assets/audio/shooter-sounds.json";
 
@@ -55,14 +56,10 @@ export async function preloadShooterSounds() {
   if (!actx) return;
   for (const [id, path] of Object.entries(config)) {
     if (!path || typeof path !== "string") continue;
-    try {
-      const res = await fetch(path);
-      if (!res.ok) continue;
-      const ab = await res.arrayBuffer();
-      buffers[id] = await actx.decodeAudioData(ab.slice(0));
-    } catch {
-      delete buffers[id];
-    }
+    if (id === "winMusic" || id === "loseMusic") continue;
+    const buf = await fetchDecodeAudio(actx, path);
+    if (buf) buffers[id] = buf;
+    else delete buffers[id];
   }
 }
 

@@ -1,0 +1,5 @@
+# 區網模組（可選）：GitHub 單機版若不要區網，取消下面註解
+# lan/
+# lan-server/node_modules/
+
+lan-server/node_modules/

@@ -3,6 +3,7 @@
  * 設定：assets/audio/game-sounds.json
  */
 import { getAudioContext, getSfxBus, playSfx } from "./audio.js";
+import { fetchDecodeAudio } from "./audioLoad.js";
 
 const CONFIG_URL = "assets/audio/game-sounds.json";
 const DEFAULT_PATHS = {
@@ -52,14 +53,9 @@ export async function preloadGameSounds() {
   if (!actx) return;
   for (const [id, path] of Object.entries(config)) {
     if (!path || typeof path !== "string") continue;
-    try {
-      const res = await fetch(path);
-      if (!res.ok) continue;
-      const ab = await res.arrayBuffer();
-      buffers[id] = await actx.decodeAudioData(ab.slice(0));
-    } catch {
-      delete buffers[id];
-    }
+    const buf = await fetchDecodeAudio(actx, path);
+    if (buf) buffers[id] = buf;
+    else delete buffers[id];
   }
 }
 

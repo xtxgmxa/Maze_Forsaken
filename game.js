@@ -80,7 +80,8 @@ import {
 } from "./touchControls.js";
 import { tickGamepadHud, hideGamepadHud } from "./gamepadHud.js";
 import {
-  assignPaintColor, spawnPaintSplat, spawnPaintAtHit, spawnPaintFromAim, spawnPaintOnBody, clearPaintSplats,
+  assignPaintColor, spawnPaintSplat, spawnPaintAtHit, spawnPaintFromAim, spawnPaintOnBody,
+  clearPaintSplats, clearPlayerPaintSplats,
 } from "./paintballSplats.js";
 import { initMenuWizard, showCoopMobileWarn, initPerfTipModal } from "./menuUI.js";
 
@@ -201,6 +202,7 @@ const COOP_SPLIT_GAP = 5;
 const DOUBLE_JUMP_RECHARGE = 8;
 let ctx, maze, exitPos, exitGroup;
 let survivors = [];
+let lanSync = null;
 let killers = [];
 let teleporters = [];
 let worldItems = [];
@@ -623,6 +625,7 @@ function initMenu() {
   ].forEach((m, i) => {
     const card = document.createElement("div");
     card.className = "mode-card" + (i === 0 ? " selected" : "") + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
+    card.dataset.modeId = m.id;
     card.innerHTML = `<h3>${m.name}${m.wip ? " <span class='wip-tag'>開發中</span>" : ""}</h3><p>${m.desc}</p>`;
     card.onclick = () => {
       document.querySelectorAll(".mode-card").forEach((c) => c.classList.remove("selected"));
@@ -859,8 +862,25 @@ function getHumanSurvivor() {
 function isSpectating() {
   if (playAsKiller || gameMode === "versus" || gameState !== "play") return false;
   const human = getHumanSurvivor();
-  if (isShooterMode()) return !!(human && human._awaitingRespawn);
+  if (isShooterMode()) {
+    return !!(human && !human.isAI && (human._awaitingRespawn || isShooterPlayerDown(human)));
+  }
   return !!(human && human.caught);
+}
+
+/** 槍戰倒地／淘汰（含內鬼誤殺）→ 觀戰存活玩家 */
+function tryEnterShooterSpectate(toastMsg) {
+  if (!isShooterMode() || gameState !== "play") return;
+  const human = getHumanSurvivor();
+  if (!human?.isAI && !isShooterPlayerDown(human)) return;
+  const targets = getSpectateTargets();
+  if (targets.length) {
+    spectateIndex = Math.min(Math.max(0, spectateIndex), targets.length - 1);
+    const focus = targets[spectateIndex];
+    if (focus?.yaw != null) camYaw = focus.yaw;
+  }
+  syncSpectateUi();
+  if (toastMsg && !human.isAI) showToast(toastMsg, 2800);
 }
 
 function getSpectateTargets() {
@@ -911,9 +931,17 @@ function updateSpectateBanner() {
   label.textContent = `觀戰：${focus.charDef?.name || "倖存者"}${total > 1 ? ` (${idx + 1}/${total})` : ""}`;
   const sub = document.getElementById("spectateHint");
   if (sub) {
-    sub.textContent = total > 1
-      ? (isTouchUiEnabled() ? "點 ‹ › 切換視角" : "[ ] 或 ← → 切換視角")
-      : "觀戰中 · ESC 暫停";
+    const human = getHumanSurvivor();
+    const eliminated = isShooterMode() && human && isShooterPlayerDown(human) && !human._awaitingRespawn;
+    if (eliminated) {
+      sub.textContent = total > 1
+        ? (isTouchUiEnabled() ? "已淘汰 · ‹ › 切換 · 等待本局" : "已淘汰 · [ ] 切換 · 等待本局")
+        : "已淘汰 · 觀戰中 · 等待本局結束";
+    } else {
+      sub.textContent = total > 1
+        ? (isTouchUiEnabled() ? "點 ‹ › 切換視角" : "[ ] 或 ← → 切換視角")
+        : "觀戰中 · ESC 暫停";
+    }
   }
 }
 
@@ -1064,7 +1092,7 @@ function resolvePlayFocus() {
   }
   const human = getHumanSurvivor();
   if (isShooterMode()) {
-    if (human?._awaitingRespawn) {
+    if (human && (human._awaitingRespawn || isShooterPlayerDown(human))) {
       const watch = getCameraFocus();
       if (watch) return watch;
       return survivors.find((s) => isShooterCombatActive(s)) || human;
@@ -1080,6 +1108,10 @@ function returnToMenu() {
   stopShooterResultMusic();
   stopGameMusic(musicEl);
   suspendGameAudio();
+  lanSync?.destroy();
+  lanSync = null;
+  delete window.__forsakenLanSession;
+  delete window.__forsakenLanClient;
   gameState = "menu";
   closeMathQuiz();
   keyHuntState = null;
@@ -1109,6 +1141,7 @@ function returnToMenu() {
     "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui", "scoreboard-open"
   );
   refreshMenuForMode();
+  syncGameCanvasVisibility();
 }
 
 function openSettings() {
@@ -1300,6 +1333,15 @@ function initRenderer() {
 function updateCanvasPointerEvents() {
   if (!renderer) return;
   renderer.domElement.style.pointerEvents = isTouchUiEnabled() ? "none" : "auto";
+}
+
+/** 主選單／結算時隱藏 WebGL，避免 3D 畫布蓋住首頁 */
+function syncGameCanvasVisibility() {
+  if (!renderer?.domElement) return;
+  const show = gameState === "play" || gameState === "paused" || gameState === "loading";
+  renderer.domElement.style.display = show ? "block" : "none";
+  if (!show) renderer.domElement.style.pointerEvents = "none";
+  else updateCanvasPointerEvents();
 }
 
 function ensureGraphics() {
@@ -1553,7 +1595,7 @@ function showHitMarker() {
   if (!ch) return;
   ch.classList.add("hit");
   clearTimeout(showHitMarker._t);
-  showHitMarker._t = setTimeout(() => ch.classList.remove("hit"), 120);
+  showHitMarker._t = setTimeout(() => ch.classList.remove("hit"), 220);
 }
 
 function invalidateMinimapBase() {
@@ -1721,14 +1763,16 @@ function spawnDamageNumber(wx, wz, amount, opts = {}) {
   if (opts.headshot) cls += " dmg-head";
   if (opts.onYou) cls += " dmg-you";
   if (opts.onEnemy && !opts.onYou) cls += " dmg-enemy";
+  if (opts.onEnemy && isShooterMode()) cls += " dmg-shooter";
   el.className = cls;
-  el.textContent = opts.headshot ? `爆頭 -${amount}` : `-${Math.round(amount)}`;
+  el.textContent = opts.headshot ? `爆頭 -${Math.round(amount)}` : `-${Math.round(amount)}`;
+  el.style.fontWeight = "900";
   const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
   const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
   el.style.left = `${sx}px`;
   el.style.top = `${sy}px`;
   layer.appendChild(el);
-  setTimeout(() => el.remove(), opts.headshot ? 1400 : 1100);
+  setTimeout(() => el.remove(), opts.headshot ? 1600 : 1300);
 }
 
 function spawnKillPopup(wx, wz, victimName) {
@@ -1810,7 +1854,8 @@ function eliminateShooterForTeamkill(p, reason) {
     p.mesh.rotation.x = 0;
   }
   if (!p.isAI) syncShooterRespawnUi();
-  showToast(reason || `${p.charDef?.name || "玩家"} 誤傷隊友，立刻淘汰！`, 1400, "kill");
+  const base = reason || `${p.charDef?.name || "玩家"} 誤傷隊友，立刻淘汰！`;
+  showToast(`${base} · 觀戰中`, 2000, "kill");
 }
 
 function damageSurvivor(target, killer, amount, opts = {}) {
@@ -1830,10 +1875,21 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   }
   if (isShooterMode()) {
     playShooterSfx(headshot ? "headshot" : "hitBody", playSfx, 0.05);
-    target._hitFlash = headshot ? 0.48 : 0.4;
-    target._hitFlashColor = headshot ? 0xff2244 : 0xffffff;
-    target._hitFlashHead = !!headshot;
-    spawnHitVfx(scene, target.pos.x, target.pos.z);
+    target._hitFlash = headshot ? 0.65 : 0.52;
+    target._hitFlashColor = 0xff2222;
+    target._hitFlashHead = true;
+    const hy = getTargetHeadY(target);
+    spawnHitVfx(scene, target.pos.x, target.pos.z, {
+      color: headshot ? 0xff1144 : 0xff3333,
+      scale: headshot ? 1.0 : 0.82,
+      strong: true,
+      lite: false,
+    });
+    spawnHitVfx(scene, target.pos.x, hy, {
+      color: 0xff0000,
+      scale: 0.55,
+      strong: true,
+    });
     if (killer && !killer.isAI) {
       showHitMarker();
       if (headshot) showToast("爆頭！", 700, "default");
@@ -1875,6 +1931,7 @@ function damageSurvivor(target, killer, amount, opts = {}) {
   if (target.hp <= 0) {
     if (isShooterMode() && shooterState) {
       onShooterDowned(killer, target, shooterState, elapsed, (x, z) => {
+        clearPlayerPaintSplats(target);
         spawnShooterHealOrb(scene, x, z, worldHeight(target));
         if (killer && !killer.isAI) showToast("擊倒！地上出現綠色補血包", 1100);
       });
@@ -2337,20 +2394,18 @@ function closeMathQuiz() {
 function syncShooterRespawnUi() {
   const human = getHumanSurvivor();
   const waiting = !!(human && human._awaitingRespawn);
+  const spectateDown = !!(human && !human.isAI && isShooterPlayerDown(human));
   document.body.classList.toggle("shooter-awaiting-respawn", waiting);
+  document.body.classList.toggle("shooter-eliminated", spectateDown && !waiting);
   const touchBtn = document.getElementById("btnTouchRespawn");
   const deskBtn = document.getElementById("btnRespawn");
   if (touchBtn) touchBtn.hidden = !waiting || !isTouchUiEnabled();
   if (deskBtn) deskBtn.hidden = !waiting || isTouchUiEnabled();
-  if (waiting) {
-    const targets = getSpectateTargets();
-    if (targets.length) {
-      spectateIndex = Math.min(spectateIndex, targets.length - 1);
-      if (spectateIndex < 0) spectateIndex = 0;
-      const focus = targets[spectateIndex];
-      if (focus?.yaw != null) camYaw = focus.yaw;
-    }
-    syncSpectateUi();
+  if (waiting || spectateDown) {
+    tryEnterShooterSpectate();
+  } else if (!isSpectating()) {
+    document.body.classList.remove("spectating");
+    updateSpectateBanner();
   }
 }
 
@@ -2442,7 +2497,8 @@ function tryShooterFire(p) {
     p.pos.z + aimDir.z * 0.85,
     aimDir.x, aimDir.y, aimDir.z,
     p.paintColor ?? p._shooterColor,
-    p.mesh
+    p.mesh,
+    survivors
   );
   for (const pr of fireShooterWeapon(p, aimYaw, aimDir)) {
     pr.color = p.paintColor ?? pr.color;
@@ -2788,6 +2844,14 @@ async function runStartGame() {
   gameApi.minions = minions;
 
   readMatchConfig();
+  const lanSess = window.__forsakenLanSession;
+  if (lanSess) {
+    numLocalPlayers = 1;
+    showToast(
+      `區網房間 · ${lanSess.isHost ? "房主" : "加入"} · 可見其他玩家位置（戰鬥仍各機獨立）`,
+      3800
+    );
+  }
   selectedLevel = enrichLevelForMode(selectedLevel, gameMode);
   winGoal = document.getElementById("winGoal")?.value || "exit";
   if (isKeyHuntMode() || isPlatformerMode()) winGoal = "exit";
@@ -3101,6 +3165,17 @@ async function runStartGame() {
 
   gameState = "play";
   hideLoading();
+  if (window.__forsakenLanSession?.roomId && window.__forsakenLanClient?.connected) {
+    import("./lan/sync.js")
+      .then(({ createLanSync }) => {
+        lanSync?.destroy();
+        lanSync = createLanSync({
+          scene,
+          getLocalPlayer: () => getHumanSurvivor() || survivors.find((s) => !s.isAI),
+        });
+      })
+      .catch((err) => console.warn("[LAN sync]", err));
+  }
   document.getElementById("pausePanel")?.classList.remove("show");
   snapCameraToPlayer();
   updateCamera();
@@ -3976,11 +4051,11 @@ function updateEntity(p, dt, move) {
     if (p.mesh.scale.x !== 1) p.mesh.scale.set(1, 1, 1);
     if (p._hitFlash > 0) {
       p._hitFlash -= dt;
-      const maxFlash = p._hitFlashHead ? 0.48 : 0.4;
-      const flashCol = p._hitFlashColor ?? (p._hitFlashHead ? 0xff2244 : 0xffffff);
+      const maxFlash = isShooterMode() ? (p._hitFlashHead ? 0.65 : 0.52) : (p._hitFlashHead ? 0.48 : 0.4);
+      const flashCol = p._hitFlashColor ?? (isShooterMode() ? 0xff2222 : (p._hitFlashHead ? 0xff2244 : 0xffffff));
       const t = Math.min(1, p._hitFlash / maxFlash);
       const pulse = isShooterMode()
-        ? 1.1 + t * 3.2 + Math.sin(t * Math.PI) * 1.5
+        ? 2.2 + t * 5.5 + Math.sin(t * Math.PI * 2) * 2.8
         : 0.35 + t * 0.55;
       p.mesh.traverse((c) => {
         if (c === p.gunMesh) return;
@@ -4645,7 +4720,9 @@ function renderShooterSplitView(W, H) {
 }
 
 function renderGameView() {
+  syncGameCanvasVisibility();
   if (!renderer || !scene || !camera) return;
+  if (gameState !== "play" && gameState !== "paused" && gameState !== "loading") return;
   const W = window.innerWidth;
   const H = window.innerHeight;
   const line = document.getElementById("coopSplitLine");
@@ -5217,6 +5294,7 @@ function loopFrame(now) {
     killerTimer -= dt;
     tickMissionGlow(missionStations, animTime);
     updateSurvivors(dt);
+    if (lanSync) lanSync.tick(dt);
     if (ledgeHintState?.hints?.length && verticalWorldState) {
       const ledgeFocus = getHumanSurvivor() || survivors[0];
       if (ledgeFocus) {
@@ -5301,7 +5379,7 @@ function loopFrame(now) {
           spawnPaintFromAim(
             scene, ctx, maze,
             bot.pos.x + dir.x * 0.85, eyeY + dir.y * 0.85, bot.pos.z + dir.z * 0.85,
-            dir.x, dir.y, dir.z, bot.paintColor ?? bot._shooterColor, bot.mesh
+            dir.x, dir.y, dir.z, bot.paintColor ?? bot._shooterColor, bot.mesh, survivors
           );
           for (const pr of fireShooterWeapon(bot, yaw, dir)) {
             pr.color = bot.paintColor ?? pr.color;
@@ -5359,11 +5437,99 @@ function loopFrame(now) {
   renderGameView();
 }
 
+function setGameModeForLan(modeId) {
+  if (!modeId) return;
+  const prev = gameMode;
+  gameMode = modeId;
+  document.querySelectorAll(".mode-card").forEach((c) => {
+    c.classList.toggle("selected", c.dataset.modeId === modeId);
+  });
+  resetCategoryAfterDedicatedMode(prev);
+  refreshMenuForMode();
+  rebuildLevelGrid();
+  const list = getLevelsForMenu();
+  if (!list.some((l) => l.id === selectedLevel?.id)) selectedLevel = list[0];
+  readMatchConfig();
+}
+
+function readMenuConfigForLan() {
+  const card = document.querySelector(".mode-card.selected");
+  if (card?.dataset?.modeId) gameMode = card.dataset.modeId;
+  readMatchConfig();
+  return {
+    gameMode,
+    levelId: selectedLevel?.id,
+    levelName: selectedLevel?.name,
+    mapLabel: selectedLevel?.name,
+    numSurvivors,
+    numLocalPlayers,
+    numKillers,
+    matchTime: matchTimeSeconds,
+    shooterPlayStyle,
+    winGoal,
+    levelCategory,
+    maxPlayers: numSurvivors,
+    playerRole,
+  };
+}
+
+function applyLanConfigFromHost(cfg) {
+  if (!cfg) return;
+  if (cfg.gameMode) gameMode = cfg.gameMode;
+  if (cfg.shooterPlayStyle) shooterPlayStyle = cfg.shooterPlayStyle;
+  if (cfg.winGoal) winGoal = cfg.winGoal;
+  if (cfg.levelCategory) levelCategory = cfg.levelCategory;
+  if (cfg.numSurvivors != null) numSurvivors = cfg.numSurvivors;
+  if (cfg.numLocalPlayers != null) numLocalPlayers = cfg.numLocalPlayers;
+  if (cfg.numKillers != null) numKillers = cfg.numKillers;
+  if (cfg.matchTime != null) {
+    matchTimeSeconds = cfg.matchTime;
+    killerTimer = matchTimeSeconds;
+  }
+  const list = getLevelsForMenu();
+  const lv = list.find((l) => l.id === cfg.levelId) || list[0];
+  selectedLevel = lv;
+  const catEl = document.getElementById("levelCategory");
+  const winEl = document.getElementById("winGoal");
+  if (catEl && cfg.levelCategory) catEl.value = cfg.levelCategory;
+  if (winEl && cfg.winGoal) winEl.value = cfg.winGoal;
+  const psEl = document.getElementById("shooterPlayStyle");
+  if (psEl && cfg.shooterPlayStyle) psEl.value = cfg.shooterPlayStyle;
+  refreshMenuForMode();
+  rebuildLevelGrid();
+}
+
+/** 僅在存在 lan/manifest.json 時動態載入；刪除 lan/ 則完全不影響單機 */
+async function tryInitLanModule() {
+  try {
+    const res = await fetch("lan/manifest.json", { cache: "no-cache" });
+    if (!res.ok) return;
+    const mod = await import("./lan/bootstrap.js");
+    await mod.initLanModule({
+      playSfx,
+      readMenuConfig: readMenuConfigForLan,
+      setGameMode: setGameModeForLan,
+      applyLanConfig: applyLanConfigFromHost,
+      startGame: () => {
+        startGame().catch((err) => {
+          console.error(err);
+          hideLoading();
+          alert(`開始遊戲失敗：${err.message || err}`);
+          returnToMenu();
+        });
+      },
+    });
+  } catch (err) {
+    console.debug("[FORSAKEN] 區網模組未載入", err);
+  }
+}
+
 function boot() {
   initAudio();
   bindMobileAudioElement(musicEl);
   bindAudioUnlock();
   initMenu();
+  tryInitLanModule();
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && (gameState === "menu" || gameState === "end")) {
       stopGameMusic(musicEl);
@@ -5377,6 +5543,7 @@ function boot() {
   try {
     ensureGraphics();
     setupLights();
+    syncGameCanvasVisibility();
   } catch (err) {
     console.error(err);
   }
