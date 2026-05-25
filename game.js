@@ -919,8 +919,19 @@ function getHumanFocus() {
   return survivors.find((s) => !s.caught) || survivors[0];
 }
 
+/** 相機／HUD 用：槍戰模式優先鎖定本人，避免 focus 為 null 導致畫面與計時卡住 */
+function resolvePlayFocus() {
+  if (playAsKiller) {
+    return killers.find((k) => !k.isAI) || killers[0];
+  }
+  const human = getHumanSurvivor();
+  if (isShooterMode() && human) return human;
+  return getCameraFocus() || human || survivors.find((s) => !s.caught) || survivors[0];
+}
+
 function returnToMenu() {
   hideLoading();
+  gameState = "menu";
   closeMathQuiz();
   keyHuntState = null;
   keyHuntGroup = null;
@@ -939,7 +950,6 @@ function returnToMenu() {
   overlay.classList.remove("show", "win", "lose");
   menu.style.display = "flex";
   hud.classList.remove("show");
-  gameState = "menu";
   clickPrompt.classList.remove("show");
   if (musicEl) { musicEl.pause(); musicEl.currentTime = 0; }
   document.exitPointerLock?.();
@@ -2394,6 +2404,9 @@ async function startGame() {
 }
 
 async function runStartGame() {
+  document.getElementById("pausePanel")?.classList.remove("show");
+  shooterScoreboardOpen = false;
+  setShooterScoreboardVisible(false);
   ensureGraphics();
   refreshMenuForMode();
   if (checkMenuUiConsistency() && !isTouchUiEnabled()) {
@@ -2414,6 +2427,7 @@ async function runStartGame() {
   gameState = "loading";
   showLoading("正在建立迷宮…");
   await yieldFrame();
+  const loadStep = (msg) => showLoading(msg);
 
   elapsed = 0;
   animTime = 0;
@@ -2509,6 +2523,7 @@ async function runStartGame() {
     shooterState = createShooterState(selectedLevel, shooterPlayStyle);
   }
   await yieldFrame();
+  loadStep("正在建立場景…");
   buildMazeMeshes(ctx, maze, scene, {
     doorWalls: keyHuntState?.doors || puzzleDoorState?.doors || [],
   });
@@ -2526,6 +2541,7 @@ async function runStartGame() {
     realmZonesState = buildRealmZones(ctx, maze, scene, selectedLevel);
   }
   if (isShooterMode()) {
+    loadStep("正在布置槍戰競技場…");
     const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
     shooterArenaGroup = arena.group;
     bouncePads = spawnArenaBouncePads(
@@ -2554,6 +2570,7 @@ async function runStartGame() {
     }
   }
   await yieldFrame();
+  loadStep("正在放置出口與道具…");
 
   exitPos = cellCenter(ctx, ctx.w - 1, ctx.h - 1);
   gameApi.exitPos = exitPos;
@@ -2601,6 +2618,7 @@ async function runStartGame() {
     missionGroup = buildMissionMeshes(scene, missionStations, { compact: isTouchUiEnabled() });
   }
   await yieldFrame();
+  loadStep("正在生成角色…");
 
   if (!scene) throw new Error("場景未就緒，無法加入角色");
 
@@ -2725,7 +2743,10 @@ async function runStartGame() {
 
   gameState = "play";
   hideLoading();
+  document.getElementById("pausePanel")?.classList.remove("show");
   snapCameraToPlayer();
+  updateCamera();
+  updateHUD();
   drawMinimap();
   updateAbilityBar();
   updateInventoryBar();
@@ -2951,8 +2972,10 @@ function setMissionText() {
     <li class="active">關卡：${selectedLevel.name}（${selectedLevel.w}×${selectedLevel.h}）</li>
     <li>${modeText}</li>
     ${rules}
-    <li>藍=傳送 · 黃=任務 · 綠=出口 · 紫=陷阱(鑰匙模式)</li>
-    <li id="missionDist">尋找綠色光柱出口…</li>`;
+    ${isShooterMode()
+      ? "<li>雷達：紅/藍點為隊伍 · 白箭頭為你的朝向 · Tab 或點「戰績」看積分</li>"
+      : "<li>藍=傳送 · 黃=任務 · 綠=出口 · 紫=陷阱(鑰匙模式)</li>"}
+    <li id="missionDist">${isShooterMode() ? "左搖桿移動 · 右半滑動瞄準 · 開火鍵射擊" : "尋找綠色光柱出口…"}</li>`;
 }
 
 function abilityCdFillPct(p, ab) {
@@ -4127,7 +4150,9 @@ function renderGameView() {
     renderer.setViewport(0, 0, W, H);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
-    updateCamera();
+    if (survivors.length && (gameState === "play" || gameState === "paused" || gameState === "loading")) {
+      updateCamera();
+    }
     renderer.render(scene, camera);
     return;
   }
@@ -4400,8 +4425,9 @@ function tickPuzzleDoorBeacons() {
 
 function updateHUD() {
   syncSpectateUi();
-  const focus = isSpectating() ? getCameraFocus() : getHumanFocus();
-  if (!focus || !exitPos) return;
+  const focus = isSpectating() ? getCameraFocus() : resolvePlayFocus();
+  if (!focus) return;
+  if (!exitPos && usesExitWin()) return;
 
   const hp = Math.round(focus.hp ?? 100);
   const hpEl = document.getElementById("hudHp");
@@ -4439,7 +4465,47 @@ function updateHUD() {
     const d = Math.hypot(focus.pos.x - k.pos.x, focus.pos.z - k.pos.z);
     if (d < distK) distK = d;
   }
-  const distExit = Math.hypot(focus.pos.x - exitPos.x, focus.pos.z - exitPos.z);
+  const distExit = exitPos
+    ? Math.hypot(focus.pos.x - exitPos.x, focus.pos.z - exitPos.z)
+    : 99;
+
+  if (isShooterMode() && shooterState) {
+    const gun = getShooterWeapon(focus.weaponId);
+    const myScore = focus._shooterStats?.kills ?? 0;
+    const tLeft = `${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+    const styleTag = shooterState.playStyle === "ffa"
+      ? "自由混戰"
+      : shooterState.playStyle === "mole"
+        ? "無間道"
+        : "團隊對抗";
+    document.getElementById("hudObjective").textContent =
+      focus._awaitingRespawn
+        ? "已擊倒 · 按 R 或「重生」按鈕復活"
+        : `【${shooterState.levelName}】${styleTag} · 積分 ${myScore} · ${gun.name}`;
+    document.getElementById("hpBarWrap").style.display = "block";
+    document.getElementById("hudKiller").textContent =
+      shooterState.playStyle === "ffa" ? `槍戰 · ${survivors.length} 人混戰` : "槍戰 · 紅藍隊";
+    document.getElementById("hudKillerTimer").textContent = `剩餘 ${tLeft}`;
+    warning.classList.remove("show");
+    const distElEarly = document.getElementById("missionDist");
+    if (distElEarly) {
+      distElEarly.textContent = isTouchUiEnabled()
+        ? `${gun.name} · 積分 ${myScore} · 點戰績看名單`
+        : `${gun.name} · 積分 ${myScore} · Tab 戰績 · 綠十字補血`;
+    }
+    const ca = document.getElementById("hudCaught");
+    if (ca) {
+      ca.textContent = `存活 ${getAliveSurvivors().length}/${survivors.length} · 擊殺積分`;
+    }
+    document.getElementById("hudChar").textContent = focus.charDef?.name || "—";
+    const mapLabel = document.getElementById("hudMapName");
+    if (mapLabel && selectedLevel) {
+      mapLabel.textContent = `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
+    }
+    document.getElementById("hudPhase").textContent =
+      focus._awaitingRespawn ? "等待重生" : `槍戰 · ${selectedLevel?.name || "競技"}`;
+    return;
+  }
 
   if (playAsKiller) {
     document.getElementById("hudObjective").textContent =
@@ -4506,25 +4572,6 @@ function updateHUD() {
         ? `經典 · ${selectedLevel.name}`
         : `${selectedLevel.name} · ${selectedLevel.desc || ""}`.slice(0, 48);
     }
-  }
-
-  if (isShooterMode() && shooterState) {
-    const gun = getShooterWeapon(focus.weaponId);
-    const myScore = focus._shooterStats?.kills ?? 0;
-    const tLeft = `${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
-    const styleTag = shooterState.playStyle === "ffa" ? "自由混戰" : "團隊對抗";
-    document.getElementById("hudObjective").textContent =
-      `【${shooterState.levelName}】${styleTag} · 積分 ${myScore} · ${gun.name}`;
-    document.getElementById("hudKiller").textContent =
-      shooterState.playStyle === "ffa" ? `槍戰 · ${survivors.length} 人混戰` : "槍戰 · 紅藍隊";
-    document.getElementById("hudKillerTimer").textContent = `剩餘 ${tLeft}`;
-    warning.classList.remove("show");
-    if (distEl) {
-      distEl.textContent = isTouchUiEnabled()
-        ? `${gun.name} · 積分 ${myScore} · 點戰績看名單`
-        : `${gun.name} · 積分 ${myScore} · Tab 戰績 · 綠十字補血`;
-    }
-    return;
   }
 
   if (isPuzzleDoorMode() && puzzleDoorState) {
@@ -4738,7 +4785,6 @@ function loop(now) {
     syncProjectileMeshes();
     updateMinions(dt);
     updateVfx(dt);
-    updateCamera();
     if (isShooterMode()) {
       updateShooterFov();
       const sh = scene?.userData?.shadowLight;
@@ -4799,7 +4845,7 @@ function boot() {
       onShooterFire: () => {
         if (gameState !== "play" || !isShooterMode()) return;
         const h = getHumanSurvivor();
-        if (h && !h.caught) tryShooterFire(h);
+        if (h && !isShooterPlayerDown(h)) tryShooterFire(h);
       },
       onShooterScope: () => {
         if (gameState !== "play" || !isShooterMode()) return;
