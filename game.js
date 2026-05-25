@@ -115,7 +115,7 @@ const MODE_PREVIEW = {
   hardcore: "assets/characters/killers/slasher.jpg",
 };
 import {
-  generateMaze, generateMazeSeeded, createSeededRandom, createMazeContext, cellCenter, buildMazeMeshes,
+  generateMaze, generateMazeSeeded, createSeededRandom, createMazeContext, cellCenter, buildMazeMeshes, ensureMazeGrid,
   createExitMarker, moveWithCollision, collides, bfsNextStep, worldToCell, isCellReachable,
   addMazeLoops, applyMapStyle, createTeleporters, buildTeleporterMeshes,
   spawnWorldItems, buildItemMeshes, shooterLineBlocked,
@@ -1658,9 +1658,11 @@ function rebuildMinimapBase() {
   const cellPx = (w - pad * 2) / ctx.w;
   ctx2.fillStyle = "#0c0814";
   ctx2.fillRect(0, 0, w, h);
+  if (!maze?.length || maze.length !== ctx.h || !maze[0] || maze[0].length !== ctx.w) return;
   for (let gz = 0; gz < ctx.h; gz++) {
     for (let gx = 0; gx < ctx.w; gx++) {
-      const cell = maze[gz][gx];
+      const cell = maze[gz]?.[gx];
+      if (!cell) continue;
       const px = pad + gx * cellPx;
       const py = pad + gz * cellPx;
       ctx2.fillStyle = ((gx + gz) % 3 === 0) ? "#3a4860" : "#3a3050";
@@ -2960,7 +2962,10 @@ async function runStartGame() {
   keyHuntState = null;
   keyHuntGroup = null;
 
-  const theme = applyShooterThemeToLevel(selectedLevel, getLevelTheme(selectedLevel));
+  const baseTheme = getLevelTheme(selectedLevel);
+  const theme = isShooterMode()
+    ? applyShooterThemeToLevel(selectedLevel, baseTheme)
+    : baseTheme;
   ctx = createMazeContext(selectedLevel, theme);
   killerTimer = matchTimeSeconds;
   missionsDone = 0;
@@ -2990,6 +2995,11 @@ async function runStartGame() {
   const mapRng = createSeededRandom(mapSeed);
   const mapStyle = getMapStyle(selectedLevel, gameMode);
   maze = generateMazeSeeded(ctx.w, ctx.h, mapSeed);
+  const mazeFix = ensureMazeGrid(maze, ctx.w, ctx.h, mapSeed);
+  maze = mazeFix.maze;
+  ctx.w = mazeFix.w;
+  ctx.h = mazeFix.h;
+  selectedLevel = { ...selectedLevel, w: ctx.w, h: ctx.h };
   const loopCount = isClassicMode()
     ? Math.min(ctx.loops ?? 4, 4)
     : gameMode === "solo" || gameMode === "practice"

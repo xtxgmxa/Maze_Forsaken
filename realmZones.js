@@ -86,9 +86,11 @@ export function buildRealmZones(ctx, maze, scene, level = {}) {
       group.add(floor);
 
       const pillarMat = lambertStud(realm.color, realm.emissive, 0.45);
+      const spanX = Math.max(1, gx1 - gx0 - 2);
+      const spanZ = Math.max(1, gz1 - gz0 - 2);
       for (let i = 0; i < 6; i++) {
-        const gx = gx0 + 1 + ((i * 7 + qx * 3) % Math.max(1, gx1 - gx0 - 2));
-        const gz = gz0 + 1 + ((i * 5 + qz * 2) % Math.max(1, gz1 - gz0 - 2));
+        const gx = Math.min(gx1 - 1, gx0 + 1 + ((i * 7 + qx * 3) % spanX));
+        const gz = Math.min(gz1 - 1, gz0 + 1 + ((i * 5 + qz * 2) % spanZ));
         const c = cellCenter(ctx, gx, gz);
         const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 5.5, 8), pillarMat);
         pillar.position.set(c.x, 2.75, c.z);

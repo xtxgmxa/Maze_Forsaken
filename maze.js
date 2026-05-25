@@ -42,7 +42,31 @@ export function generateMaze(w, h, rng = Math.random) {
 }
 
 export function generateMazeSeeded(w, h, seed) {
-  return generateMaze(w, h, createSeededRandom(seed));
+  const W = Math.max(3, Math.floor(Number(w)) || 11);
+  const H = Math.max(3, Math.floor(Number(h)) || 11);
+  return generateMaze(W, H, createSeededRandom(seed));
+}
+
+/** 驗證迷宮陣列尺寸；不符時依種子重建（修復 maze[gz][gx] 越界） */
+export function ensureMazeGrid(maze, w, h, seed = 1) {
+  const W = Math.max(3, Math.floor(Number(w)) || 11);
+  const H = Math.max(3, Math.floor(Number(h)) || 11);
+  const ok =
+    Array.isArray(maze) &&
+    maze.length === H &&
+    maze[0] &&
+    maze[0].length === W &&
+    maze[H - 1]?.[W - 1];
+  if (ok) return { maze, w: W, h: H };
+  console.warn("[maze] 迷宮尺寸不符，已重建", { want: `${W}x${H}`, got: `${maze?.[0]?.length ?? 0}x${maze?.length ?? 0}` });
+  return { maze: generateMazeSeeded(W, H, seed), w: W, h: H };
+}
+
+export function getMazeCell(maze, w, h, gx, gz) {
+  if (gx < 0 || gz < 0 || gx >= w || gz >= h) return null;
+  const row = maze[gz];
+  if (!row) return null;
+  return row[gx] ?? null;
 }
 
 /** 打通額外牆 → 環路、多條路線 */
@@ -53,18 +77,21 @@ export function addMazeLoops(maze, w, h, extraPassages, rng = Math.random) {
     tries++;
     const gx = Math.floor(rng() * w);
     const gz = Math.floor(rng() * h);
-    const cell = maze[gz][gx];
+    const cell = getMazeCell(maze, w, h, gx, gz);
+    if (!cell) continue;
     const opts = [];
     if (cell.right && gx < w - 1) opts.push("right");
     if (cell.bottom && gz < h - 1) opts.push("bottom");
     if (!opts.length) continue;
     const pick = opts[Math.floor(rng() * opts.length)];
-    if (pick === "right") {
+    if (pick === "right" && gx < w - 1) {
       cell.right = false;
-      maze[gz][gx + 1].left = false;
-    } else {
+      const nb = getMazeCell(maze, w, h, gx + 1, gz);
+      if (nb) nb.left = false;
+    } else if (gz < h - 1) {
       cell.bottom = false;
-      maze[gz + 1][gx].top = false;
+      const nb = getMazeCell(maze, w, h, gx, gz + 1);
+      if (nb) nb.top = false;
     }
     added++;
   }
@@ -132,9 +159,11 @@ export function applyMapStyle(maze, w, h, style, rng = Math.random) {
 }
 
 export function createMazeContext(level, theme = null) {
+  const w = Math.max(3, Math.floor(Number(level?.w)) || 11);
+  const h = Math.max(3, Math.floor(Number(level?.h)) || 11);
   return {
-    w: level.w,
-    h: level.h,
+    w,
+    h,
     cell: level.cellSize ?? 9,
     killerSpeed: level.killerSpeed,
     fogNear: level.fogNear,
@@ -423,7 +452,8 @@ export function buildMazeMeshes(ctx, maze, scene, opts = {}) {
   for (let gz = 0; gz < h; gz++) {
     for (let gx = 0; gx < w; gx++) {
       const c = cellCenter(ctx, gx, gz);
-      const cellData = maze[gz][gx];
+      const cellData = getMazeCell(maze, w, h, gx, gz);
+      if (!cellData) continue;
       const alt = (gx + gz) % 2 === 1;
       if (cellData.top && !isDoorWallAt(doorWalls, gx, gz, "top")) pushWall(wallGeoH, c.x, c.z - cell / 2, cell, 1, alt);
       if (cellData.left && !isDoorWallAt(doorWalls, gx, gz, "left")) pushWall(wallGeoV, c.x - cell / 2, c.z, 1, cell, alt);
