@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { cellCenter } from "./maze.js";
 import { lambertStud } from "./mapTextures.js";
-
 /** 全員相同四種槍 */
 export const SHOOTER_WEAPONS = [
   { id: "smg", name: "衝鋒槍", slot: 1, damage: 8, fireCd: 0.14, spread: 0.035, speed: 30, color: 0x44ddff, pellets: 1 },
@@ -15,7 +14,7 @@ export function getShooterWeapon(id) {
 }
 
 export function getTargetHeadY(target) {
-  return (target?.elev ?? 0) + (target?._jumpY ?? 0) + 1.72;
+  return (target?.elev ?? 0) + (target?._jumpY ?? 0) + 2.0;
 }
 
 export function getShooterEyeY(p) {
@@ -293,9 +292,15 @@ export function buildShooterArena(ctx, maze, scene, level = {}) {
     arena: lambertStud(0x8899aa, 0x556677, 0.2),
     dock: lambertStud(0xcc4422, 0x882211, 0.25),
     sky: lambertStud(0x99ccff, 0x4488cc, 0.35),
+    urban: lambertStud(0x778899, 0x445566, 0.22),
+    neon: lambertStud(0xaa44ff, 0xff66cc, 0.38),
   }[style] || lambertStud(0x888899, 0x555566, 0.2);
 
-  const count = Math.min(w * h / 5, style === "sky" ? 18 : 28);
+  const area = w * h;
+  const count = Math.min(
+    Math.floor(area / 4.5),
+    style === "sky" ? Math.floor(area / 16) : style === "neon" ? Math.floor(area / 14) : Math.floor(area / 12)
+  );
   for (let i = 0; i < count; i++) {
     const gx = 2 + ((i * 11 + (level.mapSeed ?? 0)) % Math.max(1, w - 4));
     const gz = 2 + ((i * 7 + (level.id ?? 0) * 3) % Math.max(1, h - 4));
@@ -354,6 +359,21 @@ export function buildShooterArena(ctx, maze, scene, level = {}) {
     group.add(ring);
   }
 
+  if (style === "neon") {
+    for (let i = 0; i < Math.min(8, Math.floor(count / 4)); i++) {
+      const gx = 2 + ((i * 9) % Math.max(1, w - 4));
+      const gz = 2 + ((i * 13) % Math.max(1, h - 4));
+      const c = cellCenter(ctx, gx, gz);
+      const pillar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.4, 0.55, cell * 0.55, 8),
+        lambertStud(0xff66cc, 0xaa44ff, 0.45)
+      );
+      pillar.position.set(c.x, cell * 0.28, c.z);
+      group.add(pillar);
+      covers.push({ x: c.x, z: c.z, halfW: cell * 0.28, halfD: cell * 0.28, y: cell * 0.55 });
+    }
+  }
+
   scene.add(group);
   return { group, style, covers };
 }
@@ -373,19 +393,53 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     }
     if (!target) continue;
 
-    bot.yaw = Math.atan2(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
-    const move = { x: Math.sin(bot.yaw), z: Math.cos(bot.yaw), sprint: bd > 10 && bd < 24 };
-    if (bd > 26) { move.x *= -0.35; move.z *= -0.35; }
-    api.moveEntity(bot, dt, move);
+    const wId = getShooterWeapon(bot.weaponId).id;
+    const ideal = { smg: 12, rifle: 18, shotgun: 8, sniper: 26 }[wId] ?? 15;
+    const minR = ideal * 0.62;
+    const maxR = ideal * 1.28;
+    const yawTo = Math.atan2(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
+    bot.yaw = yawTo;
 
-    if (bd < 30 && canShooterFire(bot, api.elapsed)) {
+    const fwd = { x: Math.sin(yawTo), z: Math.cos(yawTo) };
+    const right = { x: Math.cos(yawTo), z: -Math.sin(yawTo) };
+    let mx = 0;
+    let mz = 0;
+    let sprint = false;
+
+    if (bd < minR) {
+      mx = -fwd.x * 0.92;
+      mz = -fwd.z * 0.92;
+      const strafe = Math.sin(api.elapsed * 1.4 + (bot.pos.x + bot.pos.z) * 0.1) > 0 ? 1 : -1;
+      mx += right.x * strafe * 0.35;
+      mz += right.z * strafe * 0.35;
+    } else if (bd > maxR && bd < 38) {
+      mx = fwd.x * 0.55;
+      mz = fwd.z * 0.55;
+      sprint = bd > ideal * 1.6;
+    } else if (bd >= minR && bd <= maxR) {
+      const strafe = Math.sin(api.elapsed * 1.1 + bot.pos.x * 0.07) > 0 ? 1 : -1;
+      mx = right.x * strafe * 0.62;
+      mz = right.z * strafe * 0.62;
+      if (Math.random() < 0.012) {
+        mx += -fwd.x * 0.25;
+        mz += -fwd.z * 0.25;
+      }
+    } else if (bd > 38) {
+      mx = fwd.x * 0.72;
+      mz = fwd.z * 0.72;
+      sprint = true;
+    }
+
+    api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
+
+    const canShoot = bd >= minR * 0.85 && bd <= maxR * 1.15 + (wId === "sniper" ? 18 : 6);
+    if (canShoot && bd < 34 && canShooterFire(bot, api.elapsed)) {
       api.fire(bot, bot.yaw);
       muzzleFlash(bot);
       bot._shootCd = api.elapsed + (bot._shooterFireCd ?? 0.25);
     }
   }
 }
-
 export function checkShooterWin(state, human) {
   if (!state || !human) return null;
   if (state.humanKills >= state.targetKills) {
@@ -395,8 +449,16 @@ export function checkShooterWin(state, human) {
 }
 
 export function onShooterDowned(killer, victim, state, elapsed) {
+  if (killer && killer !== victim) {
+    killer._shooterStats = killer._shooterStats || { kills: 0, deaths: 0 };
+    killer._shooterStats.kills += 1;
+  }
+  if (victim) {
+    victim._shooterStats = victim._shooterStats || { kills: 0, deaths: 0 };
+    victim._shooterStats.deaths += 1;
+  }
   if (!killer?.isAI) state.humanKills = (state.humanKills || 0) + 1;
-  else state.botKills = (state.botKills || 0) + 1;
+  else if (killer?.isAI && !victim?.isAI) state.botKills = (state.botKills || 0) + 1;
   victim.caught = true;
   if (victim.mesh) victim.mesh.visible = false;
   victim._respawnUntil = elapsed + (state.respawnDelay ?? 2.2);

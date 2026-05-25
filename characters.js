@@ -1,6 +1,35 @@
 import * as THREE from "three";
 import { plasticPBR } from "./mapTextures.js";
 
+let robloxFaceTex = null;
+let headSphereGeo = null;
+
+function getRobloxFaceTexture() {
+  if (robloxFaceTex) return robloxFaceTex;
+  const cvs = document.createElement("canvas");
+  cvs.width = 128;
+  cvs.height = 128;
+  const cx = cvs.getContext("2d");
+  cx.clearRect(0, 0, 128, 128);
+  cx.fillStyle = "#111";
+  cx.fillRect(36, 44, 16, 16);
+  cx.fillRect(76, 44, 16, 16);
+  cx.strokeStyle = "#111";
+  cx.lineWidth = 7;
+  cx.lineCap = "round";
+  cx.beginPath();
+  cx.arc(64, 78, 24, 0.12 * Math.PI, 0.88 * Math.PI);
+  cx.stroke();
+  robloxFaceTex = new THREE.CanvasTexture(cvs);
+  robloxFaceTex.colorSpace = THREE.SRGBColorSpace;
+  return robloxFaceTex;
+}
+
+function getHeadSphereGeo() {
+  if (!headSphereGeo) headSphereGeo = new THREE.SphereGeometry(0.5, 12, 10);
+  return headSphereGeo;
+}
+
 /** 肖像檔名對照你提供的「forsaken角色圖」資料夾 */
 const SK = (f) => `assets/characters/survivors/${f}`;
 const KK = (f) => `assets/characters/killers/${f}`;
@@ -215,10 +244,10 @@ export const SURVIVORS = [
 export function buildForsakenCharacter(def, scale = 1) {
   const s = (def.scale || 1) * scale;
   const root = new THREE.Group();
-  const mat = (color, emissive = 0x000000, ei = 0.12) => plasticPBR(color, emissive, ei);
-  const limbW = 0.44;
-  const limbH = 0.92;
-  const limbD = 0.44;
+  const mat = (color, emissive = 0x000000, ei = 0.1) => plasticPBR(color, emissive, ei);
+  const limbW = 0.42;
+  const limbH = 0.88;
+  const limbD = 0.42;
 
   const addBox = (parent, w, h, d, material, y, x = 0, z = 0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w * s, h * s, d * s), material);
@@ -234,37 +263,42 @@ export function buildForsakenCharacter(def, scale = 1) {
     return p;
   };
 
-  const hipY = 0.98;
-  const torsoY = 1.48;
+  const hipY = 0.92;
+  const torsoY = 1.38;
   const legMat = mat(def.legs);
   const torsoMat = mat(def.torso);
   const armMat = mat(def.shirt ?? def.torso);
 
-  const leftLeg = pivot(root, -0.42, hipY, 0);
-  const rightLeg = pivot(root, 0.42, hipY, 0);
+  const leftLeg = pivot(root, -0.36, hipY, 0);
+  const rightLeg = pivot(root, 0.36, hipY, 0);
   addBox(leftLeg, limbW, limbH, limbD, legMat, -limbH / 2);
   addBox(rightLeg, limbW, limbH, limbD, legMat, -limbH / 2);
 
   const torso = pivot(root, 0, torsoY, 0);
-  addBox(torso, 1.12, 1.22, 0.52, torsoMat, 0.61);
-  if (def.shirt != null) addBox(torso, 1.14, 0.95, 0.54, mat(def.shirt), 0.78);
-  if (def.accent) addBox(torso, 1.16, 0.18, 0.56, mat(def.accent, def.accent, 0.35), 1.08);
+  addBox(torso, 1.08, 1.14, 0.48, torsoMat, 0.57);
+  if (def.shirt != null) addBox(torso, 1.1, 0.88, 0.5, mat(def.shirt), 0.72);
+  if (def.accent) addBox(torso, 1.12, 0.16, 0.52, mat(def.accent, def.accent, 0.32), 1.02);
 
-  const leftArm = pivot(torso, -0.68, 0.92, 0);
-  const rightArm = pivot(torso, 0.68, 0.92, 0);
-  addBox(leftArm, limbW * 0.92, limbH * 0.95, limbD * 0.92, armMat, -limbH * 0.48);
-  addBox(rightArm, limbW * 0.92, limbH * 0.95, limbD * 0.92, armMat, -limbH * 0.48);
+  const leftArm = pivot(torso, -0.62, 0.86, 0);
+  const rightArm = pivot(torso, 0.62, 0.86, 0);
+  addBox(leftArm, limbW * 0.95, limbH, limbD * 0.95, armMat, -limbH * 0.5);
+  addBox(rightArm, limbW * 0.95, limbH, limbD * 0.95, armMat, -limbH * 0.5);
   if (def.accent) {
-    addBox(leftArm, limbW, 0.18, limbD, mat(def.accent, def.accent, 0.28), -0.32);
-    addBox(rightArm, limbW, 0.18, limbD, mat(def.accent, def.accent, 0.28), -0.32);
+    addBox(leftArm, limbW, 0.16, limbD, mat(def.accent, def.accent, 0.24), -0.28);
+    addBox(rightArm, limbW, 0.16, limbD, mat(def.accent, def.accent, 0.24), -0.28);
   }
 
-  const head = pivot(torso, 0, 1.72, 0);
-  addBox(head, 0.78, 0.78, 0.78, mat(def.head), 0.39);
-  const faceMat = mat(0x111111, 0x000000, 0);
-  addBox(head, 0.16, 0.14, 0.04, faceMat, 0.42, -0.18, 0.38);
-  addBox(head, 0.16, 0.14, 0.04, faceMat, 0.42, 0.18, 0.38);
-  addBox(head, 0.22, 0.06, 0.04, faceMat, 0.28, 0, 0.39);
+  const head = pivot(torso, 0, 1.62, 0);
+  const headMesh = new THREE.Mesh(getHeadSphereGeo(), mat(def.head));
+  headMesh.scale.setScalar(0.78 * s);
+  headMesh.position.y = 0.38 * s;
+  head.add(headMesh);
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.42 * s, 0.42 * s),
+    new THREE.MeshBasicMaterial({ map: getRobloxFaceTexture(), transparent: true, depthWrite: false })
+  );
+  face.position.set(0, 0.38 * s, 0.36 * s);
+  head.add(face);
 
   const ex = def.extras || [];
   if (ex.includes("red_eyes") || ex.includes("red_eye")) {
@@ -302,7 +336,7 @@ export function buildForsakenCharacter(def, scale = 1) {
     rightArm,
     weapon,
     baseTorsoY: torsoY * s,
-    baseHeadY: 1.72 * s,
+    baseHeadY: 1.62 * s,
   };
   root.traverse((c) => {
     if (c.isMesh) {

@@ -30,6 +30,9 @@ import {
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
   checkShooterWin, onShooterDowned, tickShooterRespawns, SHOOTER_WEAPONS, isShooterHeadshot, getTargetHeadY,
 } from "./shooterMode.js";
+import {
+  initShooterStats, renderShooterScoreboard, setShooterScoreboardVisible, resetShooterScoreboardUi,
+} from "./shooterScoreboard.js";
 import { getLevelMapSeed, getMapStyle, enrichLevelForMode } from "./mapGen.js";
 import { buildRealmZones, getRealmAt, applyRealmAtmosphere } from "./realmZones.js";
 import {
@@ -166,6 +169,7 @@ let realmZonesState = null;
 let lastRealmAtmosphereId = null;
 let ledgeHintState = null;
 let zoneParticleGroup = null;
+let shooterScoreboardOpen = false;
 let verticalWorldState = null;
 let bouncePads = [];
 let nearPuzzleDoor = null;
@@ -1585,7 +1589,9 @@ function refreshGameplayHints() {
           `手把：${gpl.move}移動 · ${gpl.look}視角 · ${gpl.jump}跳 · ${gpl.slide}滑壘 · ${gpl.sprint}衝刺 · ${gpl.ab1}/${gpl.ab2}/${gpl.ab3}招式 · ${gpl.interact}任務`;
       }
     } else if (isShooterMode()) {
-      hint.textContent = "槍戰：WASD · 滑鼠瞄準 · 左鍵射擊 · 1~4 換槍 · 狙擊右鍵開鏡 · ESC 暫停";
+      hint.textContent = "槍戰：WASD · 滑鼠瞄準 · 左鍵射擊 · 1~4 換槍 · Tab 戰績 · 狙擊右鍵開鏡 · ESC 暫停";
+      const esc = document.getElementById("hudEscHint");
+      if (esc) esc.textContent = "Tab 戰績 · ESC 暫停";
     } else if (isKeyHuntMode()) {
       hint.textContent = "鑰匙逃脫：撿鑰匙(左下顯示) · G 開門 · R 道具 · 全員到出口";
     } else if (playAsKiller) {
@@ -1919,7 +1925,24 @@ function closeMathQuiz() {
   if (isTouchUiEnabled()) setTouchMissionHighlight(false);
 }
 
+function showShooterScoreboard(open) {
+  if (!isShooterMode()) return;
+  shooterScoreboardOpen = !!open;
+  setShooterScoreboardVisible(open);
+  if (open) {
+    renderShooterScoreboard(survivors, getHumanSurvivor());
+  }
+  if (open && document.pointerLockElement) document.exitPointerLock?.();
+  else if (!open && gameState === "play" && !isTouchUiEnabled()) {
+    renderer?.domElement?.requestPointerLock?.();
+  }
+}
+
 function togglePause() {
+  if (shooterScoreboardOpen) {
+    showShooterScoreboard(false);
+    return;
+  }
   if (document.getElementById("mathQuiz")?.classList.contains("show")) {
     closeMathQuiz();
     return;
@@ -2491,6 +2514,7 @@ async function runStartGame() {
   }
   if (isShooterMode()) {
     survivors.forEach((s, i) => {
+      initShooterStats(s);
       assignPaintColor(s, i);
       const startGun = !s.isAI ? "rifle" : ["smg", "rifle", "shotgun", "sniper"][i % 4];
       applyShooterLoadout(s, startGun);
@@ -2498,6 +2522,13 @@ async function runStartGame() {
       if (s.mesh) s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
     });
     document.body.classList.add("shooter-play");
+    const sbBtn = document.getElementById("btnTouchScoreboard");
+    if (sbBtn) {
+      sbBtn.hidden = !isTouchUiEnabled();
+      sbBtn.onpointerdown = (ev) => { ev.preventDefault(); showShooterScoreboard(true); };
+      sbBtn.onpointerup = () => showShooterScoreboard(false);
+      sbBtn.onpointerleave = () => showShooterScoreboard(false);
+    }
     const touchAb = document.getElementById("touchRowAbilities");
     if (touchAb) touchAb.hidden = true;
     const mmLabel = document.querySelector("#minimap-wrap label");
@@ -2517,6 +2548,10 @@ async function runStartGame() {
     }
     if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
   } else {
+    showShooterScoreboard(false);
+    resetShooterScoreboardUi();
+    const sbBtn = document.getElementById("btnTouchScoreboard");
+    if (sbBtn) sbBtn.hidden = true;
     if (camera) {
       camera.fov = 68;
       camera.near = 0.1;
@@ -2840,6 +2875,8 @@ function updateAbilityBar() {
 
 function endGame(won, message) {
   gameState = "end";
+  showShooterScoreboard(false);
+  resetShooterScoreboardUi();
   overlay.classList.add("show");
   overlay.classList.toggle("win", won);
   overlay.classList.toggle("lose", !won);
@@ -2879,6 +2916,12 @@ function setupInput() {
         return;
       }
     }
+    if (gameState === "play" && isShooterMode() && e.code === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+      showShooterScoreboard(true);
+      return;
+    }
     if (gameState === "play" && BLOCK_KEYS.has(e.code)) e.preventDefault();
     keys[e.code] = true;
 
@@ -2912,6 +2955,12 @@ function setupInput() {
     if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) handleAbilityKeys(e.code, true);
   });
   window.addEventListener("keyup", (e) => {
+    if (gameState === "play" && isShooterMode() && e.code === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+      showShooterScoreboard(false);
+      return;
+    }
     keys[e.code] = false;
     if (e.code === "Space" || e.code === "Numpad0") {
       survivors.forEach((s) => { s._jumpHeld = false; });
@@ -4459,6 +4508,9 @@ function loop(now) {
       });
     }
     if (isShooterMode() && shooterState) {
+      if (shooterScoreboardOpen) {
+        renderShooterScoreboard(survivors, getHumanSurvivor());
+      }
       tickShooterRespawns(survivors, ctx, maze, elapsed);
       updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,

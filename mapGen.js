@@ -10,7 +10,7 @@ export function getMapStyle(level, gameMode) {
   if (level?.mapStyle) return level.mapStyle;
   const id = level?.id ?? 1;
   const v = id % 5;
-  if (gameMode === "shooter") return ["arena", "dock", "sky"][v % 3];
+  if (gameMode === "shooter") return ["arena", "dock", "sky", "urban", "neon"][v % 5];
   if (gameMode === "puzzle") return id % 2 === 0 ? "puzzle" : "sky";
   if (gameMode === "keyhunt") return ["ruins", "dock", "chase", "arena"][id % 4];
   if (gameMode === "platformer") return ["platform", "sky", "arena"][id % 3];
