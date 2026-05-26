@@ -15,6 +15,7 @@ export function spawnMatch({
   numSurvivors,
   numLocalPlayers = 1,
   numKillers,
+  skipBotFill = false,
 }) {
   if (!scene) throw new Error("spawnMatch: scene 未定義");
 
@@ -68,7 +69,7 @@ export function spawnMatch({
       addSurvivor(def, localProfiles[li], true, gx, gz);
     }
     const botTarget = gameMode === "shooter"
-      ? Math.max(couchLocals, Math.min(12, numSurvivors))
+      ? (skipBotFill ? couchLocals : Math.max(couchLocals, Math.min(12, numSurvivors)))
       : Math.max(1, Math.min(numSurvivors, survivorRoster.length));
     let guard = 0;
     while (survivors.length < botTarget && guard < 500) {

@@ -1648,8 +1648,26 @@ function getShooterAimYaw() {
   return Math.atan2(dir.x, dir.z);
 }
 
+function isLanPeerAimValid(other) {
+  if (!other?.isLanPeer) return true;
+  if (!other.mesh?.visible) return false;
+  const now = performance.now() * 0.001;
+  if (other._lastLanPkt != null && now - other._lastLanPkt > 0.4) return false;
+  return true;
+}
+
+function getLanPeerHitXZ(s) {
+  return { x: s._lanNetX ?? s.pos.x, z: s._lanNetZ ?? s.pos.z };
+}
+
+function getShooterScoreboardPlayers() {
+  if (!isLanShooterPvP()) return survivors;
+  return survivors.filter((s) => !s.isAI || s.isLanPeer);
+}
+
 function getShooterAutoAimTarget(p, baseYaw) {
   if (!p || !shooterSettings.autoAim || !isTouchUiEnabled()) return null;
+  if (isLanSession()) return null;
   const style = shooterState?.playStyle ?? shooterPlayStyle;
   const maxAng = (shooterSettings.autoAimDeg ?? 18) * (Math.PI / 180);
   const maxDist = 26;
@@ -1658,8 +1676,10 @@ function getShooterAutoAimTarget(p, baseYaw) {
   for (const other of survivors) {
     if (!isShooterEnemy(p, other, style, shooterState)) continue;
     if (!isShooterCombatActive(other)) continue;
-    const dx = other.pos.x - p.pos.x;
-    const dz = other.pos.z - p.pos.z;
+    if (!isLanPeerAimValid(other)) continue;
+    const hit = getLanPeerHitXZ(other);
+    const dx = hit.x - p.pos.x;
+    const dz = hit.z - p.pos.z;
     const dist = Math.hypot(dx, dz);
     if (dist > maxDist || dist < 0.5) continue;
     const tyaw = Math.atan2(dx, dz);
@@ -1683,6 +1703,7 @@ function applyShooterAutoAim(p, baseYaw) {
 
 function tickShooterAutoFire() {
   if (!isShooterMode() || gameState !== "play" || !isTouchUiEnabled() || !shooterSettings.autoAim) return;
+  if (isLanSession()) return;
   if (isSpectating()) return;
   const locals = isShooterSplitView() ? getLocalHumanPlayers() : [getHumanSurvivor()].filter(Boolean);
   for (const human of locals) {
@@ -2790,7 +2811,7 @@ function showShooterScoreboard(open) {
   shooterScoreboardOpen = !!open;
   setShooterScoreboardVisible(open);
   if (open) {
-    renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
+    renderShooterScoreboard(getShooterScoreboardPlayers(), getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
   }
   if (open && document.pointerLockElement) document.exitPointerLock?.();
   else if (!open && gameState === "play" && !isTouchUiEnabled()) {
@@ -2855,16 +2876,18 @@ function tryShooterFire(p) {
       if (s === p || isShooterPlayerDown(s) || (s.hp ?? 0) <= 0) continue;
       if (!moleMode && !isShooterEnemy(p, s, style, shooterState)) continue;
       if (moleMode && (s._shooterDowned || s._awaitingRespawn)) continue;
-      const dx = s.pos.x - p.pos.x;
-      const dz = s.pos.z - p.pos.z;
+      const hitPos = getLanPeerHitXZ(s);
+      const dx = hitPos.x - p.pos.x;
+      const dz = hitPos.z - p.pos.z;
       const d = Math.hypot(dx, dz);
-      if (d > range || d >= bestD) continue;
+      const meleeRange = s.isLanPeer ? range + 0.55 : range;
+      if (d > meleeRange || d >= bestD) continue;
       const dirX = dx / Math.max(0.0001, d);
       const dirZ = dz / Math.max(0.0001, d);
       const frontDot = dirX * aimDir.x + dirZ * aimDir.z;
       if (frontDot < 0.2) continue;
       const hitY = worldHeight(s) + 1.05;
-      if (shooterRayBlocked(ctx, maze, p.pos.x, p.pos.z, worldHeight(p) + 1.35, s.pos.x, hitY, s.pos.z, verticalWorldState)) continue;
+      if (shooterRayBlocked(ctx, maze, p.pos.x, p.pos.z, worldHeight(p) + 1.35, hitPos.x, hitY, hitPos.z, verticalWorldState)) continue;
       best = s;
       bestD = d;
     }
@@ -2872,13 +2895,14 @@ function tryShooterFire(p) {
     startKatanaSwing(p);
     muzzleFlash(p);
     playKatanaSwingSfx(0.05);
+    if (isLanSession() && !p.isLanPeer && !p.isAI) sendLanCombatAction(p, "katana");
     if (best) {
       const hitDir = p._lastFireDir && p._lastFireDir.lengthSq() > 0.001
         ? p._lastFireDir.clone().normalize()
         : new THREE.Vector3(Math.sin(p.yaw ?? 0), 0, Math.cos(p.yaw ?? 0));
       const isHead = isShooterHeadshot(p, best, hitDir);
       const dmg = isHead ? 40 : 30 + Math.floor(Math.random() * 9);
-      damageSurvivor(best, p, dmg, { shooter: true });
+      lanDamageSurvivor(best, p, dmg, { shooter: true });
       showHitMarker();
       playShooterSfx("hitBody", playSfx, 0.03);
       showToast(`武士刀命中 ${best.displayName || best.charDef?.name || "目標"} · -${dmg}`, 500, "hit");
@@ -2916,6 +2940,13 @@ function tryShooterFire(p) {
   spawnPaintMuzzleFlash(scene, muzzleX, muzzleY, muzzleZ, aimDir, p.paintColor ?? p._shooterColor ?? 0xff8844);
   playShooterSfx("fire", playSfx, 0.03);
   muzzleFlash(p);
+  if (isLanSession() && !p.isLanPeer && !p.isAI) {
+    sendLanCombatAction(p, "fire", {
+      dir: aimDir,
+      aimYaw,
+      muzzle: { x: muzzleX, y: muzzleY, z: muzzleZ },
+    });
+  }
   if (!p.isAI && cam) syncHeldWeaponOnCamera(p, cam, scene);
   p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
 }
@@ -3309,16 +3340,27 @@ async function runStartGame() {
     }
   }
   const lanSess = window.__forsakenLanSession;
+  let lanSkipBots = false;
   if (lanSess) {
-    if (lanCfg?.numLocalPlayers != null) {
-      numLocalPlayers = Math.min(4, Math.max(1, lanCfg.numLocalPlayers));
-    } else {
-      numLocalPlayers = 1;
+    numLocalPlayers = 1;
+    const lanHumans = Math.max(2, lanSess.players?.length || 2);
+    const lanPlayerOnly = lanCfg?.lanPlayerOnly !== false && lanSess.lanPlayerOnly !== false;
+    if (isShooterMode()) {
+      numKillers = 0;
+      if (lanPlayerOnly) {
+        numSurvivors = lanHumans;
+        lanSkipBots = true;
+        lanSess.lanPlayerOnly = true;
+      } else {
+        numSurvivors = Math.max(lanHumans, lanCfg?.numSurvivors ?? numSurvivors);
+        lanSkipBots = false;
+        lanSess.lanPlayerOnly = false;
+      }
     }
-    showToast(
-      `區網房間 · ${lanSess.isHost ? "房主" : "加入"} · 可見其他玩家位置（戰鬥仍各機獨立）`,
-      3800
-    );
+    const shHint = isShooterMode()
+      ? (lanPlayerOnly ? `${lanHumans} 位真人對戰` : `${lanHumans} 真人 + 電腦補位`)
+      : "可見其他玩家位置";
+    showToast(`區網房間 · ${lanSess.isHost ? "房主" : "加入"} · ${shHint}`, 3800);
   }
   selectedLevel = enrichLevelForMode(selectedLevel, gameMode);
   winGoal = document.getElementById("winGoal")?.value || "exit";
@@ -3541,9 +3583,19 @@ async function runStartGame() {
     numSurvivors,
     numLocalPlayers,
     numKillers,
+    skipBotFill: lanSkipBots,
   });
   survivors = spawned.survivors;
   killers = spawned.killers;
+  if (lanSkipBots && isLanSession()) {
+    for (let i = survivors.length - 1; i >= 0; i--) {
+      const s = survivors[i];
+      if (s.isAI && !s.isLanPeer) {
+        if (s.mesh) scene.remove(s.mesh);
+        survivors.splice(i, 1);
+      }
+    }
+  }
   playAsKiller = !!spawned.playAsKiller;
   for (const s of survivors) {
     s._safeX = s.pos.x;
@@ -3579,6 +3631,7 @@ async function runStartGame() {
     }
     const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
+      if (s.isLanPeer) return;
       clearShooterDownedState(s);
       s.caught = false;
       initShooterStats(s);
@@ -3588,6 +3641,7 @@ async function runStartGame() {
       attachShooterGun(s);
       if (s.mesh) s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
     });
+    if (isLanSession()) setupLanPeersFromRoster();
     document.body.classList.add("shooter-play");
     const sbBtn = document.getElementById("btnTouchScoreboard");
     if (sbBtn) sbBtn.hidden = !isTouchUiEnabled();
@@ -3686,7 +3740,20 @@ async function runStartGame() {
         lanSync?.destroy();
         lanSync = createLanSync({
           scene,
-          getLocalPlayer: () => getHumanSurvivor() || survivors.find((s) => !s.isAI),
+          getLocalPlayer: () => getHumanSurvivor() || survivors.find((s) => !s.isAI && !s.isLanPeer),
+          getLanPeers,
+          ensureLanPeer: (id, name) => {
+            const sess = window.__forsakenLanSession;
+            const idx = (sess?.players || []).findIndex((p) => p.id === id);
+            const total = sess?.players?.length || 2;
+            return ensureLanPeerSurvivor(id, name, idx >= 0 ? idx : 1, total);
+          },
+          removeLanPeer,
+          clearLanPeerDowned,
+          onLanCombatHit,
+          onLanCombatAction,
+          tickLanPeerPose: (s, dt) => tickShooterDownedPose(s, elapsed, worldHeight),
+          getElapsed: () => elapsed,
         });
       })
       .catch((err) => console.warn("[LAN sync]", err));
@@ -4012,7 +4079,7 @@ function endGame(won, message, opts = {}) {
     document.body.classList.remove("shooter-end-menu");
     overlay.classList.remove("show", "win", "lose", "shooter-end");
     clickPrompt.classList.remove("show");
-    renderShooterScoreboard(survivors, getHumanSurvivor(), opts.playStyle ?? shooterPlayStyle);
+    renderShooterScoreboard(getShooterScoreboardPlayers(), getHumanSurvivor(), opts.playStyle ?? shooterPlayStyle);
     showShooterScoreboard(true);
     const closeHint = document.querySelector("#shooterScoreboard .sb-hint");
     if (closeHint) closeHint.textContent = "點「關閉」查看勝負與返回選單";
@@ -5136,9 +5203,12 @@ function updateProjectiles(dt) {
         if (s === pr.owner || isShooterPlayerDown(s) || (s.hp ?? 0) <= 0) continue;
         if (!moleMode && !isShooterEnemy(pr.owner, s, style, shooterState)) continue;
         if (moleMode && !isShooterCombatActive(s)) continue;
-        if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
+        if (pr._lanVisualOnly) continue;
+        const hitPos = getLanPeerHitXZ(s);
+        const hitR = s.isLanPeer ? 1.85 : 1.35;
+        if (Math.hypot(hitPos.x - pr.x, hitPos.z - pr.z) < hitR) {
           const hitY = worldHeight(s) + 1.05;
-          if (shooterRayBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z, verticalWorldState)) continue;
+          if (shooterRayBlocked(ctx, maze, prevX, prevZ, prevY, hitPos.x, hitY, hitPos.z, verticalWorldState)) continue;
           projectiles.splice(i, 1);
           let dmg = pr.damage || 22;
           let headshot = false;
@@ -5148,7 +5218,7 @@ function updateProjectiles(dt) {
           }
           const col = pr.owner.paintColor ?? pr.color ?? 0xff4466;
           spawnPaintOnBody(scene, s, pr.owner.pos.x, pr.owner.pos.z, worldHeight(s), col);
-          damageSurvivor(s, pr.owner, dmg, { headshot });
+          lanDamageSurvivor(s, pr.owner, dmg, { headshot });
           continue;
         }
       }
@@ -5585,7 +5655,8 @@ function drawShooterRadar() {
   ];
 
   const human = getHumanSurvivor();
-  for (const s of survivors) {
+  const radarPlayers = isLanShooterPvP() ? getShooterScoreboardPlayers() : survivors;
+  for (const s of radarPlayers) {
     if (isShooterPlayerDown(s)) continue;
     const [px, py] = toMap(s.pos.x, s.pos.z);
     const isYou = s === human;
@@ -6135,7 +6206,7 @@ function loopFrame(now) {
         active: gameState === "play",
       });
       if (shooterScoreboardOpen) {
-        renderShooterScoreboard(survivors, getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
+        renderShooterScoreboard(getShooterScoreboardPlayers(), getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
       }
       tickShooterHealOrbs(dt, survivors, scene, (p) => {
         playShooterSfx("pickupHeal", playSfx, 0.12);
@@ -6148,7 +6219,7 @@ function loopFrame(now) {
       }
       syncShooterPlayerVisibility();
       syncShooterRespawnUi();
-      updateShooterBots(dt, survivors, ctx, maze, shooterState, {
+      if (!isLanShooterPvP()) updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,
         moveEntity: updateEntity,
         fire: (bot, yaw) => {
@@ -6374,6 +6445,209 @@ function applyLocalPlayerNames() {
   }
 }
 
+function refreshPlayUiAfterResume() {
+  if (gameState !== "play") return;
+  invalidateMinimapBase();
+  if (isShooterMode()) drawShooterRadar();
+  else drawMinimap();
+  updateHUD();
+  syncShooterPlayerVisibility();
+}
+
+function isLanSession() {
+  return !!(window.__forsakenLanSession?.roomId && window.__forsakenLanClient?.connected);
+}
+
+function isLanShooterPvP() {
+  if (!isLanSession() || !isShooterMode()) return false;
+  const only = window.__forsakenLanSession?.lanPlayerOnly;
+  if (only === false) return false;
+  return only !== false;
+}
+
+function getLanPeers() {
+  return survivors.filter((s) => s.isLanPeer && s.lanPlayerId);
+}
+
+function ensureLanPeerSurvivor(playerId, name, rosterIndex = 1, rosterTotal = 2) {
+  if (!playerId || !scene || !ctx) return null;
+  let s = survivors.find((p) => p.lanPlayerId === playerId);
+  if (s) return s;
+  const def = SURVIVORS[(rosterIndex + 1) % SURVIVORS.length];
+  const gx = 1 + ((rosterIndex * 5 + 2) % Math.max(2, ctx.w - 2));
+  const gz = 1 + ((rosterIndex * 7 + 3) % Math.max(2, ctx.h - 2));
+  const c = cellCenter(ctx, gx, gz);
+  s = createPlayerState(def, `lan_${playerId}`, false);
+  s.isAI = false;
+  s.isLanPeer = true;
+  s.lanPlayerId = playerId;
+  s.displayName = name || "玩家";
+  s.charDef = { ...def, name: s.displayName };
+  s.pos = { x: c.x, z: c.z };
+  s.invuln = 0.5;
+  s.hp = 100;
+  s.maxHp = 100;
+  s.elev = 0;
+  s._jumpY = 0;
+  s.mesh = buildForsakenCharacter(def);
+  s.mesh.position.set(c.x, 0, c.z);
+  scene.add(s.mesh);
+  applyPlasticToCharacter(s.mesh, def.accent);
+  const playStyle = shooterState?.playStyle ?? shooterPlayStyle;
+  if (isShooterMode()) {
+    initShooterStats(s);
+    assignShooterPlayer(s, rosterIndex, rosterTotal, playStyle);
+    applyShooterLoadout(s, ["smg", "rifle", "shotgun", "sniper"][rosterIndex % 4]);
+    attachShooterGun(s);
+    if (verticalWorldState && findClearShooterSpawn(s, verticalWorldState, survivors)) {
+      s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
+    }
+  }
+  survivors.push(s);
+  return s;
+}
+
+function removeLanPeer(playerId) {
+  const i = survivors.findIndex((p) => p.lanPlayerId === playerId);
+  if (i < 0) return;
+  const s = survivors[i];
+  if (s.mesh) scene.remove(s.mesh);
+  survivors.splice(i, 1);
+}
+
+function clearLanPeerDowned(s) {
+  if (!s?.isLanPeer) return;
+  clearShooterDownedState(s);
+}
+
+function setupLanPeersFromRoster() {
+  const sess = window.__forsakenLanSession;
+  if (!sess?.players?.length || !isShooterMode()) return;
+  const playStyle = shooterState?.playStyle ?? shooterPlayStyle;
+  const total = sess.players.length;
+  sess.players.forEach((pl, idx) => {
+    if (pl.id === sess.playerId) {
+      const local = getHumanSurvivor();
+      if (local) {
+        local.lanPlayerId = pl.id;
+        assignShooterPlayer(local, idx, total, playStyle);
+      }
+      return;
+    }
+    ensureLanPeerSurvivor(pl.id, pl.name, idx, total);
+  });
+}
+
+function sendLanCombatHit(target, killer, amount, opts = {}) {
+  const client = window.__forsakenLanClient;
+  const sess = window.__forsakenLanSession;
+  if (!client?.connected || !sess || !target?.lanPlayerId) return false;
+  if (target.lanPlayerId === sess.playerId) return false;
+  return client.send("combatHit", {
+    targetId: target.lanPlayerId,
+    fromId: sess.playerId,
+    fromName: killer?.displayName || sess.name || "玩家",
+    damage: Math.round(amount),
+    headshot: !!opts.headshot,
+  });
+}
+
+function sendLanCombatAction(p, kind, extra = {}) {
+  const client = window.__forsakenLanClient;
+  const sess = window.__forsakenLanSession;
+  if (!client?.connected || !sess || !p || p.isLanPeer || p.isAI) return;
+  const dir = extra.dir;
+  client.send("combatAction", {
+    kind,
+    weaponId: p.weaponId,
+    aimYaw: extra.aimYaw ?? p.yaw ?? (dir ? Math.atan2(dir.x, dir.z) : 0),
+    dir: dir ? { x: dir.x, y: dir.y, z: dir.z } : undefined,
+    muzzle: extra.muzzle,
+    paintColor: p.paintColor ?? p._shooterColor,
+  });
+}
+
+function onLanCombatAction(msg) {
+  const sess = window.__forsakenLanSession;
+  if (!sess || msg.fromId === sess.playerId || gameState !== "play") return;
+  let peer = survivors.find((s) => s.lanPlayerId === msg.fromId);
+  if (!peer) {
+    const idx = (sess.players || []).findIndex((pl) => pl.id === msg.fromId);
+    peer = ensureLanPeerSurvivor(
+      msg.fromId,
+      msg.fromName || "玩家",
+      idx >= 0 ? idx : 1,
+      sess.players?.length || 2
+    );
+  }
+  if (!peer) return;
+  if (msg.kind === "katana") {
+    startKatanaSwing(peer);
+    muzzleFlash(peer);
+    playKatanaSwingSfx(0.07);
+    return;
+  }
+  if (msg.kind !== "fire" || !msg.dir) return;
+  const dir = new THREE.Vector3(msg.dir.x, msg.dir.y, msg.dir.z);
+  if (dir.lengthSq() < 0.0001) return;
+  dir.normalize();
+  const aimYaw = msg.aimYaw ?? Math.atan2(dir.x, dir.z);
+  peer.yaw = aimYaw;
+  peer._lastFireDir = dir.clone();
+  const eyeY = 1.52 + worldHeight(peer);
+  const muzzleX = msg.muzzle?.x ?? peer.pos.x + dir.x * 0.85;
+  const muzzleY = msg.muzzle?.y ?? eyeY + dir.y * 0.85;
+  const muzzleZ = msg.muzzle?.z ?? peer.pos.z + dir.z * 0.85;
+  spawnPaintMuzzleFlash(scene, muzzleX, muzzleY, muzzleZ, dir, msg.paintColor ?? peer.paintColor ?? 0xff8844);
+  muzzleFlash(peer);
+  playShooterSfx("fire", playSfx, 0.04);
+  for (const pr of fireShooterWeapon(peer, aimYaw, dir, {})) {
+    pr.owner = peer;
+    pr.color = msg.paintColor ?? peer.paintColor ?? pr.color;
+    pr._lanVisualOnly = true;
+    projectiles.push(pr);
+  }
+}
+
+function onLanCombatHit(msg) {
+  const sess = window.__forsakenLanSession;
+  if (!sess || msg.targetId !== sess.playerId) return;
+  const local = getHumanSurvivor();
+  if (!local || isShooterPlayerDown(local)) return;
+  let killer = survivors.find((s) => s.lanPlayerId === msg.fromId);
+  if (!killer) {
+    killer = {
+      charDef: { name: msg.fromName || "玩家" },
+      displayName: msg.fromName || "玩家",
+      lanPlayerId: msg.fromId,
+      pos: { x: local.pos.x, z: local.pos.z },
+      isLanPeer: true,
+    };
+  }
+  damageSurvivor(local, killer, msg.damage ?? 20, { headshot: !!msg.headshot });
+}
+
+function lanDamageSurvivor(target, killer, amount, opts = {}) {
+  if (!isLanSession()) {
+    damageSurvivor(target, killer, amount, opts);
+    return;
+  }
+  if (target.isLanPeer && target.lanPlayerId) {
+    spawnPaintOnBody(scene, target, killer?.pos?.x ?? target.pos.x, killer?.pos?.z ?? target.pos.z, worldHeight(target), killer?.paintColor ?? 0xff4466);
+    sendLanCombatHit(target, killer, amount, opts);
+    if (killer && killer === getHumanSurvivor()) {
+      showHitMarker();
+      spawnDamageNumber(target.pos.x, target.pos.z, amount, {
+        headshot: !!opts.headshot,
+        onEnemy: true,
+        y: getTargetHeadY(target),
+      });
+    }
+    return;
+  }
+  damageSurvivor(target, killer, amount, opts);
+}
+
 function applyLanPlayerNames() {
   const sess = window.__forsakenLanSession;
   if (!sess) return;
@@ -6381,6 +6655,7 @@ function applyLanPlayerNames() {
   const nick = (sess.name || "").trim();
   let aiIdx = 1;
   for (const s of survivors) {
+    if (s.isLanPeer) continue;
     if (!s.isAI) {
       s.lanPlayerId = meId;
       if (nick) {
@@ -6467,15 +6742,23 @@ function boot() {
       return;
     }
     resumeGameAudio().then(() => {
-      if (gameState === "play" && musicEl?.paused) {
-        musicEl.play().catch(() => {});
+      warmGameSounds();
+      warmShooterSounds();
+      if (gameState === "play") {
+        if (musicEl?.paused) musicEl.play().catch(() => {});
+        refreshPlayUiAfterResume();
       }
     });
   });
   window.addEventListener("pageshow", (ev) => {
     if (ev.persisted || !document.hidden) {
       resumeGameAudio().then(() => {
-        if (gameState === "play" && musicEl?.paused) musicEl.play().catch(() => {});
+        warmGameSounds();
+        warmShooterSounds();
+        if (gameState === "play") {
+          if (musicEl?.paused) musicEl.play().catch(() => {});
+          refreshPlayUiAfterResume();
+        }
       });
     }
   });

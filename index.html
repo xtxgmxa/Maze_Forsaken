@@ -2077,6 +2077,11 @@
       z-index: 18;
       pointer-events: none;
     }
+    /* 電腦版：格擋條在武器欄上方，避免遮住 1–6 武器格 */
+    body.shooter-play:not(.touch-ui) #katanaParryBar {
+      bottom: max(158px, calc(148px + env(safe-area-inset-bottom, 0px)));
+      z-index: 16;
+    }
     #katanaParryBar:not([hidden]) { display: block; }
     body.touch-ui.shooter-play #katanaParryBar {
       left: auto;

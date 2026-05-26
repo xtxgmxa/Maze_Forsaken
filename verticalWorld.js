@@ -449,8 +449,8 @@ export function enforceStandableTops(p, verticalState) {
   for (const pl of verticalState.platforms) {
     if (!pl.standable) continue;
     const top = pl.blockTop ?? pl.y ?? 0;
-    const hw = (pl.halfW ?? 1) + 0.28;
-    const hd = (pl.halfD ?? 1) + 0.28;
+    const hw = (pl.halfW ?? 1) + 0.42;
+    const hd = (pl.halfD ?? 1) + 0.42;
     if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, hw, hd)) continue;
     const d = Math.abs(foot - top);
     if (foot > top + 0.4) continue;
@@ -460,7 +460,7 @@ export function enforceStandableTops(p, verticalState) {
     }
   }
   if (bestTop == null) return;
-  if (foot >= bestTop - 0.7 && foot <= bestTop + 0.3 && (p.velY ?? 0) <= 3) {
+  if (foot >= bestTop - 0.85 && foot <= bestTop + 0.38 && (p.velY ?? 0) <= 3) {
     p.elev = bestTop;
     p._jumpY = 0;
     p.velY = 0;
@@ -488,9 +488,11 @@ export function snapToStandableSurface(p, verticalState) {
   for (const pl of verticalState.platforms) {
     if (!pl.standable) continue;
     const top = pl.blockTop ?? pl.y ?? 0;
-    if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, pl.halfW, pl.halfD)) continue;
+    const hw = (pl.halfW ?? 1) + 0.35;
+    const hd = (pl.halfD ?? 1) + 0.35;
+    if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, hw, hd)) continue;
     const d = Math.abs(foot - top);
-    if (foot > top + 1.65) continue;
+    if (foot > top + 1.85) continue;
     if (d < bestD) {
       bestD = d;
       bestTop = top;
@@ -499,14 +501,14 @@ export function snapToStandableSurface(p, verticalState) {
   if (bestTop == null) return;
   const rising = (p.velY ?? 0) > 0.35;
   if (rising && foot < bestTop - 0.2) return;
-  if (p.velY <= 1.4 && foot >= bestTop - 1.5 && foot <= bestTop + 0.35) {
+  if (p.velY <= 1.4 && foot >= bestTop - 1.75 && foot <= bestTop + 0.42) {
     p.elev = bestTop;
     p._jumpY = 0;
     p.velY = 0;
     p.onGround = true;
     return;
   }
-  if (p.velY <= 0.5 && foot < bestTop - 0.04 && foot >= bestTop - 0.95) {
+  if (p.velY <= 0.5 && foot < bestTop - 0.04 && foot >= bestTop - 1.15) {
     p.elev = bestTop;
     p._jumpY = 0;
     p.velY = 0;
