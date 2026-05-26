@@ -31,7 +31,7 @@ import {
   carveShooterSecretPassages, buildShooterVerticalWorld, spawnShooterBouncePads,
   resetShooterCharacterPose,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
-  syncHeldWeaponOnCamera, restoreHeldWeaponToBody, hideFpHeldRig,
+  syncHeldWeaponOnCamera, restoreHeldWeaponToBody, hideFpHeldRig, startKatanaSwing, tickFpWeaponMotion,
   assignShooterPlayer, buildShooterEndResults, buildMoleEndResults, onShooterDowned,
   getShooterKillAnnounce, tickShooterRespawns, tryManualShooterRespawn, tickShooterDownedPose,
   setupMoleRound, tickMoleAlerts, isMoleTeamkillViolation, scoreMoleKill, checkMoleRoundEnd,
@@ -2641,6 +2641,7 @@ function tryShooterFire(p) {
       bestD = d;
     }
     p._shootCd = elapsed + (p._shooterFireCd ?? 0.46);
+    startKatanaSwing(p);
     muzzleFlash(p);
     playKatanaSwingSfx(0.05);
     if (best) {
@@ -4324,7 +4325,10 @@ function updateEntity(p, dt, move) {
   if (!p._anim && shouldAnimateEntity(p)) applyLocomotionAnim(p, dt);
   tickEntityUnstuck(p, dt);
 
-  if (isShooterMode() && p.weaponId) tickGunFlash(p, dt, camera);
+  if (isShooterMode() && p.weaponId) {
+    tickFpWeaponMotion(p, dt);
+    tickGunFlash(p, dt, getShooterCameraForPlayer(p) || camera);
+  }
 
   if (p.mesh) {
     p.mesh.position.set(p.pos.x, worldHeight(p), p.pos.z);

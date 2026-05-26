@@ -776,6 +776,73 @@ function setHeldPart(mesh, w, h, d, color, opacity = 1) {
   mesh.visible = true;
 }
 
+const RECOIL_STRENGTH = { smg: 0.055, rifle: 0.095, shotgun: 0.16, sniper: 0.2 };
+const RECOIL_DURATION = { smg: 0.1, rifle: 0.13, shotgun: 0.18, sniper: 0.22 };
+const KATANA_SWING_DURATION = 0.36;
+
+/** 揮刀：0 下劈、1 右掃、2 左掃（連按輪替） */
+export function startKatanaSwing(p) {
+  if (!p) return;
+  p._katanaSwingT = KATANA_SWING_DURATION;
+  p._katanaSwingIdx = ((p._katanaSwingIdx ?? -1) + 1) % 3;
+}
+
+export function applyGunRecoil(p, weaponId) {
+  if (!p || weaponId === "katana" || weaponId === "pad") return;
+  const dur = RECOIL_DURATION[weaponId] ?? 0.12;
+  p._fpRecoilT = dur;
+  p._fpRecoilDur = dur;
+  p._fpRecoilSide = (Math.random() - 0.5) * 0.12;
+}
+
+export function tickFpWeaponMotion(p, dt) {
+  if (!p) return;
+  if ((p._katanaSwingT ?? 0) > 0) p._katanaSwingT = Math.max(0, p._katanaSwingT - dt);
+  if ((p._fpRecoilT ?? 0) > 0) p._fpRecoilT = Math.max(0, p._fpRecoilT - dt);
+}
+
+function getFpMotionOffsets(p, weaponId) {
+  const off = { pos: [0, 0, 0], rot: [0, 0, 0] };
+  const id = weaponId || "rifle";
+
+  if ((p._fpRecoilT ?? 0) > 0 && id !== "katana" && id !== "pad") {
+    const dur = p._fpRecoilDur ?? 0.12;
+    const u = 1 - p._fpRecoilT / dur;
+    const kick = Math.sin(u * Math.PI);
+    const s = RECOIL_STRENGTH[id] ?? 0.1;
+    off.pos[2] += kick * s * 1.1;
+    off.pos[1] += kick * s * 0.45;
+    off.pos[0] += (p._fpRecoilSide ?? 0) * kick;
+    off.rot[0] += kick * s * 3.2;
+    off.rot[2] += kick * s * 0.6;
+  }
+
+  if (id === "katana" && (p._katanaSwingT ?? 0) > 0) {
+    const u = 1 - p._katanaSwingT / KATANA_SWING_DURATION;
+    const kind = p._katanaSwingIdx ?? 0;
+    if (kind === 0) {
+      const chop = u < 0.28 ? u / 0.28 : u < 0.58 ? 1 : 1 - (u - 0.58) / 0.42;
+      off.rot[0] += -1.55 + chop * 2.35;
+      off.rot[2] += Math.sin(u * Math.PI * 2) * 0.18;
+      off.pos[1] += -0.1 + chop * 0.16;
+      off.pos[2] += -0.06 + chop * 0.2;
+    } else if (kind === 1) {
+      const sweep = Math.sin(u * Math.PI);
+      off.rot[1] += -1.05 + u * 2.1;
+      off.rot[0] += sweep * 0.42;
+      off.pos[0] += sweep * 0.12;
+      off.pos[2] += sweep * 0.04;
+    } else {
+      const sweep = Math.sin(u * Math.PI);
+      off.rot[1] += 1.05 - u * 2.1;
+      off.rot[0] += sweep * 0.38;
+      off.pos[0] -= sweep * 0.12;
+      off.pos[2] += sweep * 0.04;
+    }
+  }
+  return off;
+}
+
 /** 第三人稱／第一人稱手持（樂高方塊風） */
 export function syncGunVisual(p) {
   if (!p?.gunMesh) return;
@@ -794,11 +861,30 @@ export function syncGunVisual(p) {
   }
   if (grip) grip.visible = true;
   if (p.weaponId === "katana") {
-    setHeldPart(body, 0.1, 0.1, 1.05, 0xf2f6ff);
-    setHeldPart(barrel, 0.24, 0.05, 0.1, 0xe8c86a);
-    setHeldPart(grip, 0.1, 0.1, 0.32, 0x1a1e2b);
-    p.gunMesh.position.set(0.36, 1.1, 0.32);
-    p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
+    setHeldPart(body, 0.09, 0.07, 1.14, 0xf8fbff);
+    setHeldPart(barrel, 0.28, 0.045, 0.11, 0xffd966);
+    setHeldPart(grip, 0.09, 0.09, 0.36, 0x1e2438);
+    const swingT = p._katanaSwingT ?? 0;
+    if (swingT > 0 && p.gunMesh.parent === p.mesh) {
+      const u = 1 - swingT / KATANA_SWING_DURATION;
+      const kind = p._katanaSwingIdx ?? 0;
+      const baseRot = new THREE.Euler(-0.08, 0.62, 0.22);
+      if (kind === 0) {
+        const chop = u < 0.28 ? u / 0.28 : u < 0.58 ? 1 : 1 - (u - 0.58) / 0.42;
+        baseRot.x += -0.9 + chop * 1.4;
+      } else if (kind === 1) {
+        baseRot.y += -0.7 + u * 1.4;
+        baseRot.x += Math.sin(u * Math.PI) * 0.25;
+      } else {
+        baseRot.y += 0.7 - u * 1.4;
+        baseRot.x += Math.sin(u * Math.PI) * 0.22;
+      }
+      p.gunMesh.position.set(0.36, 1.1, 0.32);
+      p.gunMesh.rotation.copy(baseRot);
+    } else {
+      p.gunMesh.position.set(0.36, 1.1, 0.32);
+      p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
+    }
     p.gunMesh.scale.set(1.15, 1.15, 1.15);
     return;
   }
@@ -886,6 +972,14 @@ export function syncHeldWeaponOnCamera(p, cam, scene) {
   rig.quaternion.copy(cam.quaternion);
   const e = new THREE.Euler(pose.rot[0], pose.rot[1], pose.rot[2], "XYZ");
   rig.quaternion.multiply(new THREE.Quaternion().setFromEuler(e));
+  const motion = getFpMotionOffsets(p, p.weaponId);
+  const swingQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(motion.rot[0], motion.rot[1], motion.rot[2], "XYZ")
+  );
+  rig.quaternion.multiply(swingQ);
+  const motOff = new THREE.Vector3(motion.pos[0], motion.pos[1], motion.pos[2]);
+  motOff.applyQuaternion(cam.quaternion);
+  rig.position.add(motOff);
   rig.scale.set(pose.scale[0] * bump, pose.scale[1] * bump, pose.scale[2] * bump);
   rig.visible = true;
   rig.renderOrder = 99999;
@@ -914,6 +1008,9 @@ export function restoreHeldWeaponToBody(p) {
 export function muzzleFlash(p) {
   p._gunFlash = 0.06;
   p._fpFlash = 0.06;
+  if (p?.weaponId && p.weaponId !== "katana" && p.weaponId !== "pad") {
+    applyGunRecoil(p, p.weaponId);
+  }
 }
 
 let fpGunMesh = null;
@@ -1047,6 +1144,7 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
 
 export function tickGunFlash(p, dt, cam) {
   if (!p) return;
+  tickFpWeaponMotion(p, dt);
   let flash = 0;
   if ((p._gunFlash ?? 0) > 0) {
     p._gunFlash -= dt;
