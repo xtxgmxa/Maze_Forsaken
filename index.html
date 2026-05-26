@@ -1840,14 +1840,32 @@
       position: absolute;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      padding: 6px 10px;
-      background: rgba(8, 10, 22, 0.82);
-      border: 1px solid rgba(120, 140, 200, 0.35);
-      border-radius: 10px;
+      align-items: stretch;
+      gap: 3px;
+      padding: 5px 8px 6px;
+      background: rgba(8, 10, 22, 0.88);
+      border: 1px solid rgba(120, 140, 200, 0.4);
+      border-radius: 8px;
       text-align: center;
       pointer-events: none;
+      max-height: min(22vh, 118px);
+      box-sizing: border-box;
+    }
+    .shooter-split-toprow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .shooter-split-metarow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      font-size: 0.55rem;
+      line-height: 1.2;
+      color: #a8b8d8;
     }
     .shooter-split-radar {
       position: absolute;
@@ -1891,12 +1909,12 @@
     }
     .shooter-split-wep .wep-key { font-size: 0.5rem; color: #8878a8; line-height: 1; }
     .shooter-split-wep .wep-ico { font-size: 0.95rem; line-height: 1; }
-    .shooter-split-tag { color: #ffcc66; font-weight: bold; font-size: 0.72rem; }
-    .shooter-split-map { font-size: 0.58rem; color: #a8b8d8; }
+    .shooter-split-tag { color: #ffcc66; font-weight: bold; font-size: clamp(0.58rem, 1.6vw, 0.72rem); }
+    .shooter-split-map { font-size: clamp(0.5rem, 1.2vw, 0.58rem); color: #98a8c8; }
     .shooter-split-hpbar {
       position: relative;
       width: 100%;
-      height: 14px;
+      height: clamp(10px, 2.2vh, 14px);
       background: #1a1028;
       border: 1px solid #554466;
       border-radius: 4px;
@@ -1920,16 +1938,21 @@
       text-shadow: 0 1px 2px #000;
     }
     .shooter-split-timer {
-      font-size: 0.85rem;
+      font-size: clamp(0.72rem, 2vw, 0.88rem);
       font-weight: bold;
       color: #eeddff;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.03em;
+      font-variant-numeric: tabular-nums;
     }
     .shooter-split-mode {
-      font-size: 0.58rem;
-      color: #a8b8d8;
-      max-width: 100%;
-      text-align: right;
+      font-size: clamp(0.5rem, 1.2vw, 0.58rem);
+      color: #b8c8e8;
+    }
+    @media (max-height: 520px), (max-width: 900px) {
+      .shooter-split-top { padding: 4px 6px; max-height: 96px; }
+      .shooter-split-weapons { gap: 2px; padding: 3px 4px; }
+      .shooter-split-wep { max-width: 40px; padding: 2px 1px; }
+      .shooter-split-radar { width: 48px !important; height: 48px !important; }
     }
     #shooterSplitGrid {
       display: none;

@@ -112,13 +112,52 @@ export function initPerfTipModal() {
   });
 }
 
-export function showCoopMobileWarn() {
+function isSmallTouchScreen() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const short = Math.min(w, h);
+  const long = Math.max(w, h);
+  return short < 520 || long < 640 || (w < 720 && h < 520);
+}
+
+/** 手機／小螢幕開始遊戲前警告 */
+export function showMobilePlayWarn(opts = {}) {
+  const { gameMode = "solo", numLocalPlayers = 1, isShooter = false } = opts;
+  const small = isSmallTouchScreen();
+  const multiLocal = numLocalPlayers >= 2;
+  const coopLike = gameMode === "coop" || gameMode === "versus";
+  const needsWarn = small || multiLocal || coopLike || (isShooter && multiLocal);
+
+  if (!needsWarn) return Promise.resolve(true);
+
   return new Promise((resolve) => {
     const modal = document.getElementById("coopMobileWarn");
     if (!modal) {
       resolve(true);
       return;
     }
+    const title = modal.querySelector("h3");
+    const body = modal.querySelector("p");
+    const sub = modal.querySelector("p[style]");
+    if (title) {
+      title.textContent = small ? "螢幕較小" : "手機多人同機";
+    }
+    if (body) {
+      if (small && multiLocal) {
+        body.innerHTML =
+          "目前螢幕偏小，又啟用<strong>多人分割畫面</strong>，HUD 與按鈕會更擠。<strong>建議</strong>用平板或電腦遊玩。";
+      } else if (small) {
+        body.innerHTML =
+          "偵測到螢幕高度或寬度偏小，部分按鈕與文字可能較難閱讀。<strong>建議</strong>橫向全螢幕或使用較大裝置。";
+      } else if (coopLike) {
+        body.innerHTML =
+          "手機雙人同機操作空間有限，合作／對戰模式<strong>不建議</strong>在小螢幕上遊玩。";
+      } else {
+        body.innerHTML =
+          "多人分割畫面會占用大量螢幕空間，手機上較不易操作。";
+      }
+    }
+    if (sub) sub.textContent = "確定仍要繼續？";
     const yes = document.getElementById("coopWarnYes");
     const no = document.getElementById("coopWarnNo");
     const done = (ok) => {
@@ -133,6 +172,11 @@ export function showCoopMobileWarn() {
   });
 }
 
+/** @deprecated 請用 showMobilePlayWarn */
+export function showCoopMobileWarn() {
+  return showMobilePlayWarn({ gameMode: "coop" });
+}
+
 function openPicker(title, gridId, hostId) {
   const grid = document.getElementById(gridId);
   const content = document.getElementById("pickerContent");
@@ -140,49 +184,48 @@ function openPicker(title, gridId, hostId) {
   if (!grid || !content || !overlay) return;
   pickerGridId = gridId;
   pickerHomeId = hostId;
-  if (!grid.dataset.pickerHome) grid.dataset.pickerHome = hostId;
-  document.getElementById("pickerTitle").textContent = title;
-  grid.style.removeProperty("display");
-  grid.classList.remove("picker-hidden");
-  content.appendChild(grid);
-  grid.classList.add("in-picker");
+  const titleEl = document.getElementById("pickerTitle");
+  if (titleEl) titleEl.textContent = title;
+  const host = document.getElementById(hostId);
+  if (host) {
+    host.innerHTML = "";
+    host.appendChild(grid);
+  }
   overlay.classList.add("show");
 }
 
 function closePicker(api) {
   const overlay = document.getElementById("pickerOverlay");
-  const grid = pickerGridId ? document.getElementById(pickerGridId) : null;
-  const home = document.getElementById(pickerHomeId || grid?.dataset.pickerHome);
-  if (grid && home) {
-    home.appendChild(grid);
-    grid.classList.remove("in-picker");
-    if (document.body.classList.contains("touch-ui")) {
-      grid.classList.add("picker-hidden");
-    }
+  if (!overlay) return;
+  overlay.classList.remove("show");
+  if (pickerGridId && pickerHomeId) {
+    const grid = document.getElementById(pickerGridId);
+    const home = document.getElementById(pickerHomeId);
+    if (grid && home) home.appendChild(grid);
   }
-  overlay?.classList.remove("show");
   pickerGridId = null;
-  api.playSfx?.("ui");
-  updatePickLabels(api);
+  pickerHomeId = null;
+  api?.playSfx?.("ui_back");
 }
 
-export function updatePickLabels(api) {
-  const lv = api.getSelectedLevel?.();
-  const ch = api.getSelectedChar?.();
-  const ch2 = api.getSelectedChar2?.();
+function updatePickLabels(api) {
+  const level = api.getSelectedLevel?.();
+  const c1 = api.getSelectedChar?.();
+  const c2 = api.getSelectedChar2?.();
   const k = api.getSelectedKiller?.();
   const set = (id, text) => {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
   };
-  set("pickLevelLabel", lv ? `${lv.name} (${lv.w}×${lv.h})` : "點此選擇");
-  set("pickSurvivorLabel", ch ? ch.name : "點此選擇");
-  set("pickSurvivor2Label", ch2 ? ch2.name : "點此選擇");
-  set("pickKillerLabel", k ? k.name : "點此選擇");
+  set("pickLevelLabel", level ? `${level.name}` : "選擇關卡");
+  set("pickSurvivorLabel", c1 ? c1.name : "選擇倖存者");
+  set("pickSurvivor2Label", c2 ? c2.name : "玩家 2");
+  set("pickKillerLabel", k ? k.name : "選擇獵人");
+  const hideK = api.shouldHideKiller?.();
+  const hideP2 = api.shouldHideP2?.();
+  const p2Row = document.getElementById("pickSurvivor2Row");
+  const kRow = document.getElementById("pickKillerRow");
+  if (p2Row) p2Row.hidden = !!hideP2;
+  if (kRow) kRow.hidden = !!hideK;
   api.updateRoleLabel?.();
-
-  const killerRow = document.getElementById("pickKillerRow");
-  const surv2Row = document.getElementById("pickSurvivor2Row");
-  if (killerRow) killerRow.hidden = api.shouldHideKiller?.() ?? false;
-  if (surv2Row) surv2Row.hidden = api.shouldHideP2?.() ?? true;
 }

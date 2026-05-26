@@ -17,8 +17,10 @@ import {
 import { buildMazeDecor } from "./mazeDecor.js";
 import {
   buildVerticalWorld, updateVerticalPhysics, updateBouncePads, spawnArenaBouncePads,
-  getBounceAirControlMult, worldHeight, snapToStandableSurface,
+  getBounceAirControlMult, worldHeight, snapToStandableSurface, settleEntityOnGround,
 } from "./verticalWorld.js";
+import { collidesShooterSolid } from "./shooterCollision.js";
+import { applyClassicLevelAtmosphere, applyShooterMapAtmosphere } from "./atmosphereSky.js";
 import {
   setupPuzzleDoorLevel, buildPuzzleDoorMeshes, getNearPuzzleDoor,
   getLockedPuzzleDoorHint, solvePuzzleDoor, allPuzzleDoorsOpen, puzzleDoorsRemaining,
@@ -50,7 +52,7 @@ import {
   updateShooterSplitWeaponBars,
 } from "./shooterSplitHud.js";
 import {
-  carveLayoutSecretGates, buildShooterSecretMarkers, applyShooterLevelAtmosphere,
+  carveLayoutSecretGates, buildShooterSecretMarkers,
 } from "./shooterArenaArt.js";
 import { clearShooterHealOrbs, spawnShooterHealOrb, tickShooterHealOrbs } from "./shooterHealOrbs.js";
 import {
@@ -100,7 +102,7 @@ import {
   assignPaintColor, spawnPaintSplat, spawnPaintAtHit, spawnPaintFromAim, spawnPaintOnBody,
   clearPaintSplats, clearPlayerPaintSplats,
 } from "./paintballSplats.js";
-import { initMenuWizard, showCoopMobileWarn, initPerfTipModal } from "./menuUI.js";
+import { initMenuWizard, showMobilePlayWarn, initPerfTipModal } from "./menuUI.js";
 
 let menuUiRef = null;
 let gamepadActive = false;
@@ -306,8 +308,35 @@ function revealShooterEndMenu() {
   overlay.classList.add("show", "shooter-end");
   overlay.classList.toggle("win", won);
   overlay.classList.toggle("lose", !won);
-  document.getElementById("overlayTitle").textContent = opts.shortTitle || (won ? "勝利" : "落敗");
-  document.getElementById("overlayText").textContent = opts.shortSub || message || "";
+  let title = opts.shortTitle || (won ? "勝利" : "落敗");
+  let body = opts.shortSub || message || "";
+  const locals = getLocalHumanPlayers();
+  const lan = window.__forsakenLanSession?.roomId;
+  if (lan && locals.length >= 1 && opts.playStyle === "teams") {
+    const tk = opts.teamKills || [0, 0];
+    const redWon = tk[0] > tk[1];
+    const blueWon = tk[1] > tk[0];
+    const lines = locals.map((lp) => {
+      const tid = lp.teamId ?? 0;
+      const team = SHOOTER_TEAMS[tid]?.name || "隊伍";
+      const youWin = redWon && tid === 0 || blueWon && tid === 1;
+      const draw = !redWon && !blueWon;
+      const tag = draw ? "平手" : youWin ? "勝利" : "落敗";
+      return `${lp.displayName || lp.charDef?.name}（${team}）→ ${tag}`;
+    });
+    if (redWon) title = `${SHOOTER_TEAMS[0]?.name || "紅隊"} 獲勝`;
+    else if (blueWon) title = `${SHOOTER_TEAMS[1]?.name || "藍隊"} 獲勝`;
+    else title = "平手";
+    body = `${body}\n${lines.join("\n")}`;
+  } else if (lan && locals.length >= 1 && opts.playStyle === "ffa") {
+    const lines = locals.map((lp) => {
+      const st = lp._shooterStats || { kills: 0 };
+      return `${lp.displayName || lp.charDef?.name} · ${st.kills} 分`;
+    });
+    body = `${body}\n本機：${lines.join(" · ")}`;
+  }
+  document.getElementById("overlayTitle").textContent = title;
+  document.getElementById("overlayText").textContent = body;
 }
 
 function syncTouchShooterSecondaryBtn() {
@@ -317,7 +346,7 @@ function syncTouchShooterSecondaryBtn() {
   const id = getShooterWeapon(human?.weaponId)?.id;
   if (id === "katana") {
     scope.dataset.ico = "⛨";
-    scope.title = "格擋（反彈子彈 3 秒）";
+    scope.title = "格擋（反彈子彈 4 秒）";
     scope.setAttribute("aria-label", "格擋");
     scope.classList.toggle("katana-parry", true);
     scope.classList.toggle("parry-active", isKatanaParryActive(human));
@@ -1502,6 +1531,7 @@ function setupLights() {
   scene.add(new THREE.AmbientLight(0xb8c4e8, 0.72));
   const hemi = new THREE.HemisphereLight(0xb8dcff, 0x3a4558, 0.58);
   scene.add(hemi);
+  scene.userData.hemiLight = hemi;
   const dir = new THREE.DirectionalLight(0xfff6e8, 1.35);
   dir.position.set(22, 48, 16);
   dir.castShadow = true;
@@ -1872,6 +1902,47 @@ function getCollisionOpts() {
   return { vaultClear: 2.5, vaultJumpMin: 0.22, radiusScale: 0.88 };
 }
 
+function unstuckShooterEntity(p, vState) {
+  if (!p?.pos || !vState) return;
+  const r = 0.38;
+  const colOpts = getCollisionOpts();
+  const blocked = () =>
+    collidesShooterSolid(p.pos.x, p.pos.z, r, p.elev ?? 0, p._jumpY ?? 0, vState) ||
+    collides(ctx, maze, p.pos.x, p.pos.z, r, p._jumpY ?? 0, p.elev ?? 0, colOpts);
+  if (!blocked()) return;
+  const baseX = p.pos.x;
+  const baseZ = p.pos.z;
+  for (let ring = 1; ring <= 12; ring++) {
+    for (let a = 0; a < 14; a++) {
+      const ang = (a / 14) * Math.PI * 2;
+      const d = ring * 0.72;
+      const nx = baseX + Math.cos(ang) * d;
+      const nz = baseZ + Math.sin(ang) * d;
+      if (collides(ctx, maze, nx, nz, r, 0, 0, colOpts)) continue;
+      p.pos.x = nx;
+      p.pos.z = nz;
+      settleEntityOnGround(p, vState);
+      snapToStandableSurface(p, vState);
+      if (!collidesShooterSolid(nx, nz, r, p.elev ?? 0, 0, vState)) {
+        p._safeX = nx;
+        p._safeZ = nz;
+        p._safeElev = p.elev ?? 0;
+        return;
+      }
+    }
+  }
+}
+
+function settleAllShooterSpawns() {
+  if (!isShooterMode() || !verticalWorldState) return;
+  for (const ent of [...survivors, ...killers]) {
+    if (!ent?.pos) continue;
+    settleEntityOnGround(ent, verticalWorldState);
+    unstuckShooterEntity(ent, verticalWorldState);
+    if (ent.mesh) ent.mesh.position.set(ent.pos.x, worldHeight(ent), ent.pos.z);
+  }
+}
+
 function applyFallSafety(p) {
   if (!p || p.caught) return;
   const wh = worldHeight(p);
@@ -2014,6 +2085,7 @@ function restartMoleRound(winTeam) {
     p.caught = false;
     p._awaitingRespawn = false;
   }
+  settleAllShooterSpawns();
   const mole = setupMoleRound(survivors, shooterState);
   shooterState.moleCanShoot = false;
   shooterState.moleAnnounced = false;
@@ -3058,8 +3130,13 @@ let startLoadPhase = "";
 
 async function startGame() {
   if (startInProgress) return;
-  if (isTouchUiEnabled() && (gameMode === "coop" || gameMode === "versus")) {
-    const ok = await showCoopMobileWarn();
+  readMatchConfig();
+  if (isTouchUiEnabled()) {
+    const ok = await showMobilePlayWarn({
+      gameMode,
+      numLocalPlayers,
+      isShooter: gameMode === "shooter",
+    });
     if (!ok) {
       playSfx("ui_back");
       return;
@@ -3199,12 +3276,12 @@ async function runStartGame() {
   clearZoneParticles(scene);
   clearScene();
   clearVfxPool();
-  scene.background = new THREE.Color(theme.sky);
-  scene.fog = new THREE.Fog(theme.sky, ctx.fogNear * 0.95, ctx.fogFar * 1.85);
   if (isShooterMode()) {
-    applyShooterLevelAtmosphere(scene, selectedLevel);
+    applyShooterMapAtmosphere(scene, selectedLevel);
     const mapId = getShooterMapIdentity(selectedLevel);
     showToast(`${selectedLevel.name} — ${mapId.tagline}`, 2800);
+  } else {
+    applyClassicLevelAtmosphere(scene, theme, ctx);
   }
 
   startLoadPhase = "建立地圖";
@@ -3385,6 +3462,7 @@ async function runStartGame() {
     s._safeZ = s.pos.z;
     s._safeElev = s.elev ?? 0;
   }
+  if (isShooterMode() && verticalWorldState) settleAllShooterSpawns();
   if (!survivors.length) throw new Error("倖存者生成失敗");
   applyLanPlayerNames();
   if (!killers.length && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode()) {
@@ -3874,19 +3952,21 @@ const BLOCK_KEYS = new Set([
   "Numpad1", "Numpad2", "Numpad3",
 ]);
 
+function blockBrowserCloseShortcuts(e) {
+  if (gameState !== "play" && gameState !== "paused") return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod || e.altKey) return;
+  const k = (e.key || "").toLowerCase();
+  if (k === "w" || e.code === "KeyW") {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}
+
 function setupInput() {
+  document.addEventListener("keydown", blockBrowserCloseShortcuts, { capture: true });
+  window.addEventListener("keydown", blockBrowserCloseShortcuts, { capture: true });
   window.addEventListener("keydown", (e) => {
-    if (
-      (gameState === "play" || gameState === "paused") &&
-      e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      (e.code === "KeyW" || e.key === "w" || e.key === "W")
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     if (e.code === "Escape") {
       if (gameState === "play" || gameState === "paused") {
         e.preventDefault();
@@ -3995,7 +4075,7 @@ function setupInput() {
         const res = tryKatanaParry(human);
         if (res.ok && res.reason === "start") {
           playMeleeWindSfx(0.06);
-          showToast("格擋 3 秒 · 可反彈子彈", 900);
+          showToast("格擋 4 秒 · 可反彈子彈", 900);
         } else if (!res.ok && res.reason === "cd") {
           showToast("格擋冷卻中", 600);
         }
@@ -6254,7 +6334,7 @@ function boot() {
           const res = tryKatanaParry(h);
           if (res.ok && res.reason === "start") {
             playMeleeWindSfx(0.06);
-            showToast("格擋 3 秒", 800);
+            showToast("格擋 4 秒", 800);
           } else if (!res.ok && res.reason === "cd") showToast("格擋冷卻中", 600);
           updateCrosshair();
           return;

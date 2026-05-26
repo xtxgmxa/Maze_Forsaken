@@ -75,7 +75,8 @@ export function sampleFloorElev(px, pz, state, player = null) {
   for (const pl of state.platforms || []) {
     if (!insideAabb(px, pz, pl.x, pl.z, pl.halfW, pl.halfD)) continue;
     if (!canLandOnPlatform(pl, footElev, jumpY)) continue;
-    if (pl.y >= best) best = pl.y;
+    const surface = pl.standable ? (pl.blockTop ?? pl.y ?? 0) : (pl.y ?? 0);
+    if (surface >= best) best = surface;
   }
   return best;
 }
@@ -439,6 +440,17 @@ export function updateVerticalPhysics(p, dt, verticalState) {
 }
 
 /** 落在可站立掩體／高台上時強制對齊台面，避免穿進方塊內卡住 */
+/** 出生／傳送後對齊腳下地面與可站立台面 */
+export function settleEntityOnGround(p, verticalState) {
+  if (!p?.pos || !verticalState) return;
+  const ground = sampleFloorElev(p.pos.x, p.pos.z, verticalState, p);
+  p.elev = ground;
+  p._jumpY = 0;
+  p.velY = 0;
+  p.onGround = true;
+  snapToStandableSurface(p, verticalState);
+}
+
 export function snapToStandableSurface(p, verticalState) {
   if (!p || !verticalState?.platforms?.length) return;
   const foot = (p.elev ?? 0) + (p._jumpY ?? 0);
@@ -458,7 +470,7 @@ export function snapToStandableSurface(p, verticalState) {
   if (bestTop == null) return;
   const rising = (p.velY ?? 0) > 0.35;
   if (rising && foot < bestTop - 0.2) return;
-  if (p.velY <= 1.2 && foot >= bestTop - 1.35 && foot <= bestTop + 0.45) {
+  if (p.velY <= 1.4 && foot >= bestTop - 1.5 && foot <= bestTop + 0.35) {
     p.elev = bestTop;
     p._jumpY = 0;
     p.velY = 0;

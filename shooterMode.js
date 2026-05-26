@@ -178,8 +178,8 @@ function addShooterDeck(ctx, maze, group, gx, gz, tier, scale, style, layout, pl
   const half = cell * 0.38 * scale;
   const pillarH = Math.max(0.5, y - 0.4);
   const pl = {
-    x: c.x, z: c.z, halfW: half, halfD: half, y, gx: dgx, gz: dgz, tier,
-    standable: true, solidSides: false,
+    x: c.x, z: c.z, halfW: half, halfD: half, y, blockTop: y, gx: dgx, gz: dgz, tier,
+    standable: true, solidSides: true,
     minApproach: tier >= 3 ? Math.max(0, y - 2.5) : 0,
   };
   platforms.push(pl);
@@ -1367,7 +1367,7 @@ function pushLowCover(covers, group, c, cell, hBox, halfW, halfD) {
   const top = hBox + 0.05;
   covers.push({
     x: c.x, z: c.z, halfW, halfD, y: top, blockTop: top, baseY: 0,
-    standable: true, solidSides: false, minApproach: 0,
+    standable: true, solidSides: true, minApproach: 0,
   });
 }
 

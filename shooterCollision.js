@@ -55,8 +55,8 @@ export function collidesShooterSolid(px, pz, radius, footElev, jumpY, state) {
     const top = pl.blockTop ?? pl.y ?? 1;
     // 可站立掩體：腳底接近或高於台面時不擋水平移動（由台面吸附處理）
     if (pl.standable) {
-      if (crest >= top - 0.35) continue;
-      if ((jumpY ?? 0) > 0.08 && crest >= top - 1.5) continue;
+      if (crest >= top - 0.2) continue;
+      if ((jumpY ?? 0) > 0.05 && crest >= top - 1.65) continue;
     }
     if (crest >= top - 0.5) continue;
     if ((jumpY ?? 0) > 0.12 && crest >= top - 1.35) continue;
