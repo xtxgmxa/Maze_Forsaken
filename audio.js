@@ -2,7 +2,7 @@
 import { resolveAsset } from "./assetUrls.js";
 
 const AUDIO_SETTINGS_KEY = "forsaken_audio_v1";
-const DEFAULT_AUDIO = { music: 0.28, sfx: 1.0 };
+const DEFAULT_AUDIO = { music: 0.22, sfx: 1.0 };
 
 let actx = null;
 let master = null;
@@ -36,7 +36,7 @@ export function applyAudioSettings(musicEl = null) {
   const mv = Math.max(0, Math.min(1, audioSettings.music));
   if (musicConnected && musicGain) musicGain.gain.value = mv;
   else if (musicEl) musicEl.volume = mv;
-  if (sfxBus) sfxBus.gain.value = 1.2 * Math.max(0, Math.min(2, audioSettings.sfx));
+  if (sfxBus) sfxBus.gain.value = 1.55 * Math.max(0, Math.min(2, audioSettings.sfx));
 }
 
 export function setAudioSettings(partial, musicEl = null) {
@@ -135,6 +135,10 @@ function out(node) {
   node.connect(sfxBus || master || actx.destination);
 }
 
+function synthVol(vol) {
+  return vol * 1.45 * Math.max(0, Math.min(2, audioSettings.sfx ?? 1));
+}
+
 function tone(freq, dur, type = "sine", vol = 0.28) {
   if (!actx || !unlocked) return;
   const t0 = actx.currentTime;
@@ -142,7 +146,7 @@ function tone(freq, dur, type = "sine", vol = 0.28) {
   const g = actx.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, t0);
-  g.gain.setValueAtTime(vol, t0);
+  g.gain.setValueAtTime(synthVol(vol), t0);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
   o.connect(g);
   out(g);
@@ -159,7 +163,7 @@ function noiseBurst(dur = 0.08, vol = 0.22) {
   const src = actx.createBufferSource();
   src.buffer = buffer;
   const g = actx.createGain();
-  g.gain.value = vol;
+  g.gain.value = synthVol(vol);
   src.connect(g);
   out(g);
   src.start();

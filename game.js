@@ -71,6 +71,7 @@ import {
 } from "./audio.js";
 import {
   loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
+  playSlideSfx, playKatanaSwingSfx,
 } from "./gameSounds.js";
 import {
   buildZoneParticles, clearZoneParticles, tickZoneParticles,
@@ -312,10 +313,13 @@ function updateCrosshair() {
   const wId = getShooterWeapon(human?.weaponId)?.id;
   const sniper = shooterAim && wId === "sniper";
   const hideCrosshair = shooterAim && wId === "katana";
+  document.body.classList.toggle("shooter-katana", !!hideCrosshair);
   ch.classList.toggle("show", (killerAim || shooterAim) && !hideCrosshair);
   ch.classList.toggle("sniper", sniper);
   ch.classList.toggle("sniper-scope", sniper && shooterAds);
   if (scopeOv) scopeOv.classList.toggle("show", shooterAim && sniper && shooterAds);
+  const katanaRet = document.getElementById("katanaReticle");
+  if (katanaRet) katanaRet.classList.toggle("show", hideCrosshair);
 }
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
@@ -360,6 +364,8 @@ function getLevelsForMenu() {
   return LEVELS;
 }
 
+let levelMenuPicked = false;
+
 function rebuildLevelGrid() {
   const levelGrid = document.getElementById("levelGrid");
   if (!levelGrid) return;
@@ -369,9 +375,11 @@ function rebuildLevelGrid() {
   levelGrid.innerHTML = "";
   list.forEach((lv) => {
     const card = document.createElement("div");
-    card.className = "level-card" + (lv.id === activeId ? " selected" : "");
+    const showSel = levelMenuPicked && lv.id === activeId;
+    card.className = "level-card" + (showSel ? " selected" : "");
     card.innerHTML = `<h3>${lv.name}</h3><p>${lv.desc}</p>`;
       card.onclick = () => {
+      levelMenuPicked = true;
       document.querySelectorAll(".level-card").forEach((c) => c.classList.remove("selected"));
       card.classList.add("selected");
       selectedLevel = lv;
@@ -644,7 +652,7 @@ function initMenu() {
     { id: "shooter", name: "槍戰模式", desc: "團隊或自由混戰 · 最多 12 人 · 漆彈射擊", featured: true },
   ].forEach((m, i) => {
     const card = document.createElement("div");
-    card.className = "mode-card" + (i === 0 ? " selected" : "") + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
+    card.className = "mode-card" + (m.featured ? " featured" : "") + (m.wip ? " wip" : "");
     card.dataset.modeId = m.id;
     card.innerHTML = `<h3>${m.name}${m.wip ? " <span class='wip-tag'>開發中</span>" : ""}</h3><p>${m.desc}</p>`;
     card.onclick = () => {
@@ -652,6 +660,7 @@ function initMenu() {
       card.classList.add("selected");
       const prevMode = gameMode;
       gameMode = m.id;
+      if (prevMode !== m.id) levelMenuPicked = false;
       resetCategoryAfterDedicatedMode(prevMode);
       document.getElementById("p2CharSection").style.display =
         m.id === "solo" || m.id === "classic" || m.id === "keyhunt" || m.id === "platformer" || m.id === "puzzle" || m.id === "shooter" ? "none" : "block";
@@ -660,6 +669,9 @@ function initMenu() {
       playSfx("ui");
     };
     modeGrid.appendChild(card);
+  });
+  document.querySelectorAll(".mode-card").forEach((c) => {
+    c.classList.toggle("selected", c.dataset.modeId === gameMode);
   });
 
   const mountGrid = (id, hostId) => {
@@ -2582,6 +2594,7 @@ function tryShooterFire(p) {
     }
     p._shootCd = elapsed + (p._shooterFireCd ?? 0.46);
     muzzleFlash(p);
+    playKatanaSwingSfx(0.05);
     if (best) {
       const hitDir = p._lastFireDir && p._lastFireDir.lengthSq() > 0.001
         ? p._lastFireDir.clone().normalize()
@@ -2592,8 +2605,6 @@ function tryShooterFire(p) {
       showHitMarker();
       playShooterSfx("hitBody", playSfx, 0.03);
       showToast(`武士刀命中 ${best.displayName || best.charDef?.name || "目標"} · -${dmg}`, 500, "hit");
-    } else {
-      playSfx("slash", 0.05);
     }
     return;
   }
@@ -2738,7 +2749,7 @@ function applySlideInput(p, profile, move, dt, gp = null) {
     p.sliding = true;
     p.invuln = 0.28;
     p._jumpY = 0.06;
-    playSfx("slide", 0.28);
+    playSlideSfx(0.28);
     return {
       x: p.slideDir.x,
       z: p.slideDir.z,
@@ -4247,7 +4258,11 @@ function updateEntity(p, dt, move) {
   const wasAir = p._wasInAir;
   const inAir = !p.onGround || (p._jumpY ?? 0) > 0.2 || (p.velY ?? 0) > 0.4 || (p._bounceAirTime ?? 0) > 0;
   p._wasInAir = inAir;
-  if (wasAir && p.onGround && (p._jumpY ?? 0) <= 0.08 && Math.abs(p.velY ?? 0) < 1.2) {
+  if ((p._suppressLandSfx ?? 0) > 0) p._suppressLandSfx = Math.max(0, p._suppressLandSfx - dt);
+  if (
+    wasAir && p.onGround && (p._jumpY ?? 0) <= 0.08 && Math.abs(p.velY ?? 0) < 1.2
+    && (p._bounceAirTime ?? 0) <= 0 && (p._bounceCd ?? 0) <= 0 && (p._suppressLandSfx ?? 0) <= 0
+  ) {
     playLandSfx(0.1);
   }
 
@@ -5683,6 +5698,7 @@ function setGameModeForLan(modeId) {
   if (!modeId) return;
   const prev = gameMode;
   gameMode = modeId;
+  if (prev !== modeId) levelMenuPicked = false;
   document.querySelectorAll(".mode-card").forEach((c) => {
     c.classList.toggle("selected", c.dataset.modeId === modeId);
   });

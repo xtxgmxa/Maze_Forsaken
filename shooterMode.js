@@ -844,26 +844,28 @@ export function attachFpGun(cam, weaponId = "rifle") {
   const scope = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), fpGunMat(0x556677));
   scope.position.set(0, 0.09, 0.04);
   scope.name = "fpScope";
-  const katanaBlade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.045, 1.05), fpGunMat(0xe7edf9));
-  katanaBlade.name = "fpKatanaBlade";
-  katanaBlade.position.set(0.0, 0.0, 0.62);
-  katanaBlade.rotation.set(0.08, 0.01, 0);
-  katanaBlade.visible = false;
-  const katanaGuard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, 0.08), fpGunMat(0xd2b36a));
-  katanaGuard.name = "fpKatanaGuard";
-  katanaGuard.position.set(0.0, 0.0, 0.08);
-  katanaGuard.rotation.set(0, 0, 0);
-  katanaGuard.visible = false;
-  const katanaHandle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.32), fpGunMat(0x1a1e2b));
-  katanaHandle.name = "fpKatanaHandle";
-  katanaHandle.position.set(0, -0.01, -0.12);
-  katanaHandle.visible = false;
   gun.add(body, barrel, grip, guard, scope);
-  gun.add(katanaBlade, katanaGuard, katanaHandle);
   gun.position.set(0.12, -0.06, 0.02);
   gun.rotation.set(0.02, 0.05, 0);
 
-  rig.add(armL, armR, hand, gun);
+  const katana = new THREE.Group();
+  katana.name = "fpKatanaGroup";
+  katana.visible = false;
+  const katanaBlade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.055, 1.22), fpGunMat(0xf4f8ff));
+  katanaBlade.name = "fpKatanaBlade";
+  katanaBlade.position.set(0.04, 0.03, 0.78);
+  katanaBlade.rotation.set(0.1, 0.06, 0);
+  const katanaGuard = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.04, 0.1), fpGunMat(0xe8c86a));
+  katanaGuard.name = "fpKatanaGuard";
+  katanaGuard.position.set(0.04, 0.01, 0.12);
+  const katanaHandle = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.36), fpGunMat(0x1a1e2b));
+  katanaHandle.name = "fpKatanaHandle";
+  katanaHandle.position.set(0.04, -0.02, -0.16);
+  katana.add(katanaHandle, katanaGuard, katanaBlade);
+  katana.position.set(0.16, -0.1, 0.06);
+  katana.rotation.set(0.14, -0.22, 0.1);
+
+  rig.add(armL, armR, hand, gun, katana);
   rig.position.set(0.38, -0.28, -0.48);
   rig.rotation.set(0.03, 0.05, 0);
   cam.add(rig);
@@ -891,7 +893,13 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
   const katHandle = fpGunMesh.getObjectByName("fpKatanaHandle");
   const isKatana = id === "katana";
   if (gunBody) gunBody.visible = !isKatana;
-  if (katanaGroup) katanaGroup.visible = isKatana;
+  if (katanaGroup) {
+    katanaGroup.visible = isKatana;
+    if (isKatana) katanaGroup.traverse((c) => { if (c.isMesh) c.visible = true; });
+  }
+  if (katBlade) katBlade.visible = isKatana;
+  if (katGuard) katGuard.visible = isKatana;
+  if (katHandle) katHandle.visible = isKatana;
   fpGunMesh.traverse((c) => {
     if (!c.material?.color) return;
     if (c.name === "fpScope") {

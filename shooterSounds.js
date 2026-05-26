@@ -86,7 +86,7 @@ export function playShooterSfx(id, playSfx, minGap = 0.04) {
       src.buffer = buf;
       const g = actx.createGain();
       const sfxMul = Math.max(0, Math.min(2, getAudioSettings().sfx ?? 1));
-      g.gain.value = (id === "fire" ? 0.55 : 0.72) * sfxMul;
+      g.gain.value = (id === "fire" ? 0.82 : 0.92) * sfxMul;
       src.connect(g);
       const bus = getSfxBus();
       g.connect(bus || actx.destination);

@@ -351,6 +351,7 @@ export function launchRivalsBounce(p, pad) {
   p._bounceAirTime = 4.2;
   p._bounceCd = 1.1;
   p._wasInAir = true;
+  p._suppressLandSfx = 0.45;
   const hs = (pad.launchSpeed ?? 16) * (pad.launchPower ?? 1);
   if (pad.launchDx != null && pad.launchDz != null) {
     p.vel.x = pad.launchDx * hs;

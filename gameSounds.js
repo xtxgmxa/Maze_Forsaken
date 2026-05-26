@@ -12,6 +12,8 @@ const DEFAULT_PATHS = {
   jump: resolveAsset("assets/audio/sfx/jump.mp3"),
   land: resolveAsset("assets/audio/sfx/land.mp3"),
   bouncePad: resolveAsset("assets/audio/sfx/bounce_pad.mp3"),
+  slide: resolveAsset("assets/audio/sfx/slide.mp3"),
+  katanaSwing: resolveAsset("assets/audio/sfx/katana_swing.mp3"),
 };
 
 const FALLBACK = {
@@ -19,6 +21,8 @@ const FALLBACK = {
   jump: "jump",
   land: "teleport",
   bouncePad: "teleport",
+  slide: "slide",
+  katanaSwing: "slash",
 };
 
 let config = { ...DEFAULT_PATHS };
@@ -69,7 +73,7 @@ export async function preloadGameSounds() {
   }
 }
 
-function playSample(id, minGap = 0.05, vol = 0.55) {
+function playSample(id, minGap = 0.05, vol = 0.78) {
   const now = performance.now();
   if (lastPlay[id] && now - lastPlay[id] < minGap * 1000) return false;
   lastPlay[id] = now;
@@ -95,17 +99,25 @@ function playSample(id, minGap = 0.05, vol = 0.55) {
 }
 
 export function playFootstepSfx(minGap = 0.08) {
-  playSample("footstep", minGap, 0.5);
+  playSample("footstep", minGap, 0.72);
 }
 
 export function playJumpSfx(minGap = 0.06) {
-  playSample("jump", minGap, 0.62);
+  playSample("jump", minGap, 0.8);
 }
 
 export function playLandSfx(minGap = 0.08) {
-  playSample("land", minGap, 0.58);
+  playSample("land", minGap, 0.76);
 }
 
 export function playBouncePadSfx(minGap = 0.12) {
   playSample("bouncePad", minGap, 0.72);
+}
+
+export function playSlideSfx(minGap = 0.2) {
+  playSample("slide", minGap, 0.82);
+}
+
+export function playKatanaSwingSfx(minGap = 0.05) {
+  playSample("katanaSwing", minGap, 0.88);
 }

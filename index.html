@@ -730,9 +730,9 @@
       margin-bottom: 8px;
     }
     .menu-step .mode-grid { max-height: 280px; overflow-y: auto; }
-    .mode-card.featured {
-      border-color: #44aaff;
-      box-shadow: 0 0 12px #2288ff44;
+    .mode-card.featured:not(.selected) {
+      border-color: #3a2a50;
+      box-shadow: none;
     }
     .mode-card.wip { border-style: dashed; opacity: 0.92; }
     .wip-tag { font-size: 0.62rem; color: #ffcc66; font-weight: normal; }
@@ -1723,7 +1723,23 @@
     body.touch-ui #touchStickWrap { z-index: 26; }
     body.touch-ui #abilityBar { display: none !important; }
     body.touch-ui #crosshair { display: none !important; }
-    body.touch-ui.shooter-play #crosshair { display: block !important; opacity: 0.85; }
+    body.touch-ui.shooter-play:not(.shooter-katana) #crosshair { display: block !important; opacity: 0.85; }
+    body.touch-ui.shooter-katana #crosshair { display: none !important; }
+    #katanaReticle {
+      display: none; position: fixed; left: 50%; top: 50%;
+      width: 118px; height: 118px; margin: -59px 0 0 -59px;
+      border: 2px dashed rgba(120, 220, 200, 0.55);
+      border-radius: 50%; pointer-events: none; z-index: 12;
+      box-shadow: 0 0 18px rgba(40, 180, 140, 0.2);
+    }
+    #katanaReticle::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: 6px; height: 6px; margin: -3px 0 0 -3px;
+      border-radius: 50%; background: rgba(140, 255, 220, 0.75);
+      box-shadow: 0 0 8px #44ffcc;
+    }
+    #katanaReticle.show { display: block; }
+    body.touch-ui #katanaReticle.show { display: block; opacity: 0.9; }
     body.touch-ui #controls-hint { display: none !important; }
     body.touch-ui #designerCreditHud {
       bottom: 196px;
@@ -3010,6 +3026,7 @@
   <div id="coopSplitLine" aria-hidden="true"></div>
   <div id="gamepadHudRoot" aria-hidden="true"></div>
   <div id="crosshair" aria-hidden="true"><span class="ch-dot"></span></div>
+  <div id="katanaReticle" aria-hidden="true" title="近戰距離參考（約 2.6m）"></div>
   <div id="scopeOverlay" aria-hidden="true"></div>
   <div id="damageLayer"></div>
   <div id="killBanner" aria-hidden="true">KILL</div>
