@@ -1,3 +1,4 @@
+import { playSfx } from "./audio.js";
 import { playMeleeWindSfx, playKatanaSwingSfx } from "./gameSounds.js";
 import { playAbilityVfx, spawnHitVfx } from "./vfx.js";
 import { moveWithCollision } from "./maze.js";

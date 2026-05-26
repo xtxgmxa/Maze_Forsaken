@@ -17,7 +17,7 @@ import {
 import { buildMazeDecor } from "./mazeDecor.js";
 import {
   buildVerticalWorld, updateVerticalPhysics, updateBouncePads, spawnArenaBouncePads,
-  getBounceAirControlMult, worldHeight,
+  getBounceAirControlMult, worldHeight, snapToStandableSurface,
 } from "./verticalWorld.js";
 import {
   setupPuzzleDoorLevel, buildPuzzleDoorMeshes, getNearPuzzleDoor,
@@ -47,6 +47,7 @@ import { applyShooterThemeToLevel, getShooterMapIdentity } from "./shooterMapThe
 import { placeShooterBouncePad, tickShooterPadPreview } from "./shooterPadDeploy.js";
 import {
   hideShooterSplitHud, layoutShooterSplitHud, drawShooterSplitRadars, syncShooterSplitGridLines,
+  updateShooterSplitWeaponBars,
 } from "./shooterSplitHud.js";
 import {
   carveLayoutSecretGates, buildShooterSecretMarkers, applyShooterLevelAtmosphere,
@@ -2761,8 +2762,8 @@ function tryShooterFire(p) {
   p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
 }
 
-function tryShooterWeaponSwitch(slot) {
-  const p = getHumanFocus();
+function tryShooterWeaponSwitch(slot, who = null) {
+  const p = who || getHumanFocus();
   if (!p || !isShooterMode()) return;
   const w = SHOOTER_WEAPONS.find((x) => x.slot === slot);
   if (!w || p.weaponId === w.id) return;
@@ -2777,7 +2778,8 @@ function tryShooterWeaponSwitch(slot) {
   }
   if (p._padPreview) p._padPreview.visible = w.id === "pad";
   if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
-  updateShooterWeaponBar(w.slot);
+  if (isShooterSplitView()) updateShooterSplitWeaponBars();
+  else updateShooterWeaponBar(w.slot);
   playSfx("ui");
   showToast(
     w.id === "pad"
@@ -3028,18 +3030,25 @@ function showLoading(msg) {
   if (!el) {
     el = document.createElement("div");
     el.id = "gameLoading";
-    el.style.cssText =
-      "position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(10,6,20,0.85);color:#eeddff;font-size:1.2rem;font-weight:bold";
     document.body.appendChild(el);
   }
+  el.className = "game-loading-overlay";
+  el.style.cssText =
+    "position:fixed;inset:0;left:0;top:0;width:100vw;height:100vh;max-width:100vw;margin:0;box-sizing:border-box;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(10,6,20,0.92);color:#eeddff;font-size:1.2rem;font-weight:bold;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))";
   el.textContent = msg;
   el.style.display = "flex";
+  document.body.classList.add("game-loading-active");
   return el;
 }
 
 function hideLoading() {
   const el = document.getElementById("gameLoading");
-  if (el) el.style.display = "none";
+  if (el) {
+    el.style.display = "none";
+    el.className = "";
+    el.style.cssText = "";
+  }
+  document.body.classList.remove("game-loading-active");
 }
 
 const yieldFrame = () => new Promise((r) => requestAnimationFrame(r));
@@ -3433,8 +3442,9 @@ async function runStartGame() {
       camera.near = 0.05;
       camera.updateProjectionMatrix();
     }
+    const locals = getLocalHumanPlayers();
     initShooterWeaponBar();
-    setShooterWeaponBarVisible(!isTouchUiEnabled());
+    setShooterWeaponBarVisible(!isTouchUiEnabled() && locals.length < 2);
     if (humanShooter && camera) syncHeldWeaponOnCamera(humanShooter, camera, scene);
     updateShooterWeaponBar(getShooterWeapon(humanShooter?.weaponId)?.slot ?? 2);
     if (humanShooter) {
@@ -3443,7 +3453,6 @@ async function runStartGame() {
         : `${SHOOTER_TEAMS[humanShooter.teamId ?? 0]?.name || "隊伍"} · 同色環＝隊友`;
       showToast(`你屬於：${teamLine} · 誤射隊友會立刻淘汰`, 3600);
     }
-    const locals = getLocalHumanPlayers();
     ensureSplitCameras(Math.max(2, locals.length));
     if (locals.length >= 2) {
       const cams = [camera, camera2, camera3, camera4];
@@ -3867,6 +3876,17 @@ const BLOCK_KEYS = new Set([
 
 function setupInput() {
   window.addEventListener("keydown", (e) => {
+    if (
+      (gameState === "play" || gameState === "paused") &&
+      e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      (e.code === "KeyW" || e.key === "w" || e.key === "W")
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.code === "Escape") {
       if (gameState === "play" || gameState === "paused") {
         e.preventDefault();
@@ -4341,6 +4361,9 @@ function updateEntity(p, dt, move) {
       parts.rightLeg.position.z = 0.48;
     }
     playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY ?? 0, p.elev ?? 0);
+    if (isShooterMode() && verticalWorldState?.isShooter) {
+      snapToStandableSurface(p, verticalWorldState);
+    }
     if (p.mesh) {
       p.mesh.position.set(p.pos.x, worldHeight(p), p.pos.z);
       p.mesh.rotation.y = p.yaw;
@@ -4372,6 +4395,9 @@ function updateEntity(p, dt, move) {
   const spd = Math.hypot(p.vel.x, p.vel.z);
   if (spd > 0.05) {
     playerMove(p.pos, p.vel.x, p.vel.z, dt, p._jumpY ?? 0, p.elev ?? 0);
+    if (isShooterMode() && verticalWorldState?.isShooter) {
+      snapToStandableSurface(p, verticalWorldState);
+    }
   }
   if (isShooterMode() && !p.isAI) {
     p.yaw = camYaw;
@@ -5110,6 +5136,8 @@ function renderShooterSplitView(W, H) {
   const mmWrap = document.getElementById("minimap-wrap");
   if (locals.length < 2) {
     hideShooterSplitHud();
+    document.getElementById("hud")?.classList.remove("hud-split-hidden");
+    if (!isTouchUiEnabled()) setShooterWeaponBarVisible(true);
     syncShooterSplitGridLines(0, W, H);
     if (mmWrap) mmWrap.style.display = isShooterMode() ? "" : "";
     if (line) line.style.display = "none";
@@ -5120,6 +5148,8 @@ function renderShooterSplitView(W, H) {
     return;
   }
   if (mmWrap) mmWrap.style.display = "none";
+  setShooterWeaponBarVisible(false);
+  document.getElementById("hud")?.classList.add("hud-split-hidden");
   ensureSplitCameras(locals.length);
   const bg = scene.background?.isColor ? scene.background.getHex() : 0x1a1228;
   const cams = [camera, camera2, camera3, camera4];
@@ -5199,7 +5229,13 @@ function renderShooterSplitView(W, H) {
     : shooterState?.playStyle === "mole"
       ? "無間道"
       : "團隊對抗";
-  layoutShooterSplitHud(vps, W, H, { timeLeft: killerTimer, modeLabel: styleTag });
+  const mapLabel = selectedLevel ? `${selectedLevel.name}` : "槍戰";
+  layoutShooterSplitHud(vps, W, H, {
+    timeLeft: killerTimer,
+    modeLabel: styleTag,
+    mapLabel,
+    onWeapon: (viewer, slot) => tryShooterWeaponSwitch(slot, viewer),
+  });
   if (minimapBaseCanvas) drawShooterSplitRadars(ctx, maze, minimapBaseCanvas, survivors, vps);
 }
 

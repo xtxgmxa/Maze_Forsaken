@@ -887,8 +887,8 @@ const RECOIL_STRENGTH = { smg: 0.055, rifle: 0.095, shotgun: 0.16, sniper: 0.2 }
 const RECOIL_DURATION = { smg: 0.1, rifle: 0.13, shotgun: 0.18, sniper: 0.22 };
 const KATANA_SWING_DURATION = 0.44;
 const SWING_AMP = 2.45;
-export const KATANA_PARRY_DURATION = 3;
-export const KATANA_PARRY_COOLDOWN = 3;
+export const KATANA_PARRY_DURATION = 4;
+export const KATANA_PARRY_COOLDOWN = 4;
 
 export function tickKatanaParry(p, dt) {
   if (!p) return;
@@ -1364,9 +1364,10 @@ export function tickGunFlash(p, dt, cam) {
 }
 
 function pushLowCover(covers, group, c, cell, hBox, halfW, halfD) {
+  const top = hBox + 0.05;
   covers.push({
-    x: c.x, z: c.z, halfW, halfD, y: hBox + 0.05, blockTop: hBox + 0.05, baseY: 0,
-    standable: true, solidSides: true, minApproach: 0,
+    x: c.x, z: c.z, halfW, halfD, y: top, blockTop: top, baseY: 0,
+    standable: true, solidSides: false, minApproach: 0,
   });
 }
 

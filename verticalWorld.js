@@ -439,7 +439,7 @@ export function updateVerticalPhysics(p, dt, verticalState) {
 }
 
 /** 落在可站立掩體／高台上時強制對齊台面，避免穿進方塊內卡住 */
-function snapToStandableSurface(p, verticalState) {
+export function snapToStandableSurface(p, verticalState) {
   if (!p || !verticalState?.platforms?.length) return;
   const foot = (p.elev ?? 0) + (p._jumpY ?? 0);
   let bestTop = null;
@@ -449,14 +449,23 @@ function snapToStandableSurface(p, verticalState) {
     const top = pl.blockTop ?? pl.y ?? 0;
     if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, pl.halfW, pl.halfD)) continue;
     const d = Math.abs(foot - top);
-    if (foot > top + 1.4) continue;
+    if (foot > top + 1.65) continue;
     if (d < bestD) {
       bestD = d;
       bestTop = top;
     }
   }
   if (bestTop == null) return;
-  if (p.velY <= 0.6 && foot >= bestTop - 1.05 && foot <= bestTop + 0.55) {
+  const rising = (p.velY ?? 0) > 0.35;
+  if (rising && foot < bestTop - 0.2) return;
+  if (p.velY <= 1.2 && foot >= bestTop - 1.35 && foot <= bestTop + 0.45) {
+    p.elev = bestTop;
+    p._jumpY = 0;
+    p.velY = 0;
+    p.onGround = true;
+    return;
+  }
+  if (p.velY <= 0.5 && foot < bestTop - 0.04 && foot >= bestTop - 0.95) {
     p.elev = bestTop;
     p._jumpY = 0;
     p.velY = 0;
