@@ -186,11 +186,9 @@ function openPicker(title, gridId, hostId) {
   pickerHomeId = hostId;
   const titleEl = document.getElementById("pickerTitle");
   if (titleEl) titleEl.textContent = title;
-  const host = document.getElementById(hostId);
-  if (host) {
-    host.innerHTML = "";
-    host.appendChild(grid);
-  }
+  content.innerHTML = "";
+  content.appendChild(grid);
+  grid.classList.remove("picker-hidden");
   overlay.classList.add("show");
 }
 

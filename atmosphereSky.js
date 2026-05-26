@@ -2,11 +2,12 @@ import * as THREE from "three";
 import { getShooterLayout } from "./shooterLayouts.js";
 
 let skyDome = null;
+let cloudGroup = null;
 
 const SKY_PRESETS = {
-  day: { top: 0x5eb3ff, bottom: 0xb8e4ff, fog: 0xb8d8f0, sun: 0xfff4e0, hemiSky: 0x88ccff, hemiGround: 0x6a7a58 },
-  dusk: { top: 0xff8844, bottom: 0x3a2858, fog: 0x6a4868, sun: 0xffaa66, hemiSky: 0xff9966, hemiGround: 0x4a3848 },
-  night: { top: 0x0a1028, bottom: 0x1a2848, fog: 0x0e1428, sun: 0x8899cc, hemiSky: 0x223355, hemiGround: 0x0a0818 },
+  day: { top: 0x5eb3ff, bottom: 0xb8e4ff, fog: 0xb8d8f0, sun: 0xfff4e0, hemiSky: 0x88ccff, hemiGround: 0x6a7a58, cloud: 0xffffff },
+  dusk: { top: 0xff8844, bottom: 0x3a2858, fog: 0x6a4868, sun: 0xffaa66, hemiSky: 0xff9966, hemiGround: 0x4a3848, cloud: 0xffddcc },
+  night: { top: 0x0a1028, bottom: 0x1a2848, fog: 0x0e1428, sun: 0x8899cc, hemiSky: 0x223355, hemiGround: 0x0a0818, cloud: 0x334466 },
 };
 
 const SHOOTER_PRESET = {
@@ -25,16 +26,85 @@ function pickPresetFromSkyColor(skyHex) {
   return "night";
 }
 
-function removeSkyDome(scene) {
+function removeSky(scene) {
   if (skyDome && scene) {
     scene.remove(skyDome);
     skyDome.geometry?.dispose();
     skyDome.material?.dispose();
     skyDome = null;
   }
+  if (cloudGroup && scene) {
+    scene.remove(cloudGroup);
+    cloudGroup.traverse((o) => {
+      o.geometry?.dispose();
+      o.material?.dispose();
+    });
+    cloudGroup = null;
+  }
 }
 
-/** 漸層天空球 + 背景色／霧／光照色溫 */
+/** 麥塊風格方塊雲（多層、有厚度） */
+function addBlockClouds(scene, preset, seed = 1) {
+  cloudGroup = new THREE.Group();
+  cloudGroup.name = "gameClouds";
+  const col = preset.cloud ?? 0xffffff;
+  const mat = new THREE.MeshLambertMaterial({
+    color: col,
+    transparent: true,
+    opacity: preset === SKY_PRESETS.night ? 0.35 : 0.88,
+    fog: true,
+  });
+  const rng = (n) => {
+    const x = Math.sin(n * 12.9898 + seed * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  const layouts = [
+    [[0, 0, 0], [1.2, 0.55, 0.9], [2.1, 0, 0.3]],
+    [[0, 0.2, 0.5], [1, 0.5, 0], [1.8, 0.15, -0.4], [2.6, 0, 0.2]],
+    [[-0.4, 0, 0], [0.6, 0.45, 0.2], [1.5, 0.35, -0.2]],
+  ];
+  const cloudCount = preset === SKY_PRESETS.night ? 6 : 11;
+  for (let c = 0; c < cloudCount; c++) {
+    const g = new THREE.Group();
+    const yaw = rng(c) * Math.PI * 2;
+    const dist = 55 + rng(c + 7) * 45;
+    const y = 28 + rng(c + 13) * 38;
+    const layout = layouts[Math.floor(rng(c + 3) * layouts.length)];
+    const scale = 2.8 + rng(c + 19) * 2.2;
+    for (const [ox, oy, oz] of layout) {
+      const w = 5 + rng(c + ox) * 4;
+      const h = 2.2 + rng(c + oy) * 1.6;
+      const d = 4 + rng(c + oz) * 3;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      box.position.set(ox * scale, oy * scale * 0.5, oz * scale);
+      box.castShadow = false;
+      box.receiveShadow = false;
+      g.add(box);
+    }
+    g.position.set(Math.cos(yaw) * dist, y, Math.sin(yaw) * dist);
+    g.rotation.y = yaw;
+    cloudGroup.add(g);
+  }
+  if (preset !== SKY_PRESETS.night) {
+    const sun = new THREE.Mesh(
+      new THREE.SphereGeometry(6, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0xfff8e0, fog: true })
+    );
+    sun.position.set(-42, 52, -68);
+    cloudGroup.add(sun);
+  } else {
+    const moon = new THREE.Mesh(
+      new THREE.SphereGeometry(4.5, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0xe8f0ff, fog: true })
+    );
+    moon.position.set(38, 48, -55);
+    cloudGroup.add(moon);
+  }
+  scene.add(cloudGroup);
+  scene.userData.cloudGroup = cloudGroup;
+}
+
+/** 漸層天空球 + 方塊雲 + 霧／光照 */
 export function applyMapAtmosphere(scene, opts = {}) {
   if (!scene) return;
   const skyHex = opts.sky ?? 0x1a1228;
@@ -48,7 +118,7 @@ export function applyMapAtmosphere(scene, opts = {}) {
   scene.background = bottom.clone();
   scene.fog = new THREE.Fog(fogCol.getHex(), opts.fogNear ?? 18, opts.fogFar ?? 120);
 
-  removeSkyDome(scene);
+  removeSky(scene);
   const geo = new THREE.SphereGeometry(180, 32, 20);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -72,7 +142,7 @@ export function applyMapAtmosphere(scene, opts = {}) {
       void main() {
         float h = normalize(vWorldPos).y * 0.5 + 0.5;
         h = clamp(h, 0.0, 1.0);
-        gl_FragColor = vec4(mix(bottomColor, topColor, pow(h, 0.85)), 1.0);
+        gl_FragColor = vec4(mix(bottomColor, topColor, pow(h, 0.82)), 1.0);
       }
     `,
   });
@@ -81,6 +151,8 @@ export function applyMapAtmosphere(scene, opts = {}) {
   skyDome.frustumCulled = false;
   skyDome.renderOrder = -10;
   scene.add(skyDome);
+
+  addBlockClouds(scene, preset, opts.seed ?? skyHex);
 
   const hemi = scene.userData.hemiLight;
   if (hemi) {
@@ -105,6 +177,7 @@ export function applyClassicLevelAtmosphere(scene, theme, ctx) {
     sky,
     fog: sky,
     preset,
+    seed: theme?.id ?? 1,
     fogNear: (ctx?.fogNear ?? 12) * 0.9,
     fogFar: (ctx?.fogFar ?? 55) * 1.6,
   });
@@ -119,6 +192,7 @@ export function applyShooterMapAtmosphere(scene, level) {
     sky,
     fog,
     preset: SHOOTER_PRESET[layoutKey] || pickPresetFromSkyColor(sky),
+    seed: (level?.id ?? 1) * 17,
     fogNear: 22,
     fogFar: 108,
   });

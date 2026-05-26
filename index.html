@@ -235,22 +235,56 @@
     body:not(.touch-ui) .menu-step[data-step="0"] #rolePickSection {
       justify-content: flex-start;
     }
+    #rolePickSection.role-pick-block {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .role-pick-label {
+      display: block;
+      font-size: 0.88rem;
+      color: #ccb8e8;
+      line-height: 1.3;
+    }
+    .role-pick-select {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      margin: 0;
+    }
     body:not(.touch-ui) .menu-step[data-step="0"] #rolePickSection {
       grid-column: 1 / -1;
-      width: 100%;
       margin-top: 4px;
       padding: 6px 0 2px;
     }
-    body:not(.touch-ui) .menu-step[data-step="0"] #rolePickSection label {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      flex-wrap: wrap;
+    .local-nick-section { margin: 8px 0 4px; width: 100%; }
+    .local-nick-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 6px;
     }
-    body:not(.touch-ui) .menu-step[data-step="0"] #rolePickSection select {
-      min-width: 140px;
-      flex: 1 1 140px;
+    .local-nick-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.78rem;
+      color: #a8b8d8;
+    }
+    .local-nick-grid input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #665588;
+      background: #120a1c;
+      color: #eeddff;
+      font-size: 0.9rem;
     }
     body:not(.touch-ui) .menu-step[data-step="0"] #levelCategorySection,
     body:not(.touch-ui) .menu-step[data-step="0"] #winGoalSection {
@@ -896,7 +930,9 @@
     body.spectating #keyHuntBar { display: none !important; }
     body.spectating #hud .hud-block { opacity: 0.85; }
     body.spectating #spectateBanner {
+      top: auto !important;
       bottom: max(22px, calc(18px + env(safe-area-inset-bottom, 0px)));
+      transform: translateX(-50%);
     }
     #abilityBar {
       position: fixed; bottom: 48px; left: 50%;
@@ -1538,10 +1574,18 @@
       padding: 2px 4px;
       pointer-events: auto;
     }
-    body.shooter-awaiting-respawn.spectating #spectateBanner,
-    body.shooter-eliminated.spectating #spectateBanner,
-    body.shooter-play.spectating #spectateBanner {
-      bottom: max(124px, calc(118px + env(safe-area-inset-bottom, 0px)));
+    body.touch-ui.spectating #spectateBanner,
+    body.touch-ui.shooter-awaiting-respawn.spectating #spectateBanner,
+    body.touch-ui.shooter-eliminated.spectating #spectateBanner,
+    body.touch-ui.shooter-play.spectating #spectateBanner {
+      top: auto !important;
+      left: max(10px, env(safe-area-inset-left, 0px));
+      right: auto;
+      bottom: max(96px, calc(88px + env(safe-area-inset-bottom, 0px)));
+      transform: none;
+      max-width: min(72vw, 300px);
+      font-size: 0.78rem;
+      padding: 6px 10px;
     }
     body.shooter-play.spectating #spectateBanner {
       display: flex !important;
@@ -2625,7 +2669,7 @@
     body.touch-ui #inventoryBar { display: none !important; }
     body.touch-ui #hud .hud-top {
       position: fixed;
-      top: max(4px, env(safe-area-inset-top, 4px));
+      top: max(38px, calc(34px + env(safe-area-inset-top, 0px)));
       left: max(4px, env(safe-area-inset-left, 4px));
       right: max(54px, calc(50px + env(safe-area-inset-right, 0px)));
       transform: none !important; width: auto !important; margin: 0 !important;
@@ -3008,13 +3052,12 @@
         <img id="menuInlinePreviewImg" src="" alt="" />
         <figcaption id="menuInlinePreviewCap">模式預覽</figcaption>
       </figure>
-      <div id="rolePickSection" class="menu-row">
-        <label>身分（單人）
-          <select id="playerRole">
-            <option value="survivor" selected>倖存者</option>
-            <option value="killer">殺手</option>
-          </select>
-        </label>
+      <div id="rolePickSection" class="menu-row role-pick-block">
+        <label class="role-pick-label" for="playerRole">身分（單人）</label>
+        <select id="playerRole" class="role-pick-select">
+          <option value="survivor" selected>倖存者</option>
+          <option value="killer">殺手</option>
+        </select>
       </div>
     </div>
 
@@ -3061,6 +3104,15 @@
     </div>
 
     <div class="menu-step" data-step="2">
+      <div id="localNickSection" class="local-nick-section" hidden>
+        <p class="step-hint">同機玩家暱稱（槍戰／分割畫面會顯示在 HUD）</p>
+        <div class="local-nick-grid">
+          <label>P1 <input type="text" id="nickP1" maxlength="12" placeholder="玩家1" autocomplete="nickname" /></label>
+          <label id="nickP2Wrap" hidden>P2 <input type="text" id="nickP2" maxlength="12" placeholder="玩家2" autocomplete="nickname" /></label>
+          <label id="nickP3Wrap" hidden>P3 <input type="text" id="nickP3" maxlength="12" placeholder="玩家3" autocomplete="nickname" /></label>
+          <label id="nickP4Wrap" hidden>P4 <input type="text" id="nickP4" maxlength="12" placeholder="玩家4" autocomplete="nickname" /></label>
+        </div>
+      </div>
       <button type="button" class="pick-row" id="pickSurvivorBtn">
         <span class="pick-label" style="color:#44ddff">倖存者 P1</span>
         <span class="pick-value" id="pickSurvivorLabel">點此選擇</span>

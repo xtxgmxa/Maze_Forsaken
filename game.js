@@ -17,7 +17,7 @@ import {
 import { buildMazeDecor } from "./mazeDecor.js";
 import {
   buildVerticalWorld, updateVerticalPhysics, updateBouncePads, spawnArenaBouncePads,
-  getBounceAirControlMult, worldHeight, snapToStandableSurface, settleEntityOnGround,
+  getBounceAirControlMult, worldHeight, snapToStandableSurface, settleEntityOnGround, sampleFloorElev,
 } from "./verticalWorld.js";
 import { collidesShooterSolid } from "./shooterCollision.js";
 import { applyClassicLevelAtmosphere, applyShooterMapAtmosphere } from "./atmosphereSky.js";
@@ -711,6 +711,7 @@ function refreshMenuForMode() {
   if (psLabel) psLabel.style.display = dedicatedShooter ? "" : "none";
 
   syncPlayerCountOptions();
+  syncLocalNickUi();
   rebuildLevelGrid();
   refreshRoleUI();
   checkMenuUiConsistency();
@@ -746,6 +747,7 @@ function initMenu() {
     localEl.dataset.bound = "1";
     localEl.addEventListener("change", () => {
       syncPlayerCountOptions();
+      syncLocalNickUi();
       playSfx("ui");
     });
   }
@@ -756,6 +758,16 @@ function initMenu() {
       if (isShooterMode()) syncPlayerCountOptions();
     });
   }
+
+  for (let i = 1; i <= 4; i++) {
+    const inp = document.getElementById(`nickP${i}`);
+    if (inp && !inp.dataset.bound) {
+      inp.dataset.bound = "1";
+      inp.addEventListener("change", saveLocalNicksFromForm);
+      inp.addEventListener("blur", saveLocalNicksFromForm);
+    }
+  }
+  syncLocalNickUi();
 
   rebuildLevelGrid();
 
@@ -1902,6 +1914,49 @@ function getCollisionOpts() {
   return { vaultClear: 2.5, vaultJumpMin: 0.22, radiusScale: 0.88 };
 }
 
+async function resumeGameAudio() {
+  try {
+    await initAudioEngine();
+  } catch { /* */ }
+}
+
+function isShooterSpawnBlocked(x, z, elev, vState) {
+  const r = 0.38;
+  const colOpts = getCollisionOpts();
+  if (collides(ctx, maze, x, z, r, 0, elev, colOpts)) return true;
+  if (collidesShooterSolid(x, z, r, elev, 0, vState)) return true;
+  return false;
+}
+
+function findClearShooterSpawn(p, vState, avoid = []) {
+  if (!p || !vState || !ctx || !maze) return false;
+  const r = 0.38;
+  for (let t = 0; t < 160; t++) {
+    const gx = 1 + Math.floor(Math.random() * Math.max(1, ctx.w - 2));
+    const gz = 1 + Math.floor(Math.random() * Math.max(1, ctx.h - 2));
+    const c = cellCenter(ctx, gx, gz);
+    if (avoid.some((o) => o !== p && Math.hypot(o.pos.x - c.x, o.pos.z - c.z) < 5.5)) continue;
+    const probe = { elev: 0, _jumpY: 0 };
+    const elev = sampleFloorElev(c.x, c.z, vState, probe);
+    if (isShooterSpawnBlocked(c.x, c.z, elev, vState)) continue;
+    p.pos.x = c.x;
+    p.pos.z = c.z;
+    p.elev = elev;
+    p._jumpY = 0;
+    p.velY = 0;
+    p.vel = { x: 0, z: 0 };
+    p.onGround = true;
+    if (!isShooterSpawnBlocked(c.x, c.z, elev, vState)) {
+      p._safeX = c.x;
+      p._safeZ = c.z;
+      p._safeElev = elev;
+      if (p.mesh) p.mesh.position.set(c.x, worldHeight(p), c.z);
+      return true;
+    }
+  }
+  return false;
+}
+
 function unstuckShooterEntity(p, vState) {
   if (!p?.pos || !vState) return;
   const r = 0.38;
@@ -1935,11 +1990,33 @@ function unstuckShooterEntity(p, vState) {
 
 function settleAllShooterSpawns() {
   if (!isShooterMode() || !verticalWorldState) return;
-  for (const ent of [...survivors, ...killers]) {
+  const all = [...survivors, ...killers];
+  for (const ent of all) {
     if (!ent?.pos) continue;
+    findClearShooterSpawn(ent, verticalWorldState, all);
     settleEntityOnGround(ent, verticalWorldState);
     unstuckShooterEntity(ent, verticalWorldState);
+    if (isShooterSpawnBlocked(ent.pos.x, ent.pos.z, ent.elev ?? 0, verticalWorldState)) {
+      findClearShooterSpawn(ent, verticalWorldState, all);
+    }
     if (ent.mesh) ent.mesh.position.set(ent.pos.x, worldHeight(ent), ent.pos.z);
+  }
+}
+
+function tickShooterSpawnUnstuck(dt) {
+  if (!isShooterMode() || !verticalWorldState || gameState !== "play") return;
+  const all = [...survivors, ...killers];
+  for (const ent of all) {
+    if (!ent?.pos || ent.caught || isShooterPlayerDown(ent)) continue;
+    const moving = Math.hypot(ent.vel?.x ?? 0, ent.vel?.z ?? 0) > 0.35;
+    if (moving) continue;
+    if (isShooterSpawnBlocked(ent.pos.x, ent.pos.z, ent.elev ?? 0, verticalWorldState)) {
+      unstuckShooterEntity(ent, verticalWorldState);
+      if (isShooterSpawnBlocked(ent.pos.x, ent.pos.z, ent.elev ?? 0, verticalWorldState)) {
+        findClearShooterSpawn(ent, verticalWorldState, all);
+      }
+      if (ent.mesh) ent.mesh.position.set(ent.pos.x, worldHeight(ent), ent.pos.z);
+    }
   }
 }
 
@@ -2084,6 +2161,10 @@ function restartMoleRound(winTeam) {
     respawnShooterPlayer(p, ctx, maze, survivors);
     p.caught = false;
     p._awaitingRespawn = false;
+    if (verticalWorldState) {
+      findClearShooterSpawn(p, verticalWorldState, survivors);
+      unstuckShooterEntity(p, verticalWorldState);
+    }
   }
   settleAllShooterSpawns();
   const mole = setupMoleRound(survivors, shooterState);
@@ -3131,6 +3212,7 @@ let startLoadPhase = "";
 async function startGame() {
   if (startInProgress) return;
   readMatchConfig();
+  saveLocalNicksFromForm();
   if (isTouchUiEnabled()) {
     const ok = await showMobilePlayWarn({
       gameMode,
@@ -3465,6 +3547,7 @@ async function runStartGame() {
   if (isShooterMode() && verticalWorldState) settleAllShooterSpawns();
   if (!survivors.length) throw new Error("倖存者生成失敗");
   applyLanPlayerNames();
+  applyLocalPlayerNames();
   if (!killers.length && !isKeyHuntMode() && !isPlatformerMode() && !isPuzzleDoorMode() && !isShooterMode()) {
     throw new Error("獵人生成失敗");
   }
@@ -5926,6 +6009,10 @@ function loopFrame(now) {
   last = now;
   frameCount++;
 
+  if (scene?.userData?.cloudGroup) {
+    scene.userData.cloudGroup.rotation.y += dt * 0.012;
+  }
+
   touchControlsTick(keys);
   pollTouchVirtualKeys();
   tickGamepadPresence((connected) => {
@@ -5955,6 +6042,7 @@ function loopFrame(now) {
     killerTimer -= dt;
     tickMissionGlow(missionStations, animTime);
     updateSurvivors(dt);
+    tickShooterSpawnUnstuck(dt);
     if (lanSync) lanSync.tick(dt);
     if (ledgeHintState?.hints?.length && verticalWorldState) {
       const ledgeFocus = getHumanSurvivor() || survivors[0];
@@ -6201,6 +6289,62 @@ function getLevelsForLan(modeId) {
   }));
 }
 
+const LOCAL_NICK_KEY = "forsaken_local_nicks_v1";
+
+function loadLocalNicks() {
+  try {
+    const raw = localStorage.getItem(LOCAL_NICK_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalNicksFromForm() {
+  const n = loadLocalNicks();
+  for (let i = 1; i <= 4; i++) {
+    const inp = document.getElementById(`nickP${i}`);
+    const profile = `p${i}`;
+    if (inp) {
+      const v = inp.value.trim();
+      if (v) n[profile] = v;
+      else delete n[profile];
+    }
+  }
+  try {
+    localStorage.setItem(LOCAL_NICK_KEY, JSON.stringify(n));
+  } catch { /* */ }
+}
+
+function syncLocalNickUi() {
+  const sec = document.getElementById("localNickSection");
+  if (!sec) return;
+  const lp = Math.min(4, Math.max(1, parseInt(document.getElementById("numLocalPlayers")?.value, 10) || numLocalPlayers || 1));
+  const show = isShooterMode() || lp >= 2;
+  sec.hidden = !show;
+  for (let i = 2; i <= 4; i++) {
+    const wrap = document.getElementById(`nickP${i}Wrap`);
+    if (wrap) wrap.hidden = i > lp;
+  }
+  const saved = loadLocalNicks();
+  for (let i = 1; i <= 4; i++) {
+    const inp = document.getElementById(`nickP${i}`);
+    if (inp && saved[`p${i}`] && !inp.value) inp.value = saved[`p${i}`];
+  }
+}
+
+function applyLocalPlayerNames() {
+  if (window.__forsakenLanSession?.roomId) return;
+  const n = loadLocalNicks();
+  for (const s of survivors) {
+    if (s.isAI || !["p1", "p2", "p3", "p4"].includes(s.profile)) continue;
+    const nick = (n[s.profile] || "").trim();
+    if (!nick) continue;
+    s.displayName = nick;
+    if (s.charDef) s.charDef = { ...s.charDef, name: nick };
+  }
+}
+
 function applyLanPlayerNames() {
   const sess = window.__forsakenLanSession;
   if (!sess) return;
@@ -6282,14 +6426,33 @@ function boot() {
   initMenu();
   tryInitLanModule();
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && (gameState === "menu" || gameState === "end")) {
-      stopGameMusic(musicEl);
-      stopShooterResultMusic();
+    if (document.hidden) {
+      if (gameState === "menu" || gameState === "end") {
+        stopGameMusic(musicEl);
+        stopShooterResultMusic();
+      } else {
+        suspendGameAudio();
+      }
+      return;
+    }
+    resumeGameAudio().then(() => {
+      if (gameState === "play" && musicEl?.paused) {
+        musicEl.play().catch(() => {});
+      }
+    });
+  });
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted || !document.hidden) {
+      resumeGameAudio().then(() => {
+        if (gameState === "play" && musicEl?.paused) musicEl.play().catch(() => {});
+      });
     }
   });
   window.addEventListener("pagehide", () => {
-    stopGameMusic(musicEl);
-    stopShooterResultMusic();
+    if (gameState === "menu" || gameState === "end") {
+      stopGameMusic(musicEl);
+      stopShooterResultMusic();
+    }
   });
   try {
     ensureGraphics();

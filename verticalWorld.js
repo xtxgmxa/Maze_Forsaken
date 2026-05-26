@@ -436,10 +436,38 @@ export function updateVerticalPhysics(p, dt, verticalState) {
     p.elev += (groundElev - p.elev) * Math.min(1, dt * 12);
   }
 
+  enforceStandableTops(p, verticalState);
   snapToStandableSurface(p, verticalState);
 }
 
-/** 落在可站立掩體／高台上時強制對齊台面，避免穿進方塊內卡住 */
+/** 每幀：腳在可站立物上時鎖定台面，防手機／低幀率穿透 */
+export function enforceStandableTops(p, verticalState) {
+  if (!p || p.caught || !verticalState?.platforms?.length) return;
+  const foot = (p.elev ?? 0) + (p._jumpY ?? 0);
+  let bestTop = null;
+  let bestD = Infinity;
+  for (const pl of verticalState.platforms) {
+    if (!pl.standable) continue;
+    const top = pl.blockTop ?? pl.y ?? 0;
+    const hw = (pl.halfW ?? 1) + 0.28;
+    const hd = (pl.halfD ?? 1) + 0.28;
+    if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, hw, hd)) continue;
+    const d = Math.abs(foot - top);
+    if (foot > top + 0.4) continue;
+    if (d < bestD) {
+      bestD = d;
+      bestTop = top;
+    }
+  }
+  if (bestTop == null) return;
+  if (foot >= bestTop - 0.7 && foot <= bestTop + 0.3 && (p.velY ?? 0) <= 3) {
+    p.elev = bestTop;
+    p._jumpY = 0;
+    p.velY = 0;
+    p.onGround = true;
+  }
+}
+
 /** 出生／傳送後對齊腳下地面與可站立台面 */
 export function settleEntityOnGround(p, verticalState) {
   if (!p?.pos || !verticalState) return;
@@ -448,6 +476,7 @@ export function settleEntityOnGround(p, verticalState) {
   p._jumpY = 0;
   p.velY = 0;
   p.onGround = true;
+  enforceStandableTops(p, verticalState);
   snapToStandableSurface(p, verticalState);
 }
 

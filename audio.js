@@ -111,6 +111,14 @@ export async function suspendGameAudio() {
   } catch { /* */ }
 }
 
+/** 從背景回到遊戲時恢復 Web Audio（手機滑走再回來） */
+export async function resumeGameAudio() {
+  try {
+    await initAudioEngine();
+    if (actx?.state === "suspended") await actx.resume();
+  } catch { /* */ }
+}
+
 export async function initAudioEngine() {
   try {
     if (!actx) {
