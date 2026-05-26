@@ -1551,7 +1551,79 @@
       border-color: #6688aa !important;
       background: rgba(10, 16, 32, 0.82) !important;
       font-weight: bold; color: #aaddff;
+      font-size: 0;
+      position: relative;
     }
+    .touch-gun::before {
+      content: attr(data-ico);
+      font-size: 1.05rem;
+      line-height: 1;
+      color: #c8e8ff;
+      text-shadow: 0 0 6px rgba(80, 180, 255, 0.45);
+    }
+    .touch-gun.active-gun {
+      border-color: #ffcc44 !important;
+      box-shadow: 0 0 10px rgba(255, 200, 60, 0.35);
+    }
+    #shooterWeaponBar {
+      display: none;
+      position: fixed;
+      left: 50%;
+      bottom: max(18px, calc(12px + env(safe-area-inset-bottom, 0px)));
+      transform: translateX(-50%);
+      z-index: 14;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(8, 10, 22, 0.82);
+      border: 1px solid rgba(120, 140, 200, 0.35);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+      pointer-events: auto;
+    }
+    body.shooter-play:not(.touch-ui) #shooterWeaponBar {
+      display: flex;
+      align-items: stretch;
+    }
+    .shooter-wep-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 62px;
+      padding: 6px 8px 5px;
+      border: 2px solid #3a3550;
+      border-radius: 8px;
+      background: rgba(18, 14, 32, 0.9);
+      color: #b8c8e8;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .shooter-wep-slot:hover { border-color: #7788cc; }
+    .shooter-wep-slot.active {
+      border-color: #ff6688;
+      box-shadow: 0 0 12px rgba(255, 60, 100, 0.35);
+      background: rgba(40, 16, 32, 0.92);
+    }
+    .shooter-wep-slot .wep-key {
+      font-size: 0.62rem;
+      color: #8878a8;
+      line-height: 1;
+    }
+    .shooter-wep-slot .wep-ico {
+      font-size: 1.35rem;
+      line-height: 1.1;
+      margin: 2px 0;
+      color: #e8f4ff;
+    }
+    .shooter-wep-slot .wep-name {
+      font-size: 0.62rem;
+      color: #99aacc;
+      white-space: nowrap;
+    }
+    .shooter-wep-slot.wep-katana .wep-ico { color: #f0f6ff; }
+    .shooter-wep-slot.wep-pad .wep-ico { color: #66ffee; }
+    .designer-credit-inline { line-height: 1.35; text-align: center; }
+    #designerCreditHud { line-height: 1.35; text-align: center; }
     body.touch-ui.shooter-play #touchShooterBar {
       gap: 3px;
       padding: 2px 6px;
@@ -1723,8 +1795,12 @@
     body.touch-ui #touchStickWrap { z-index: 26; }
     body.touch-ui #abilityBar { display: none !important; }
     body.touch-ui #crosshair { display: none !important; }
-    body.touch-ui.shooter-play:not(.shooter-katana) #crosshair { display: block !important; opacity: 0.85; }
-    body.touch-ui.shooter-katana #crosshair { display: none !important; }
+    body.touch-ui.shooter-play:not(.shooter-katana):not(.spectating):not(.shooter-eliminated) #crosshair { display: block !important; opacity: 0.85; }
+    body.touch-ui.shooter-katana #crosshair,
+    body.spectating #crosshair,
+    body.shooter-eliminated #crosshair { display: none !important; }
+    body.spectating #katanaReticle,
+    body.shooter-eliminated #katanaReticle { display: none !important; }
     #katanaReticle {
       display: none; position: fixed; left: 50%; top: 50%;
       width: 118px; height: 118px; margin: -59px 0 0 -59px;
@@ -2637,7 +2713,7 @@
   <div id="menu">
     <div class="menu-head">
       <h1>FORSAKEN</h1>
-      <span class="designer-credit-inline">遊戲設計 by MrBill</span>
+      <span class="designer-credit-inline">遊戲設計 by<br>MrBill(宥豪婕庭爸)</span>
     </div>
     <p class="sub menu-sub">迷宮逃脫 — 分頁設定 · 點選項目可彈出清單</p>
     <p id="menuStateWarn">選單異常。請<strong>重新整理頁面</strong>後再選（手機：瀏覽器重新載入）。</p>
@@ -2851,7 +2927,7 @@
   </div>
 
   <p id="immersiveHint" hidden aria-live="polite">iOS：請用 Safari「分享 → 加入主畫面」，從主畫面圖示開啟可真正全螢幕</p>
-  <div id="designerCreditHud">遊戲設計 by MrBill</div>
+  <div id="designerCreditHud">遊戲設計 by<br>MrBill(宥豪婕庭爸)</div>
   <div id="hudEscHint">按 ESC 暫停 · 回主選單</div>
   <div id="spectateBanner" hidden>
     <span class="spectate-eye" aria-hidden="true">👁</span>
@@ -2917,12 +2993,12 @@
       </div>
     </div>
     <div id="touchShooterBar" hidden>
-      <button type="button" id="touchGun1" class="touch-btn touch-gun">1</button>
-      <button type="button" id="touchGun2" class="touch-btn touch-gun active-gun">2</button>
-      <button type="button" id="touchGun3" class="touch-btn touch-gun">3</button>
-      <button type="button" id="touchGun4" class="touch-btn touch-gun">4</button>
-      <button type="button" id="touchGun5" class="touch-btn touch-gun" title="放置彈跳板">5</button>
-      <button type="button" id="touchGun6" class="touch-btn touch-gun" title="武士刀">6</button>
+      <button type="button" id="touchGun1" class="touch-btn touch-gun" data-ico="▮" title="衝鋒槍" aria-label="衝鋒槍"></button>
+      <button type="button" id="touchGun2" class="touch-btn touch-gun active-gun" data-ico="╬" title="步槍" aria-label="步槍"></button>
+      <button type="button" id="touchGun3" class="touch-btn touch-gun" data-ico="▦" title="霰彈槍" aria-label="霰彈槍"></button>
+      <button type="button" id="touchGun4" class="touch-btn touch-gun" data-ico="◎" title="狙擊槍" aria-label="狙擊槍"></button>
+      <button type="button" id="touchGun5" class="touch-btn touch-gun" data-ico="⬆" title="彈跳板" aria-label="彈跳板"></button>
+      <button type="button" id="touchGun6" class="touch-btn touch-gun" data-ico="刀" title="武士刀" aria-label="武士刀"></button>
     </div>
   </div>
 
@@ -3025,6 +3101,7 @@
   <div id="quizGpPointer" aria-hidden="true"></div>
   <div id="coopSplitLine" aria-hidden="true"></div>
   <div id="gamepadHudRoot" aria-hidden="true"></div>
+  <div id="shooterWeaponBar" hidden aria-label="武器欄"></div>
   <div id="crosshair" aria-hidden="true"><span class="ch-dot"></span></div>
   <div id="katanaReticle" aria-hidden="true" title="近戰距離參考（約 2.6m）"></div>
   <div id="scopeOverlay" aria-hidden="true"></div>
@@ -3043,7 +3120,7 @@
   <div id="overlay">
     <h2 id="overlayTitle">—</h2>
     <p id="overlayText"></p>
-    <p class="designer-credit" style="margin:16px 0">遊戲設計 by MrBill</p>
+    <p class="designer-credit" style="margin:16px 0">遊戲設計 by<br>MrBill(宥豪婕庭爸)</p>
     <button id="btnRetry">返回選單</button>
   </div>
   <p id="controls-hint" style="display:none">

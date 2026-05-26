@@ -759,39 +759,101 @@ export function attachShooterGun(p) {
   syncGunVisual(p);
 }
 
+function heldPartMat(color, opacity = 1) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: opacity < 1,
+    opacity,
+    depthTest: true,
+    depthWrite: opacity >= 1,
+  });
+}
+
+function setHeldPart(mesh, w, h, d, color, opacity = 1) {
+  if (!mesh) return;
+  mesh.geometry = new THREE.BoxGeometry(w, h, d);
+  mesh.material = heldPartMat(color, opacity);
+  mesh.visible = true;
+}
+
+/** 第三人稱／第一人稱手持（樂高方塊風） */
 export function syncGunVisual(p) {
   if (!p?.gunMesh) return;
+  const body = p.gunMesh.children[0];
+  const barrel = p.gunMesh.children[1];
+  const grip = p.gunMesh.children[2];
+  p.gunMesh.visible = true;
   if (p.weaponId === "pad") {
-    p.gunMesh.visible = false;
+    setHeldPart(body, 0.52, 0.14, 0.52, 0x33eeff, 0.52);
+    setHeldPart(barrel, 0.2, 0.08, 0.2, 0x88ffee, 0.72);
+    if (grip) grip.visible = false;
+    p.gunMesh.position.set(0.36, 1.1, 0.38);
+    p.gunMesh.rotation.set(0, 0.12, 0);
+    p.gunMesh.scale.set(1.05, 1.05, 1.05);
     return;
   }
+  if (grip) grip.visible = true;
   if (p.weaponId === "katana") {
-    p.gunMesh.visible = true;
-    const body = p.gunMesh.children[0];
-    const barrel = p.gunMesh.children[1];
-    const grip = p.gunMesh.children[2];
-    if (body?.geometry) body.geometry = new THREE.BoxGeometry(0.05, 0.08, 0.88);
-    if (barrel?.geometry) barrel.geometry = new THREE.BoxGeometry(0.18, 0.03, 0.08);
-    if (grip?.geometry) grip.geometry = new THREE.BoxGeometry(0.07, 0.08, 0.24);
+    setHeldPart(body, 0.1, 0.1, 1.05, 0xf2f6ff);
+    setHeldPart(barrel, 0.24, 0.05, 0.1, 0xe8c86a);
+    setHeldPart(grip, 0.1, 0.1, 0.32, 0x1a1e2b);
     p.gunMesh.position.set(0.36, 1.1, 0.32);
     p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
-    const bodyMat = body?.material;
-    const barrelMat = barrel?.material;
-    const gripMat = grip?.material;
-    if (bodyMat?.color) bodyMat.color.setHex(0xe7edf9);
-    if (barrelMat?.color) barrelMat.color.setHex(0xd2b36a);
-    if (gripMat?.color) gripMat.color.setHex(0x1a1e2b);
+    p.gunMesh.scale.set(1.15, 1.15, 1.15);
     return;
   }
-  p.gunMesh.visible = true;
   const id = p.weaponId || "rifle";
   const col = GUN_COLORS[id] || 0x888899;
-  p.gunMesh.traverse((c) => {
-    if (c.material?.color && c !== p.gunMesh.children[2]) c.material.color.setHex(col);
-  });
+  setHeldPart(body, 0.42, 0.16, 0.55, col);
+  setHeldPart(barrel, 0.1, 0.1, id === "sniper" ? 0.52 : 0.4, 0x333344);
+  setHeldPart(grip, 0.12, 0.22, 0.14, 0x222233);
+  p.gunMesh.position.set(0.38, 1.12, 0.42);
+  p.gunMesh.rotation.set(0, 0.15, 0);
   const sx = id === "shotgun" ? 1.25 : id === "smg" ? 0.82 : id === "sniper" ? 1.15 : 1;
   const sz = id === "shotgun" ? 1.15 : id === "smg" ? 0.88 : id === "sniper" ? 1.35 : 1;
   p.gunMesh.scale.set(sx, 1, sz);
+}
+
+const FP_HAND_POSE = {
+  smg: { pos: [0.36, -0.26, -0.42], rot: [0.02, 0.06, 0], scale: [1.35, 1.35, 1.35] },
+  rifle: { pos: [0.4, -0.28, -0.46], rot: [0.02, 0.05, 0], scale: [1.45, 1.45, 1.45] },
+  shotgun: { pos: [0.42, -0.27, -0.44], rot: [0.02, 0.04, 0], scale: [1.55, 1.55, 1.55] },
+  sniper: { pos: [0.44, -0.26, -0.5], rot: [0.01, 0.04, 0], scale: [1.5, 1.5, 1.5] },
+  pad: { pos: [0.38, -0.24, -0.38], rot: [0.1, 0.08, 0], scale: [1.5, 1.5, 1.5] },
+  katana: { pos: [0.46, -0.3, -0.5], rot: [-0.12, 0.58, 0.1], scale: [1.65, 1.65, 1.65] },
+};
+
+/** 第一人稱：把手持武器掛在攝影機前（方塊風，穩定可見） */
+export function syncHeldWeaponOnCamera(p, cam) {
+  if (!p || !cam) return;
+  attachShooterGun(p);
+  syncGunVisual(p);
+  if (!p.gunMesh) return;
+  if (p.gunMesh.parent !== cam) {
+    p.gunMesh.parent?.remove(p.gunMesh);
+    cam.add(p.gunMesh);
+  }
+  const pose = FP_HAND_POSE[p.weaponId] || FP_HAND_POSE.rifle;
+  p.gunMesh.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
+  p.gunMesh.rotation.set(pose.rot[0], pose.rot[1], pose.rot[2]);
+  p.gunMesh.scale.set(pose.scale[0], pose.scale[1], pose.scale[2]);
+  p.gunMesh.visible = true;
+  p.gunMesh.renderOrder = 10000;
+  p.gunMesh.traverse((c) => {
+    if (c.isMesh) {
+      c.renderOrder = 10001;
+      c.frustumCulled = false;
+    }
+  });
+}
+
+export function restoreHeldWeaponToBody(p) {
+  if (!p?.gunMesh || !p.mesh) return;
+  if (p.gunMesh.parent !== p.mesh) {
+    p.gunMesh.parent?.remove(p.gunMesh);
+    p.mesh.add(p.gunMesh);
+  }
+  syncGunVisual(p);
 }
 
 export function muzzleFlash(p) {
@@ -938,6 +1000,11 @@ export function tickGunFlash(p, dt, cam) {
   if ((p._fpFlash ?? 0) > 0) {
     p._fpFlash -= dt;
     flash = Math.max(flash, (p._fpFlash ?? 0) / 0.06);
+  }
+  if (!p.isAI && cam && p.gunMesh?.parent === cam) {
+    const bump = 1 + flash * 0.12;
+    const pose = FP_HAND_POSE[p.weaponId] || FP_HAND_POSE.rifle;
+    p.gunMesh.scale.set(pose.scale[0] * bump, pose.scale[1] * bump, pose.scale[2] * bump);
   }
   if (!p.isAI && cam) syncFpGunVisual(cam, p.weaponId, flash);
 }

@@ -31,6 +31,7 @@ import {
   carveShooterSecretPassages, buildShooterVerticalWorld, spawnShooterBouncePads,
   resetShooterCharacterPose,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
+  syncHeldWeaponOnCamera, restoreHeldWeaponToBody,
   assignShooterPlayer, buildShooterEndResults, buildMoleEndResults, onShooterDowned,
   getShooterKillAnnounce, tickShooterRespawns, tryManualShooterRespawn, tickShooterDownedPose,
   setupMoleRound, tickMoleAlerts, isMoleTeamkillViolation, scoreMoleKill, checkMoleRoundEnd,
@@ -294,10 +295,13 @@ function syncKillerMesh(k) {
 function updateCrosshair() {
   const ch = document.getElementById("crosshair");
   const scopeOv = document.getElementById("scopeOverlay");
+  const katanaRet = document.getElementById("katanaReticle");
   if (!ch) return;
   if (isSpectating()) {
     ch.classList.remove("show", "sniper", "sniper-scope");
     if (scopeOv) scopeOv.classList.remove("show");
+    if (katanaRet) katanaRet.classList.remove("show");
+    document.body.classList.remove("shooter-katana");
     return;
   }
   const hk = killers.find((k) => !k.isAI);
@@ -318,8 +322,41 @@ function updateCrosshair() {
   ch.classList.toggle("sniper", sniper);
   ch.classList.toggle("sniper-scope", sniper && shooterAds);
   if (scopeOv) scopeOv.classList.toggle("show", shooterAim && sniper && shooterAds);
-  const katanaRet = document.getElementById("katanaReticle");
   if (katanaRet) katanaRet.classList.toggle("show", hideCrosshair);
+}
+
+const WEAPON_BAR_ICONS = { smg: "▮", rifle: "╬", shotgun: "▦", sniper: "◎", pad: "⬆", katana: "刀" };
+
+function initShooterWeaponBar() {
+  const bar = document.getElementById("shooterWeaponBar");
+  if (!bar || bar.dataset.ready) return;
+  bar.innerHTML = "";
+  for (const w of SHOOTER_WEAPONS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `shooter-wep-slot wep-${w.id}`;
+    btn.dataset.slot = String(w.slot);
+    btn.title = `${w.slot} · ${w.name}`;
+    btn.innerHTML = `<span class="wep-key">${w.slot}</span><span class="wep-ico" aria-hidden="true">${WEAPON_BAR_ICONS[w.id] || "●"}</span><span class="wep-name">${w.name}</span>`;
+    btn.addEventListener("click", () => tryShooterWeaponSwitch(w.slot));
+    bar.appendChild(btn);
+  }
+  bar.dataset.ready = "1";
+}
+
+function updateShooterWeaponBar(activeSlot = 2) {
+  const bar = document.getElementById("shooterWeaponBar");
+  if (!bar) return;
+  bar.querySelectorAll(".shooter-wep-slot").forEach((btn) => {
+    btn.classList.toggle("active", parseInt(btn.dataset.slot, 10) === activeSlot);
+  });
+}
+
+function setShooterWeaponBarVisible(on) {
+  const bar = document.getElementById("shooterWeaponBar");
+  if (!bar) return;
+  bar.hidden = !on;
+  if (on) initShooterWeaponBar();
 }
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
@@ -1634,11 +1671,21 @@ function syncShooterPlayerVisibility() {
   const locals = getLocalHumanPlayers();
   const spectating = isSpectating();
   const split = isShooterSplitView();
-  const showFp = human && !spectating && !isShooterPlayerDown(human) && !split;
-  setFpGunVisible(showFp);
-  if (showFp && human?.weaponId && human.weaponId !== "pad") {
-    const cam = getShooterCameraForPlayer(human);
-    if (cam) syncFpGunVisual(cam, human.weaponId);
+  const showFp = !spectating && (split
+    ? locals.some((s) => s && !isShooterPlayerDown(s))
+    : !!(human && !isShooterPlayerDown(human)));
+  setFpGunVisible(false);
+  const fpTargets = !spectating
+    ? (split
+      ? locals.filter((s) => s && !isShooterPlayerDown(s))
+      : [human].filter((s) => s && !isShooterPlayerDown(s)))
+    : [];
+  for (const s of fpTargets) {
+    const cam = getShooterCameraForPlayer(s);
+    if (cam) syncHeldWeaponOnCamera(s, cam);
+  }
+  for (const s of survivors) {
+    if (!fpTargets.includes(s) && s.gunMesh) restoreHeldWeaponToBody(s);
   }
   for (const s of survivors) {
     if (!s.mesh) continue;
@@ -1652,7 +1699,8 @@ function syncShooterPlayerVisibility() {
       s.mesh.visible = false;
       continue;
     }
-    if (!split && s === human && !spectating) s.mesh.visible = false;
+    const isLocalFp = fpTargets.includes(s);
+    if (isLocalFp && !spectating) s.mesh.visible = false;
     else s.mesh.visible = true;
   }
 }
@@ -2631,7 +2679,7 @@ function tryShooterFire(p) {
   }
   playShooterSfx("fire", playSfx, 0.03);
   muzzleFlash(p);
-  if (!p.isAI && cam && p.weaponId !== "pad") syncFpGunVisual(cam, p.weaponId, 1);
+  if (!p.isAI && cam) syncHeldWeaponOnCamera(p, cam);
   p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
 }
 
@@ -2646,14 +2694,12 @@ function tryShooterWeaponSwitch(slot) {
   syncGunVisual(p);
   const cam = getShooterCameraForPlayer(p);
   if (!p.isAI && cam) {
-    if (w.id === "pad") detachFpGun(cam);
-    else {
-      attachFpGun(cam, w.id);
-      syncFpGunVisual(cam, w.id);
-    }
+    detachFpGun(cam);
+    syncHeldWeaponOnCamera(p, cam);
   }
   if (p._padPreview) p._padPreview.visible = w.id === "pad";
   if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
+  updateShooterWeaponBar(w.slot);
   playSfx("ui");
   showToast(
     w.id === "pad"
@@ -3315,7 +3361,10 @@ async function runStartGame() {
       camera.near = 0.05;
       camera.updateProjectionMatrix();
     }
-    if (humanShooter && camera) attachFpGun(camera, humanShooter.weaponId || "rifle");
+    initShooterWeaponBar();
+    setShooterWeaponBarVisible(!isTouchUiEnabled());
+    if (humanShooter && camera) syncHeldWeaponOnCamera(humanShooter, camera);
+    updateShooterWeaponBar(getShooterWeapon(humanShooter?.weaponId)?.slot ?? 2);
     if (humanShooter) {
       const teamLine = playStyle === "ffa"
         ? "自由混戰（每人不同色）"
@@ -3337,7 +3386,7 @@ async function runStartGame() {
           cam.fov = shooterSettings.fov;
           cam.near = 0.05;
           cam.updateProjectionMatrix();
-          if (lp.weaponId !== "pad") attachFpGun(cam, lp.weaponId || "rifle");
+          syncHeldWeaponOnCamera(lp, cam);
         }
       }
       const botCount = Math.max(0, survivors.length - locals.length);
@@ -3360,11 +3409,13 @@ async function runStartGame() {
       camera.near = 0.1;
       camera.updateProjectionMatrix();
     }
-    document.body.classList.remove("shooter-play", "shooter-ads");
+    document.body.classList.remove("shooter-play", "shooter-ads", "shooter-katana");
+    setShooterWeaponBarVisible(false);
     shooterAds = false;
     const touchAb = document.getElementById("touchRowAbilities");
     if (touchAb) touchAb.hidden = false;
     if (camera) detachFpGun(camera);
+    for (const s of survivors) restoreHeldWeaponToBody(s);
   }
   gameApi.survivors = survivors;
 
