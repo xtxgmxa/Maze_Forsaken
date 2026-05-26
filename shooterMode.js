@@ -764,8 +764,8 @@ function heldPartMat(color, opacity = 1) {
     color,
     transparent: opacity < 1,
     opacity,
-    depthTest: true,
-    depthWrite: opacity >= 1,
+    depthTest: false,
+    depthWrite: false,
   });
 }
 
@@ -823,31 +823,86 @@ const FP_HAND_POSE = {
   katana: { pos: [0.46, -0.3, -0.5], rot: [-0.12, 0.58, 0.1], scale: [1.65, 1.65, 1.65] },
 };
 
-/** 第一人稱：把手持武器掛在攝影機前（方塊風，穩定可見） */
-export function syncHeldWeaponOnCamera(p, cam) {
-  if (!p || !cam) return;
+function buildFpHeldBlockRig() {
+  const rig = new THREE.Group();
+  rig.name = "fpHeldRig";
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
+  body.name = "fpPartBody";
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
+  barrel.name = "fpPartBarrel";
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
+  grip.name = "fpPartGrip";
+  rig.add(body, barrel, grip);
+  rig.userData.parts = { body, barrel, grip };
+  return rig;
+}
+
+function syncFpHeldBlockRig(rig, weaponId, flash = 0) {
+  const { body, barrel, grip } = rig.userData.parts || {};
+  if (!body) return;
+  const id = weaponId || "rifle";
+  const flashCol = flash > 0.15 ? 0xffd7a2 : null;
+  if (id === "pad") {
+    setHeldPart(body, 0.52, 0.14, 0.52, flashCol ?? 0x33eeff, 0.55);
+    setHeldPart(barrel, 0.2, 0.08, 0.2, flashCol ?? 0x88ffee, 0.75);
+    if (grip) grip.visible = false;
+    return;
+  }
+  if (grip) grip.visible = true;
+  if (id === "katana") {
+    setHeldPart(body, 0.1, 0.1, 1.12, flashCol ?? 0xf4f8ff);
+    setHeldPart(barrel, 0.26, 0.05, 0.1, flashCol ?? 0xe8c86a);
+    setHeldPart(grip, 0.1, 0.1, 0.34, 0x1a1e2b);
+    return;
+  }
+  const col = GUN_COLORS[id] || 0x888899;
+  setHeldPart(body, 0.42, 0.16, 0.55, flashCol ?? col);
+  setHeldPart(barrel, 0.1, 0.1, id === "sniper" ? 0.52 : 0.4, 0x333344);
+  setHeldPart(grip, 0.12, 0.22, 0.14, 0x222233);
+}
+
+function ensureFpHeldRig(p) {
+  if (!p._fpHeldRig) p._fpHeldRig = buildFpHeldBlockRig();
+  return p._fpHeldRig;
+}
+
+/** 第一人稱：場景座標跟隨攝影機（方塊風手持） */
+export function syncHeldWeaponOnCamera(p, cam, scene) {
+  if (!p || !cam || !scene) return;
   attachShooterGun(p);
   syncGunVisual(p);
-  if (!p.gunMesh) return;
-  if (p.gunMesh.parent !== cam) {
-    p.gunMesh.parent?.remove(p.gunMesh);
-    cam.add(p.gunMesh);
+  const rig = ensureFpHeldRig(p);
+  syncFpHeldBlockRig(rig, p.weaponId, 0);
+  if (rig.parent !== scene) {
+    rig.parent?.remove(rig);
+    scene.add(rig);
   }
   const pose = FP_HAND_POSE[p.weaponId] || FP_HAND_POSE.rifle;
-  p.gunMesh.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
-  p.gunMesh.rotation.set(pose.rot[0], pose.rot[1], pose.rot[2]);
-  p.gunMesh.scale.set(pose.scale[0], pose.scale[1], pose.scale[2]);
-  p.gunMesh.visible = true;
-  p.gunMesh.renderOrder = 10000;
-  p.gunMesh.traverse((c) => {
+  const bump = 1 + ((p._fpFlash ?? 0) / 0.06) * 0.1;
+  cam.updateMatrixWorld(true);
+  const offset = new THREE.Vector3(pose.pos[0], pose.pos[1], pose.pos[2]);
+  offset.applyQuaternion(cam.quaternion);
+  rig.position.copy(cam.position).add(offset);
+  rig.quaternion.copy(cam.quaternion);
+  const e = new THREE.Euler(pose.rot[0], pose.rot[1], pose.rot[2], "XYZ");
+  rig.quaternion.multiply(new THREE.Quaternion().setFromEuler(e));
+  rig.scale.set(pose.scale[0] * bump, pose.scale[1] * bump, pose.scale[2] * bump);
+  rig.visible = true;
+  rig.renderOrder = 99999;
+  rig.traverse((c) => {
     if (c.isMesh) {
-      c.renderOrder = 10001;
+      c.renderOrder = 100000;
       c.frustumCulled = false;
     }
   });
 }
 
+export function hideFpHeldRig(p) {
+  if (p?._fpHeldRig) p._fpHeldRig.visible = false;
+}
+
 export function restoreHeldWeaponToBody(p) {
+  hideFpHeldRig(p);
   if (!p?.gunMesh || !p.mesh) return;
   if (p.gunMesh.parent !== p.mesh) {
     p.gunMesh.parent?.remove(p.gunMesh);
@@ -1001,12 +1056,9 @@ export function tickGunFlash(p, dt, cam) {
     p._fpFlash -= dt;
     flash = Math.max(flash, (p._fpFlash ?? 0) / 0.06);
   }
-  if (!p.isAI && cam && p.gunMesh?.parent === cam) {
-    const bump = 1 + flash * 0.12;
-    const pose = FP_HAND_POSE[p.weaponId] || FP_HAND_POSE.rifle;
-    p.gunMesh.scale.set(pose.scale[0] * bump, pose.scale[1] * bump, pose.scale[2] * bump);
+  if (!p.isAI && p._fpHeldRig?.visible) {
+    syncFpHeldBlockRig(p._fpHeldRig, p.weaponId, flash);
   }
-  if (!p.isAI && cam) syncFpGunVisual(cam, p.weaponId, flash);
 }
 
 function pushLowCover(covers, group, c, cell, hBox, halfW, halfD) {

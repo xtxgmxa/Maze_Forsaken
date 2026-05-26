@@ -1561,6 +1561,23 @@
       color: #c8e8ff;
       text-shadow: 0 0 6px rgba(80, 180, 255, 0.45);
     }
+    .touch-btn[data-ico] {
+      font-size: 0;
+      position: relative;
+    }
+    .touch-btn[data-ico] .touch-skill-key,
+    .touch-btn[data-ico] .touch-skill-name { display: none; }
+    .touch-btn[data-ico]::before {
+      content: attr(data-ico);
+      font-size: 1.15rem;
+      line-height: 1;
+      color: #d8ecff;
+      text-shadow: 0 0 8px rgba(80, 180, 255, 0.4);
+    }
+    .touch-btn.touch-sm[data-ico]::before { font-size: 1rem; }
+    .touch-btn.touch-jump[data-ico]::before { font-size: 1.35rem; color: #aaffcc; }
+    .touch-btn.touch-attack[data-ico]::before { font-size: 1.5rem; color: #ffaa88; }
+    .touch-btn.touch-scope[data-ico]::before { font-size: 1.2rem; color: #aaddff; }
     .touch-gun.active-gun {
       border-color: #ffcc44 !important;
       box-shadow: 0 0 10px rgba(255, 200, 60, 0.35);
@@ -2971,25 +2988,25 @@
         </button>
       </div>
       <div class="touch-row" id="touchRowDoor" hidden>
-        <button type="button" id="touchOpen" class="touch-btn touch-skill primary" data-code="KeyG">
+        <button type="button" id="touchOpen" class="touch-btn touch-skill primary" data-code="KeyG" data-ico="🚪" title="開門" aria-label="開門">
           <span class="touch-skill-key">開</span>
           <span class="touch-skill-name">開門</span>
         </button>
-        <button type="button" id="touchItem" class="touch-btn touch-skill" data-code="KeyR">
+        <button type="button" id="touchItem" class="touch-btn touch-skill" data-code="KeyR" data-ico="✦" title="道具" aria-label="道具">
           <span class="touch-skill-key">物</span>
           <span class="touch-skill-name">道具</span>
         </button>
       </div>
       <div class="touch-row touch-cluster-shooter" id="touchRowShooter" hidden aria-hidden="true"></div>
       <div class="touch-row touch-cluster-actions" id="touchRowMove">
-        <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft">衝刺</button>
-        <button type="button" id="touchScope" class="touch-btn touch-scope" hidden>鏡</button>
-        <button type="button" id="touchAttack" class="touch-btn touch-attack" aria-label="開火">
+        <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft" data-ico="⚡" title="衝刺" aria-label="衝刺"></button>
+        <button type="button" id="touchScope" class="touch-btn touch-scope" data-ico="◎" hidden title="開鏡" aria-label="開鏡"></button>
+        <button type="button" id="touchAttack" class="touch-btn touch-attack" data-ico="●" aria-label="開火" title="開火">
           <span class="touch-skill-key">射</span>
           <span class="touch-skill-name">開火</span>
         </button>
-        <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space">跳</button>
-        <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft">滑壘</button>
+        <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space" data-ico="↑" title="跳躍" aria-label="跳躍"></button>
+        <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft" data-ico="⇣" title="滑壘" aria-label="滑壘"></button>
       </div>
     </div>
     <div id="touchShooterBar" hidden>

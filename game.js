@@ -31,7 +31,7 @@ import {
   carveShooterSecretPassages, buildShooterVerticalWorld, spawnShooterBouncePads,
   resetShooterCharacterPose,
   attachShooterGun, syncGunVisual, muzzleFlash, attachFpGun, detachFpGun, syncFpGunVisual, tickGunFlash, setFpGunVisible,
-  syncHeldWeaponOnCamera, restoreHeldWeaponToBody,
+  syncHeldWeaponOnCamera, restoreHeldWeaponToBody, hideFpHeldRig,
   assignShooterPlayer, buildShooterEndResults, buildMoleEndResults, onShooterDowned,
   getShooterKillAnnounce, tickShooterRespawns, tryManualShooterRespawn, tickShooterDownedPose,
   setupMoleRound, tickMoleAlerts, isMoleTeamkillViolation, scoreMoleKill, checkMoleRoundEnd,
@@ -72,7 +72,7 @@ import {
 } from "./audio.js";
 import {
   loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
-  playSlideSfx, playKatanaSwingSfx,
+  playSlideSfx, playKatanaSwingSfx, playMeleeWindSfx,
 } from "./gameSounds.js";
 import {
   buildZoneParticles, clearZoneParticles, tickZoneParticles,
@@ -1682,10 +1682,10 @@ function syncShooterPlayerVisibility() {
     : [];
   for (const s of fpTargets) {
     const cam = getShooterCameraForPlayer(s);
-    if (cam) syncHeldWeaponOnCamera(s, cam);
+    if (cam) syncHeldWeaponOnCamera(s, cam, scene);
   }
   for (const s of survivors) {
-    if (!fpTargets.includes(s) && s.gunMesh) restoreHeldWeaponToBody(s);
+    if (!fpTargets.includes(s)) restoreHeldWeaponToBody(s);
   }
   for (const s of survivors) {
     if (!s.mesh) continue;
@@ -2679,7 +2679,7 @@ function tryShooterFire(p) {
   }
   playShooterSfx("fire", playSfx, 0.03);
   muzzleFlash(p);
-  if (!p.isAI && cam) syncHeldWeaponOnCamera(p, cam);
+  if (!p.isAI && cam) syncHeldWeaponOnCamera(p, cam, scene);
   p._shootCd = elapsed + (p._shooterFireCd ?? 0.28);
 }
 
@@ -2695,7 +2695,7 @@ function tryShooterWeaponSwitch(slot) {
   const cam = getShooterCameraForPlayer(p);
   if (!p.isAI && cam) {
     detachFpGun(cam);
-    syncHeldWeaponOnCamera(p, cam);
+    syncHeldWeaponOnCamera(p, cam, scene);
   }
   if (p._padPreview) p._padPreview.visible = w.id === "pad";
   if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
@@ -3363,7 +3363,7 @@ async function runStartGame() {
     }
     initShooterWeaponBar();
     setShooterWeaponBarVisible(!isTouchUiEnabled());
-    if (humanShooter && camera) syncHeldWeaponOnCamera(humanShooter, camera);
+    if (humanShooter && camera) syncHeldWeaponOnCamera(humanShooter, camera, scene);
     updateShooterWeaponBar(getShooterWeapon(humanShooter?.weaponId)?.slot ?? 2);
     if (humanShooter) {
       const teamLine = playStyle === "ffa"
@@ -3386,7 +3386,7 @@ async function runStartGame() {
           cam.fov = shooterSettings.fov;
           cam.near = 0.05;
           cam.updateProjectionMatrix();
-          syncHeldWeaponOnCamera(lp, cam);
+          syncHeldWeaponOnCamera(lp, cam, scene);
         }
       }
       const botCount = Math.max(0, survivors.length - locals.length);
@@ -4022,7 +4022,8 @@ function handleAbilityKeys(code, down) {
     const b = getBindings()[profile];
     const idx = ["ab1", "ab2", "ab3"].findIndex((k) => b[k] === code);
     if (idx >= 0 && tryAbility(player, idx, ctx, gameApi)) {
-      playSfx(player.role === "killer" ? "swing_wind" : "ability", 0.06);
+      if (player.role === "killer") playMeleeWindSfx(0.06);
+      else playSfx("ability", 0.06);
     }
   };
   const survivorModes = new Set([
@@ -4309,12 +4310,14 @@ function updateEntity(p, dt, move) {
   const wasAir = p._wasInAir;
   const inAir = !p.onGround || (p._jumpY ?? 0) > 0.2 || (p.velY ?? 0) > 0.4 || (p._bounceAirTime ?? 0) > 0;
   p._wasInAir = inAir;
-  if ((p._suppressLandSfx ?? 0) > 0) p._suppressLandSfx = Math.max(0, p._suppressLandSfx - dt);
-  if (
-    wasAir && p.onGround && (p._jumpY ?? 0) <= 0.08 && Math.abs(p.velY ?? 0) < 1.2
-    && (p._bounceAirTime ?? 0) <= 0 && (p._bounceCd ?? 0) <= 0 && (p._suppressLandSfx ?? 0) <= 0
-  ) {
-    playLandSfx(0.1);
+  const landed = wasAir && p.onGround && (p._jumpY ?? 0) <= 0.08 && Math.abs(p.velY ?? 0) < 1.2;
+  if (landed && (p._bounceAirTime ?? 0) <= 0) {
+    if (p._pendingBounceLandSfx) {
+      p._pendingBounceLandSfx = false;
+      playLandSfx(0.14);
+    } else if ((p._bounceCd ?? 0) <= 0) {
+      playLandSfx(0.1);
+    }
   }
 
   applyMeshAnim(p, dt);
@@ -4697,7 +4700,7 @@ function updateOneKiller(k, dt) {
     tryKillerMeleeAttack(k, target, KILLER_MELEE_DAMAGE);
   } else if (chase.isClone && toChase < 2.8 && k._aiAtkCd <= 0) {
     k._aiAtkCd = perfTier === "low" ? 0.9 : 0.55;
-    playSfx("swing_wind", 0.05);
+    playMeleeWindSfx(0.05);
     spawnHitVfx(scene, chaseX, chaseZ);
   } else if (toSurvivor < 12 && k._aiAtkCd <= 0) {
     k._aiAtkCd = perfTier === "low" ? 0.85 : 0.55;
@@ -4924,12 +4927,35 @@ function snapCameraToPlayer() {
   updateCameraForPlayer(camera, focus, camYaw, camPitch);
 }
 
+function getLocalFpWeaponPlayers() {
+  if (!isShooterMode() || isSpectating()) return [];
+  return isShooterSplitView()
+    ? getLocalHumanPlayers().filter((s) => s && !isShooterPlayerDown(s))
+    : [getHumanSurvivor()].filter((s) => s && !isShooterPlayerDown(s));
+}
+
+function syncLocalFpHeldWeapons(activePlayer = null, activeCam = null) {
+  if (!scene) return;
+  const locals = getLocalFpWeaponPlayers();
+  for (const s of locals) {
+    const cam = s === activePlayer && activeCam
+      ? activeCam
+      : getShooterCameraForPlayer(s);
+    if (activePlayer && s !== activePlayer) {
+      hideFpHeldRig(s);
+      continue;
+    }
+    if (cam) syncHeldWeaponOnCamera(s, cam, scene);
+  }
+}
+
 function updateCamera() {
   if (isSplitScreenView()) return;
   const focus = getCameraFocus();
   if (!focus || !camera) return;
   const { yaw, pitch } = getPlayerCamAngles(focus);
   updateCameraForPlayer(camera, focus, yaw, pitch);
+  syncLocalFpHeldWeapons();
 }
 
 function renderShooterSplitView(W, H) {
@@ -4965,6 +4991,7 @@ function renderShooterSplitView(W, H) {
     const a1 = getPlayerCamAngles(p1);
     const a2 = getPlayerCamAngles(p2);
     updateCameraForPlayer(camera, p1, a1.yaw, a1.pitch);
+    syncLocalFpHeldWeapons(p1, camera);
     camera.fov = fov;
     camera.aspect = W / halfH;
     camera.updateProjectionMatrix();
@@ -4978,6 +5005,7 @@ function renderShooterSplitView(W, H) {
     renderer.setClearColor(0x000000);
     renderer.clear(true, true, true);
     updateCameraForPlayer(camera2, p2, a2.yaw, a2.pitch);
+    syncLocalFpHeldWeapons(p2, camera2);
     camera2.fov = fov;
     camera2.aspect = W / bottomH;
     camera2.updateProjectionMatrix();
@@ -5002,12 +5030,13 @@ function renderShooterSplitView(W, H) {
       const cam = cams[i];
       const ang = getPlayerCamAngles(p);
       updateCameraForPlayer(cam, p, ang.yaw, ang.pitch);
-      const s = slots[i];
+      syncLocalFpHeldWeapons(p, cam);
+      const slot = slots[i];
       cam.fov = fov;
-      cam.aspect = s.w / s.h;
+      cam.aspect = slot.w / slot.h;
       cam.updateProjectionMatrix();
-      renderer.setViewport(s.x, s.y, s.w, s.h);
-      renderer.setScissor(s.x, s.y, s.w, s.h);
+      renderer.setViewport(slot.x, slot.y, slot.w, slot.h);
+      renderer.setScissor(slot.x, slot.y, slot.w, slot.h);
       renderer.setClearColor(bg);
       renderer.clear(true, true, true);
       renderer.render(scene, cam);

@@ -1,4 +1,4 @@
-import { playSfx } from "./audio.js";
+import { playMeleeWindSfx, playKatanaSwingSfx } from "./gameSounds.js";
 import { playAbilityVfx, spawnHitVfx } from "./vfx.js";
 import { moveWithCollision } from "./maze.js";
 
@@ -102,7 +102,7 @@ export function updateKillerCombat(killer, dt, ctx, maze, callbacks) {
     if (a.t >= ATTACK_WINDUP) {
       a.phase = "lunge";
       a.t = 0;
-      playSfx("slash", 0.04);
+      playKatanaSwingSfx(0.04);
       playAbilityVfx(callbacks.scene, killer, a.abId, { lite: true });
     }
     return true;

@@ -1,7 +1,9 @@
 {
-  "_comment": "全模式共用音效。留空 \"\" 則使用內建合成音。支援 mp3 / ogg / wav。",
+  "_comment": "全模式共用動作音（跳躍/落地/腳步/滑壘/揮刀/彈跳）。留空則內建合成音。",
   "footstep": "assets/audio/sfx/footstep.mp3",
   "jump": "assets/audio/sfx/jump.mp3",
   "land": "assets/audio/sfx/land.mp3",
-  "bouncePad": "assets/audio/sfx/bounce_pad.mp3"
+  "bouncePad": "assets/audio/sfx/bounce_pad.mp3",
+  "slide": "assets/audio/sfx/slide.mp3",
+  "katanaSwing": "assets/audio/sfx/katana_swing.mp3"
 }
