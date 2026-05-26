@@ -5302,11 +5302,18 @@ async function showShooterRoleBriefing() {
   if (!isShooterMode() || !shooterState) return;
   const el = showLoading("載入戰場…");
   el.style.flexDirection = "column";
-  el.style.gap = "12px";
-  el.style.padding = "24px";
+  el.style.justifyContent = "center";
+  el.style.gap = "14px";
+  el.style.padding = "28px";
   el.style.textAlign = "center";
-  el.style.maxWidth = "min(92vw, 420px)";
-  el.style.margin = "0 auto";
+  el.style.width = "100vw";
+  el.style.height = "100vh";
+  el.style.maxWidth = "100vw";
+  el.style.margin = "0";
+  el.style.background = "rgba(6,8,16,0.95)";
+  el.style.boxSizing = "border-box";
+  const toast = document.getElementById("abilityToast");
+  if (toast) toast.classList.remove("show");
   const human = getHumanSurvivor();
   const style = shooterState.playStyle ?? shooterPlayStyle;
   let title = "身分確認";
@@ -5327,10 +5334,13 @@ async function showShooterRoleBriefing() {
     title = `本局身分：${team}`;
     body = `你是 ${human?.displayName || "特工"}。同色隊友為盟友，倒數結束前擊倒敵隊。`;
   }
+  el.innerHTML = `<div style="font-size:1.35rem;color:#ccd8ff;font-weight:bold;opacity:0.9">戰場同步中…</div>
+    <div style="font-size:0.88rem;color:#9aa8c8;line-height:1.55">請稍候，正在確認本局資料</div>`;
+  await sleepMs(950);
   el.innerHTML = `<div style="font-size:1.45rem;color:#ffcc66;font-weight:bold">${title}</div>
     <div style="font-size:0.88rem;color:#c8b8e8;line-height:1.55">${body}</div>
     <div style="font-size:0.72rem;color:#8878a8;margin-top:8px">即將開始…</div>`;
-  await sleepMs(3200);
+  await sleepMs(2350);
 }
 
 function paintColorCss(c) {
@@ -5787,9 +5797,10 @@ function loop(now) {
   } catch (err) {
     console.error("遊戲迴圈錯誤", err);
     if (gameState === "play" || gameState === "paused") {
-      showToast(`遊戲發生錯誤：${err?.message || err}`, 5000);
-      gameState = "paused";
-      document.getElementById("pausePanel")?.classList.add("show");
+      // 避免戰鬥中因單幀例外直接跳出暫停面板打斷遊戲
+      showToast(`遊戲錯誤：${err?.message || err}`, 2200);
+      gameState = "play";
+      document.getElementById("pausePanel")?.classList.remove("show");
     }
   }
 }

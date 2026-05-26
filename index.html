@@ -1640,7 +1640,7 @@
       display: none;
       position: fixed;
       left: 50%;
-      bottom: max(22px, calc(18px + env(safe-area-inset-bottom, 0px)));
+      bottom: max(56px, calc(50px + env(safe-area-inset-bottom, 0px)));
       z-index: 12;
       transform: translateX(-50%);
       z-index: 14;
@@ -1938,6 +1938,20 @@
       pointer-events: none;
     }
     #katanaParryBar:not([hidden]) { display: block; }
+    body.touch-ui.shooter-play #katanaParryBar {
+      left: auto;
+      right: max(74px, calc(68px + env(safe-area-inset-right, 0px)));
+      bottom: max(166px, calc(156px + env(safe-area-inset-bottom, 0px)));
+      transform: none;
+      width: 52px;
+      z-index: 29;
+    }
+    body.touch-ui.shooter-play #katanaParryTrack { height: 6px; }
+    body.touch-ui.shooter-play #katanaParryLabel {
+      font-size: 0.54rem;
+      line-height: 1.2;
+      margin-top: 2px;
+    }
     #katanaParryTrack {
       height: 8px;
       border-radius: 6px;
@@ -2543,7 +2557,8 @@
       font-size: 0.68rem !important; margin: 0 !important; font-weight: bold;
     }
     body.touch-ui #hudChar { font-size: 0.5rem !important; }
-    body.touch-ui #hpBarWrap { width: 72px !important; height: 6px !important; margin: 3px 0 !important; }
+    body.touch-ui #hpBarWrap { width: 126px !important; height: 14px !important; margin: 4px 0 !important; }
+    body.touch-ui #hudHpOnBar { font-size: 0.64rem !important; letter-spacing: 0.01em; }
     body.touch-ui #hudDjBar { width: 72px; height: 4px; }
     body.touch-ui #hudChar,
     body.touch-ui #hudSprint { font-size: 0.55rem !important; line-height: 1.25; }

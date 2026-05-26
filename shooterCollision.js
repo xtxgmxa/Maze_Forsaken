@@ -53,7 +53,8 @@ export function collidesShooterSolid(px, pz, radius, footElev, jumpY, state) {
     const hd = (pl.halfD ?? 1) + radius * 0.72;
     if (!insideAabb(px, pz, pl.x, pl.z, hw, hd)) continue;
     const top = pl.blockTop ?? pl.y ?? 1;
-    if (pl.standable && crest >= top - 0.42) continue;
+    // 可站立掩體：只要腳底接近台面就不應再被側面卡進去
+    if (pl.standable && crest >= top - 1.2) continue;
     if (crest >= top - 0.5) continue;
     if ((jumpY ?? 0) > 0.12 && crest >= top - 1.35) continue;
     const base = pl.baseY ?? 0;
