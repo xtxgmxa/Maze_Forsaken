@@ -315,7 +315,7 @@ function updateCrosshair() {
   ch.classList.toggle("show", (killerAim || shooterAim) && !hideCrosshair);
   ch.classList.toggle("sniper", sniper);
   ch.classList.toggle("sniper-scope", sniper && shooterAds);
-  if (scopeOv) scopeOv.classList.toggle("show", shooterAim && shooterAds);
+  if (scopeOv) scopeOv.classList.toggle("show", shooterAim && sniper && shooterAds);
 }
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
@@ -364,10 +364,12 @@ function rebuildLevelGrid() {
   const levelGrid = document.getElementById("levelGrid");
   if (!levelGrid) return;
   const list = getLevelsForMenu();
+  const prevId = selectedLevel?.id;
+  const activeId = list.some((lv) => lv.id === prevId) ? prevId : (list[0]?.id ?? null);
   levelGrid.innerHTML = "";
-  list.forEach((lv, i) => {
+  list.forEach((lv) => {
     const card = document.createElement("div");
-    card.className = "level-card" + (i === 0 ? " selected" : "");
+    card.className = "level-card" + (lv.id === activeId ? " selected" : "");
     card.innerHTML = `<h3>${lv.name}</h3><p>${lv.desc}</p>`;
       card.onclick = () => {
       document.querySelectorAll(".level-card").forEach((c) => c.classList.remove("selected"));
@@ -383,7 +385,7 @@ function rebuildLevelGrid() {
     };
     levelGrid.appendChild(card);
   });
-  selectedLevel = list[0];
+  if (activeId != null) selectedLevel = list.find((lv) => lv.id === activeId) || list[0];
   menuUiRef?.updatePickLabels?.();
 }
 
@@ -1463,7 +1465,7 @@ function getShooterActiveFov() {
   const w = getShooterWeapon(p?.weaponId);
   if (shooterAds) {
     if (w.id === "sniper") return shooterSettings.scopeFov;
-    return Math.max(40, Math.min(68, Math.round(shooterSettings.fov * 0.52)));
+    return Math.max(62, Math.min(shooterSettings.fov - 6, Math.round(shooterSettings.fov * 0.88)));
   }
   return shooterSettings.fov;
 }

@@ -837,7 +837,18 @@ export function attachFpGun(cam, weaponId = "rifle") {
   const scope = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), fpGunMat(0x556677));
   scope.position.set(0, 0.09, 0.04);
   scope.name = "fpScope";
+  const katanaBlade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.06, 1.22), fpGunMat(0xdde6f8));
+  katanaBlade.name = "fpKatanaBlade";
+  katanaBlade.position.set(0.1, -0.02, 0.8);
+  katanaBlade.rotation.set(-0.05, 0.12, 0.04);
+  katanaBlade.visible = false;
+  const katanaGuard = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.08), fpGunMat(0x1f2533));
+  katanaGuard.name = "fpKatanaGuard";
+  katanaGuard.position.set(0.06, -0.06, 0.17);
+  katanaGuard.rotation.set(0.02, 0.16, 0);
+  katanaGuard.visible = false;
   gun.add(body, barrel, grip, guard, scope);
+  gun.add(katanaBlade, katanaGuard);
   gun.position.set(0.12, -0.06, 0.02);
   gun.rotation.set(0.02, 0.05, 0);
 
@@ -863,6 +874,11 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
   const id = weaponId || "rifle";
   const col = GUN_COLORS[id] || 0x888899;
   const gunBody = fpGunMesh.getObjectByName("fpGunBody");
+  const katBlade = fpGunMesh.getObjectByName("fpKatanaBlade");
+  const katGuard = fpGunMesh.getObjectByName("fpKatanaGuard");
+  if (gunBody) gunBody.visible = id !== "katana";
+  if (katBlade) katBlade.visible = id === "katana";
+  if (katGuard) katGuard.visible = id === "katana";
   fpGunMesh.traverse((c) => {
     if (!c.material?.color) return;
     if (c.name === "fpScope") {
@@ -874,15 +890,16 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
       c.material.color.setHex(flash > 0.2 ? 0xffaa44 : col);
     }
   });
-  const sx = id === "shotgun" ? 1.28 : id === "smg" ? 0.9 : id === "sniper" ? 1.05 : id === "katana" ? 0.56 : 1;
+  const sx = id === "shotgun" ? 1.28 : id === "smg" ? 0.9 : id === "sniper" ? 1.05 : 1;
   if (gunBody) {
-    gunBody.scale.set(sx, id === "katana" ? 0.9 : 1, id === "shotgun" ? 1.1 : id === "sniper" ? 1.4 : id === "katana" ? 2.25 : 1);
+    gunBody.scale.set(sx, 1, id === "shotgun" ? 1.1 : id === "sniper" ? 1.4 : 1);
   }
   if (id === "sniper") {
     fpGunMesh.position.set(0.32, -0.26, -0.44);
   } else if (id === "katana") {
-    fpGunMesh.position.set(0.48, -0.34, -0.28);
-    fpGunMesh.rotation.set(0.16, 0.22, -0.08);
+    if (katBlade?.material?.color) katBlade.material.color.setHex(flash > 0.15 ? 0xffd7a2 : 0xdde6f8);
+    fpGunMesh.position.set(0.56, -0.31, -0.18);
+    fpGunMesh.rotation.set(0.22, 0.38, -0.2);
   } else {
     fpGunMesh.position.set(0.38, -0.28, -0.48);
     fpGunMesh.rotation.set(0.03, 0.05, 0);

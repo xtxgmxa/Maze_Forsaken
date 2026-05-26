@@ -6,6 +6,17 @@
 export function audioPathCandidates(path) {
   if (!path || typeof path !== "string") return [];
   const out = [path];
+  if (/^assets\//i.test(path)) {
+    out.push(`Maze_Forsaken/${path}`);
+    out.push(`./Maze_Forsaken/${path}`);
+  } else if (/^\.\/?assets\//i.test(path)) {
+    const clean = path.replace(/^\.\//, "");
+    out.push(`Maze_Forsaken/${clean}`);
+    out.push(`./Maze_Forsaken/${clean}`);
+  } else if (/^Maze_Forsaken\/assets\//i.test(path)) {
+    out.push(path.replace(/^Maze_Forsaken\//, ""));
+    out.push(`./${path.replace(/^Maze_Forsaken\//, "")}`);
+  }
   if (/\.mp3$/i.test(path)) {
     out.push(path.replace(/\.mp3$/i, ".mp3.MP3"));
     out.push(path.replace(/\.mp3$/i, ".MP3"));
