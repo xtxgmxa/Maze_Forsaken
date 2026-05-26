@@ -1,5 +1,5 @@
 /**
- * 槍戰分割畫面 — 每位本機玩家獨立雷達與 HUD 區塊（非共用單人 UI）。
+ * 槍戰分割畫面 — 每位本機玩家獨立精簡 HUD + 雷達
  */
 
 let root = null;
@@ -24,8 +24,10 @@ function ensureSlot(i) {
   el.dataset.slot = String(i);
   el.innerHTML = `
     <span class="shooter-split-tag">P${i + 1}</span>
-    <canvas class="shooter-split-radar" width="96" height="96"></canvas>
-    <span class="shooter-split-hp"></span>
+    <div class="shooter-split-hpbar"><div class="shooter-split-hpfill"></div><span class="shooter-split-hpnum">100</span></div>
+    <span class="shooter-split-timer">04:00</span>
+    <span class="shooter-split-mode">—</span>
+    <canvas class="shooter-split-radar" width="88" height="88"></canvas>
     <span class="shooter-split-gun"></span>
   `;
   ensureRoot().appendChild(el);
@@ -33,7 +35,10 @@ function ensureSlot(i) {
     el,
     canvas: el.querySelector(".shooter-split-radar"),
     tag: el.querySelector(".shooter-split-tag"),
-    hp: el.querySelector(".shooter-split-hp"),
+    hpFill: el.querySelector(".shooter-split-hpfill"),
+    hpNum: el.querySelector(".shooter-split-hpnum"),
+    timer: el.querySelector(".shooter-split-timer"),
+    mode: el.querySelector(".shooter-split-mode"),
     gun: el.querySelector(".shooter-split-gun"),
   };
   return slots[i];
@@ -46,30 +51,46 @@ export function hideShooterSplitHud() {
   }
 }
 
+function formatCountdown(sec) {
+  const s = Math.max(0, Math.ceil(sec ?? 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
 /** @param {Array<{ viewer: object, x: number, y: number, w: number, h: number }>} viewports */
-export function layoutShooterSplitHud(viewports, W, H) {
+export function layoutShooterSplitHud(viewports, W, H, hudOpts = {}) {
   const r = ensureRoot();
   r.style.display = "block";
+  const timeLeft = hudOpts.timeLeft ?? 0;
+  const modeLabel = hudOpts.modeLabel ?? "槍戰";
   for (let i = 0; i < 4; i++) {
     const s = slots[i];
     if (s?.el) s.el.style.display = "none";
   }
   viewports.forEach((vp, i) => {
     const s = ensureSlot(i);
-    const pad = 8;
-    const radarSize = Math.min(96, Math.floor(Math.min(vp.w, vp.h) * 0.22));
+    const pad = 6;
+    const radarSize = Math.min(88, Math.floor(Math.min(vp.w, vp.h) * 0.2));
     s.el.style.display = "flex";
-    s.el.style.left = `${vp.x + vp.w - radarSize - pad}px`;
+    s.el.style.left = `${vp.x + vp.w - radarSize - pad - 4}px`;
     s.el.style.top = `${vp.y + pad}px`;
-    s.el.style.width = `${radarSize + 4}px`;
+    s.el.style.width = `${radarSize + 8}px`;
     s.canvas.width = radarSize;
     s.canvas.height = radarSize;
-    const name = vp.viewer?.displayName || vp.viewer?.charDef?.name || `P${i + 1}`;
-    s.tag.textContent = name.slice(0, 6);
-    s.hp.textContent = `HP ${Math.max(0, Math.round(vp.viewer?.hp ?? 0))}`;
-    const w = vp.viewer?.weaponId || "rifle";
-    const gunZh = { smg: "衝鋒", rifle: "步槍", shotgun: "霰彈", sniper: "狙擊", pad: "彈跳" }[w] || w;
-    s.gun.textContent = gunZh;
+    const v = vp.viewer;
+    const name = v?.displayName || v?.charDef?.name || `P${i + 1}`;
+    s.tag.textContent = name.slice(0, 8);
+    const maxHp = Math.max(1, v?.maxHp ?? 100);
+    const hp = Math.max(0, Math.round(v?.hp ?? maxHp));
+    const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+    if (s.hpFill) s.hpFill.style.width = `${pct}%`;
+    if (s.hpNum) s.hpNum.textContent = `${hp}`;
+    if (s.timer) s.timer.textContent = formatCountdown(timeLeft);
+    if (s.mode) s.mode.textContent = modeLabel;
+    const w = v?.weaponId || "rifle";
+    const gunZh = { smg: "衝鋒", rifle: "步槍", shotgun: "霰彈", sniper: "狙擊", pad: "彈跳", katana: "刀" }[w] || w;
+    if (s.gun) s.gun.textContent = gunZh;
   });
 }
 
@@ -137,10 +158,11 @@ export function syncShooterSplitGridLines(nLocal, W, H) {
   grid.innerHTML = "";
   grid.style.display = nLocal >= 2 ? "block" : "none";
   if (nLocal === 2) {
-    const bar = document.createElement("div");
-    bar.className = "shooter-split-bar h";
-    bar.style.top = `${Math.floor((H - 4) / 2)}px`;
-    grid.appendChild(bar);
+    const halfW = Math.floor((W - 5) / 2);
+    const v = document.createElement("div");
+    v.className = "shooter-split-bar v";
+    v.style.left = `${halfW + 2}px`;
+    grid.appendChild(v);
   } else if (nLocal >= 3) {
     const halfW = Math.floor(W / 2);
     const halfH = Math.floor(H / 2);

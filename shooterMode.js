@@ -1005,7 +1005,15 @@ function getFpMotionOffsets(p, weaponId) {
     off.rot[2] += kick * s * 0.6;
   }
 
-  if (id === "katana" && (p._katanaSwingT ?? 0) > 0) {
+  if (id === "katana" && (p._katanaParryT ?? 0) > 0) {
+    const u = (p._katanaParryT ?? 0) / KATANA_PARRY_DURATION;
+    const hold = 0.55 + Math.sin(u * Math.PI) * 0.12;
+    off.rot[0] += -1.35 * hold;
+    off.rot[1] += 0.55 * hold;
+    off.rot[2] += 0.18 * hold;
+    off.pos[1] += 0.28 * hold;
+    off.pos[2] -= 0.12 * hold;
+  } else if (id === "katana" && (p._katanaSwingT ?? 0) > 0) {
     const u = 1 - p._katanaSwingT / KATANA_SWING_DURATION;
     const kind = p._katanaSwingIdx ?? 0;
     const a = SWING_AMP;
@@ -1059,6 +1067,13 @@ export function syncGunVisual(p) {
   }
   if (p.weaponId === "katana") {
     layoutKatanaParts(parts);
+    const parryT = p._katanaParryT ?? 0;
+    if (parryT > 0 && p.gunMesh.parent === p.mesh) {
+      const u = parryT / KATANA_PARRY_DURATION;
+      const hold = 0.5 + Math.sin(u * Math.PI) * 0.1;
+      p.gunMesh.rotation.set(-1.05 * hold, 0.35, 0.35 * hold);
+      p.gunMesh.position.set(0.34, 1.22, 0.28);
+    } else {
     const swingT = p._katanaSwingT ?? 0;
     const a = SWING_AMP * 0.92;
     if (swingT > 0 && p.gunMesh.parent === p.mesh) {
@@ -1080,6 +1095,7 @@ export function syncGunVisual(p) {
       p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
     }
     p.gunMesh.position.set(0.36, 1.1, 0.32);
+    }
     p.gunMesh.scale.set(1.15, 1.15, 1.15);
     return;
   }

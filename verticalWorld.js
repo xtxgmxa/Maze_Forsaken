@@ -29,7 +29,12 @@ function tierY(tier) {
 }
 
 function canLandOnPlatform(pl, footElev, jumpY) {
-  if (pl.standable || pl.y < 2.2) {
+  if (pl.standable) {
+    const foot = (footElev ?? 0) + (jumpY ?? 0);
+    const top = pl.blockTop ?? pl.y ?? 0;
+    return foot >= top - 1.15 || (jumpY ?? 0) > 0.1;
+  }
+  if (pl.y < 2.2) {
     const foot = (footElev ?? 0) + (jumpY ?? 0);
     return foot >= (pl.y ?? 0) - 0.65 || (jumpY ?? 0) > 0.18;
   }
@@ -428,6 +433,34 @@ export function updateVerticalPhysics(p, dt, verticalState) {
     p.onGround = false;
   } else if (p.onGround) {
     p.elev += (groundElev - p.elev) * Math.min(1, dt * 12);
+  }
+
+  snapToStandableSurface(p, verticalState);
+}
+
+/** 落在可站立掩體／高台上時強制對齊台面，避免穿進方塊內卡住 */
+function snapToStandableSurface(p, verticalState) {
+  if (!p || !verticalState?.platforms?.length) return;
+  const foot = (p.elev ?? 0) + (p._jumpY ?? 0);
+  let bestTop = null;
+  let bestD = Infinity;
+  for (const pl of verticalState.platforms) {
+    if (!pl.standable) continue;
+    const top = pl.blockTop ?? pl.y ?? 0;
+    if (!insideAabb(p.pos.x, p.pos.z, pl.x, pl.z, pl.halfW, pl.halfD)) continue;
+    const d = Math.abs(foot - top);
+    if (foot > top + 1.4) continue;
+    if (d < bestD) {
+      bestD = d;
+      bestTop = top;
+    }
+  }
+  if (bestTop == null) return;
+  if (p.velY <= 0.6 && foot >= bestTop - 1.05 && foot <= bestTop + 0.55) {
+    p.elev = bestTop;
+    p._jumpY = 0;
+    p.velY = 0;
+    p.onGround = true;
   }
 }
 

@@ -168,6 +168,57 @@ export function spawnPaintMuzzleFlash(scene, x, y, z, dir, color = 0xffaa66) {
   pool.push({ mesh: g, life: 0.11, scale: 0.55, spin: 0, isMuzzle: true });
 }
 
+/** 武士刀格擋反彈子彈 */
+export function spawnDeflectVfx(scene, x, y, z, color = 0x88eeff) {
+  if (!scene) return;
+  const g = new THREE.Group();
+  g.position.set(x, y ?? 1.35, z);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.12, 0.55, 12),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  g.add(ring);
+  for (let i = 0; i < 6; i++) {
+    const spark = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 4, 4),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    const a = (i / 6) * Math.PI * 2;
+    spark.position.set(Math.cos(a) * 0.35, 0.1 + Math.random() * 0.2, Math.sin(a) * 0.35);
+    g.add(spark);
+  }
+  scene.add(g);
+  pool.push({ mesh: g, life: 0.2, scale: 0.7, spin: 0.08, isDeflect: true });
+}
+
+export function tickDeflectVfx(dt) {
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const v = pool[i];
+    if (!v.isDeflect) continue;
+    v.life -= dt;
+    v.mesh.rotation.y += v.spin * 12;
+    v.mesh.scale.setScalar(v.scale * (1 + (0.2 - v.life) * 2.2));
+    if (v.life <= 0) {
+      v.mesh.parent?.remove(v.mesh);
+      pool.splice(i, 1);
+    }
+  }
+}
+
 export function tickMuzzleFlashes(dt) {
   for (let i = pool.length - 1; i >= 0; i--) {
     const v = pool[i];

@@ -73,7 +73,7 @@ import {
 } from "./audio.js";
 import {
   loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
-  playSlideSfx, playKatanaSwingSfx, playMeleeWindSfx,
+  playSlideSfx, playKatanaSwingSfx, playMeleeWindSfx, playParryDeflectSfx,
 } from "./gameSounds.js";
 import {
   buildZoneParticles, clearZoneParticles, tickZoneParticles,
@@ -136,7 +136,7 @@ import {
 import {
   playAbilityVfx, updateVfx, applyMeshAnim, applyLocomotionAnim,
   spawnHitVfx, clearVfxPool, spawnProjectileVfx, setVfxBudget,
-  spawnPaintMuzzleFlash, tickMuzzleFlashes,
+  spawnPaintMuzzleFlash, tickMuzzleFlashes, spawnDeflectVfx, tickDeflectVfx,
 } from "./vfx.js";
 
 const WALK_SPEED = 10.5;
@@ -1269,7 +1269,7 @@ function returnToMenu() {
   document.body.classList.remove(
     "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui",
     "shooter-end-stats-only", "shooter-end-menu", "scoreboard-open",
-    "split-2p", "split-2p-v", "split-4p"
+    "split-2p", "split-2p-v", "split-2p-h", "split-4p"
   );
   shooterEndPending = null;
   overlay?.classList.remove("shooter-end");
@@ -1663,15 +1663,15 @@ function getShooterLabelViewports(W, H) {
   ensureSplitCameras(locals.length);
   const cams = [camera, camera2, camera3, camera4];
   if (locals.length === 2) {
-    const halfH = Math.floor((H - COOP_SPLIT_GAP) / 2);
-    const bottomH = H - halfH - COOP_SPLIT_GAP;
+    const halfW = Math.floor((W - COOP_SPLIT_GAP) / 2);
+    const rightW = W - halfW - COOP_SPLIT_GAP;
     const a1 = getPlayerCamAngles(locals[0]);
     const a2 = getPlayerCamAngles(locals[1]);
     updateCameraForPlayer(cams[0], locals[0], a1.yaw, a1.pitch);
     updateCameraForPlayer(cams[1], locals[1], a2.yaw, a2.pitch);
     return [
-      { viewer: locals[0], camera: cams[0], x: 0, y: halfH + COOP_SPLIT_GAP, w: W, h: halfH },
-      { viewer: locals[1], camera: cams[1], x: 0, y: 0, w: W, h: bottomH },
+      { viewer: locals[0], camera: cams[0], x: 0, y: 0, w: halfW, h: H },
+      { viewer: locals[1], camera: cams[1], x: halfW + COOP_SPLIT_GAP, y: 0, w: rightW, h: H },
     ];
   }
   const halfW = Math.floor(W / 2);
@@ -3399,13 +3399,7 @@ async function runStartGame() {
     loadShooterSounds().then(() => preloadShooterSounds());
     preloadGameSounds();
     if (isShooterMoleMode(shooterState)) {
-      const mole = setupMoleRound(survivors, shooterState);
-      const human = getHumanSurvivor();
-      if (human?.isMole) {
-        showToast("你是內鬼！警報前不能開槍，之後可暗殺隊友為隊伍換高分。", 4200, "kill");
-      } else {
-        showToast("無間道：找出並擊殺內鬼！誤傷隊友者立刻淘汰。", 3200);
-      }
+      setupMoleRound(survivors, shooterState);
     }
     const playStyle = shooterState.playStyle ?? shooterPlayStyle;
     survivors.forEach((s, i) => {
@@ -3469,7 +3463,7 @@ async function runStartGame() {
       }
       const botCount = Math.max(0, survivors.length - locals.length);
       showToast(
-        `${locals.length}P 分割（${locals.length === 2 ? "上下" : "四格"}）· 另 ${botCount} 電腦 · P1 鍵鼠／手把① · RT 開火`,
+        `${locals.length}P 分割（${locals.length === 2 ? "左右" : "十字四格"}）· 另 ${botCount} 電腦 · 各格獨立 HUD`,
         4200
       );
     }
@@ -3507,6 +3501,7 @@ async function runStartGame() {
   }
 
   startLoadPhase = "完成進場";
+  if (isShooterMode()) await showShooterRoleBriefing();
   gameState = "play";
   hideLoading();
   if (window.__forsakenLanSession?.roomId && window.__forsakenLanClient?.connected) {
@@ -3979,7 +3974,7 @@ function setupInput() {
       if (human && id === "katana") {
         const res = tryKatanaParry(human);
         if (res.ok && res.reason === "start") {
-          playShooterSfx("hitWall", playSfx, 0.08);
+          playMeleeWindSfx(0.06);
           showToast("格擋 3 秒 · 可反彈子彈", 900);
         } else if (!res.ok && res.reason === "cd") {
           showToast("格擋冷卻中", 600);
@@ -4855,8 +4850,12 @@ function tryDeflectProjectile(pr, i) {
     const facing = (dx / (d || 1)) * (fy / fn) + (dz / (d || 1)) * (fz / fn);
     if (facing < 0.2) continue;
     projectiles.splice(i, 1);
-    spawnHitVfx(scene, s.pos.x, s.pos.z, { color: 0xaaddff, scale: 0.65, lite: true });
-    playShooterSfx("hitWall", playSfx, 0.05);
+    const hx = (pr.x + s.pos.x) * 0.5;
+    const hz = (pr.z + s.pos.z) * 0.5;
+    const hy = pr.y ?? worldHeight(s) + 1.2;
+    spawnDeflectVfx(scene, hx, hy, hz, 0x88eeff);
+    spawnHitVfx(scene, s.pos.x, s.pos.z, { color: 0xaaddff, scale: 0.75, lite: true });
+    playParryDeflectSfx(0.02);
     const spd = Math.hypot(pr.vx, pr.vz) || 20;
     const ref = {
       ...pr,
@@ -5129,35 +5128,36 @@ function renderShooterSplitView(W, H) {
   syncShooterSplitGridLines(locals.length, W, H);
 
   if (locals.length === 2) {
-    document.body.classList.add("split-2p-v");
-    document.body.classList.remove("split-2p-h");
-    if (line) line.style.display = "block";
-    const halfH = Math.floor((H - COOP_SPLIT_GAP) / 2);
-    const bottomH = H - halfH - COOP_SPLIT_GAP;
+    document.body.classList.add("split-2p-h");
+    document.body.classList.remove("split-2p-v");
+    if (line) line.style.display = "none";
+    const halfW = Math.floor((W - COOP_SPLIT_GAP) / 2);
+    const rightW = W - halfW - COOP_SPLIT_GAP;
     const [p1, p2] = locals;
     const a1 = getPlayerCamAngles(p1);
     const a2 = getPlayerCamAngles(p2);
     updateCameraForPlayer(camera, p1, a1.yaw, a1.pitch);
     syncLocalFpHeldWeapons(p1, camera);
     camera.fov = fov;
-    camera.aspect = W / halfH;
+    camera.aspect = halfW / H;
     camera.updateProjectionMatrix();
-    renderer.setViewport(0, halfH + COOP_SPLIT_GAP, W, halfH);
-    renderer.setScissor(0, halfH + COOP_SPLIT_GAP, W, halfH);
+    renderer.setViewport(0, 0, halfW, H);
+    renderer.setScissor(0, 0, halfW, H);
     renderer.setClearColor(bg);
     renderer.clear(true, true, true);
     renderer.render(scene, camera);
-    renderer.setViewport(0, halfH, W, COOP_SPLIT_GAP);
-    renderer.setScissor(0, halfH, W, COOP_SPLIT_GAP);
+    renderer.setViewport(halfW, 0, COOP_SPLIT_GAP, H);
+    renderer.setScissor(halfW, 0, COOP_SPLIT_GAP, H);
     renderer.setClearColor(0x000000);
     renderer.clear(true, true, true);
     updateCameraForPlayer(camera2, p2, a2.yaw, a2.pitch);
     syncLocalFpHeldWeapons(p2, camera2);
     camera2.fov = fov;
-    camera2.aspect = W / bottomH;
+    camera2.aspect = rightW / H;
     camera2.updateProjectionMatrix();
-    renderer.setViewport(0, 0, W, bottomH);
-    renderer.setScissor(0, 0, W, bottomH);
+    const x1 = halfW + COOP_SPLIT_GAP;
+    renderer.setViewport(x1, 0, rightW, H);
+    renderer.setScissor(x1, 0, rightW, H);
     renderer.setClearColor(bg);
     renderer.clear(true, true, true);
     renderer.render(scene, camera2);
@@ -5194,7 +5194,12 @@ function renderShooterSplitView(W, H) {
     ...vp,
     viewerYaw: getPlayerCamAngles(vp.viewer),
   }));
-  layoutShooterSplitHud(vps, W, H);
+  const styleTag = shooterState?.playStyle === "ffa"
+    ? "自由混戰"
+    : shooterState?.playStyle === "mole"
+      ? "無間道"
+      : "團隊對抗";
+  layoutShooterSplitHud(vps, W, H, { timeLeft: killerTimer, modeLabel: styleTag });
   if (minimapBaseCanvas) drawShooterSplitRadars(ctx, maze, minimapBaseCanvas, survivors, vps);
 }
 
@@ -5209,6 +5214,7 @@ function renderGameView() {
   if (isShooterSplitView()) {
     const nLocal = getLocalHumanPlayers().length;
     document.body.classList.toggle("split-2p", nLocal === 2);
+    document.body.classList.toggle("split-2p-h", nLocal === 2);
     document.body.classList.toggle("split-4p", nLocal >= 3);
     renderShooterSplitView(W, H);
     return;
@@ -5280,6 +5286,51 @@ function formatTime(s) {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+/** 全域倒數顯示（04:00 → 00:00） */
+function formatCountdown(seconds) {
+  const s = Math.max(0, Math.ceil(seconds ?? 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function showShooterRoleBriefing() {
+  if (!isShooterMode() || !shooterState) return;
+  const el = showLoading("載入戰場…");
+  el.style.flexDirection = "column";
+  el.style.gap = "12px";
+  el.style.padding = "24px";
+  el.style.textAlign = "center";
+  el.style.maxWidth = "min(92vw, 420px)";
+  el.style.margin = "0 auto";
+  const human = getHumanSurvivor();
+  const style = shooterState.playStyle ?? shooterPlayStyle;
+  let title = "身分確認";
+  let body = "";
+  if (style === "mole") {
+    if (human?.isMole) {
+      title = "本局身分：內鬼";
+      body = "開局為隨機指派。警報響起前請勿開槍；之後可暗殺隊友為己方隊伍爭取高分。";
+    } else {
+      title = "本局身分：清白特工";
+      body = "內鬼已隨機潛入你的隊伍（人數與陣營開局時決定）。找出並擊除內鬼，誤傷隊友將立刻淘汰。";
+    }
+  } else if (style === "ffa") {
+    title = "自由混戰";
+    body = `你是 ${human?.displayName || "特工"}。除自己以外皆是敵人，倒數結束前爭取最高積分。`;
+  } else {
+    const team = SHOOTER_TEAMS[human?.teamId ?? 0]?.name || "隊伍";
+    title = `本局身分：${team}`;
+    body = `你是 ${human?.displayName || "特工"}。同色隊友為盟友，倒數結束前擊倒敵隊。`;
+  }
+  el.innerHTML = `<div style="font-size:1.45rem;color:#ffcc66;font-weight:bold">${title}</div>
+    <div style="font-size:0.88rem;color:#c8b8e8;line-height:1.55">${body}</div>
+    <div style="font-size:0.72rem;color:#8878a8;margin-top:8px">即將開始…</div>`;
+  await sleepMs(3200);
 }
 
 function paintColorCss(c) {
@@ -5503,8 +5554,11 @@ function updateHUD() {
   const maxHp = Math.max(1, focus.maxHp ?? 100);
   const hp = Math.round(focus.hp ?? maxHp);
   const hpPct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  const hpOnBar = document.getElementById("hudHpOnBar");
+  if (hpOnBar) hpOnBar.textContent = `${hp}/${maxHp}`;
   const hpEl = document.getElementById("hudHp");
-  if (hpEl) hpEl.textContent = isShooterMode() ? `${hp}/${maxHp}` : String(hp);
+  if (hpEl) hpEl.style.display = isShooterMode() ? "none" : "";
+  if (hpEl && !isShooterMode()) hpEl.textContent = String(hp);
   const hpBar = document.getElementById("hudHpBar");
   if (hpBar) {
     hpBar.style.width = `${hpPct}%`;
@@ -5514,17 +5568,14 @@ function updateHUD() {
       "linear-gradient(90deg,#4a0810,#aa1122)";
   }
 
+  const countdown = formatCountdown(killerTimer);
   const timerEl = document.getElementById("hudTimer");
-  if (timerEl) timerEl.textContent = formatTime(elapsed);
+  if (timerEl) timerEl.textContent = countdown;
   const roundLbl = document.getElementById("hudRoundLabel");
-  if (roundLbl) roundLbl.textContent = formatTime(elapsed);
+  if (roundLbl) roundLbl.style.display = "none";
 
   const kt = document.getElementById("hudKillerTimer");
-  if (kt) {
-    const m = Math.floor(Math.max(0, killerTimer) / 60);
-    const s = Math.max(0, Math.ceil(killerTimer)) % 60;
-    kt.textContent = `獵人剩餘 ${m}:${String(s).padStart(2, "0")}`;
-  }
+  if (kt) kt.textContent = `倒數 ${countdown}`;
 
   const ca = document.getElementById("hudCaught");
   if (ca) {
@@ -5543,9 +5594,14 @@ function updateHUD() {
     : 99;
 
   if (isShooterMode() && shooterState) {
+    if (isShooterSplitView()) {
+      document.getElementById("hud")?.classList.add("hud-split-hidden");
+      return;
+    }
+    document.getElementById("hud")?.classList.remove("hud-split-hidden");
     const gun = getShooterWeapon(focus.weaponId);
     const myScore = focus._shooterStats?.kills ?? 0;
-    const tLeft = `${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+    const tLeft = formatCountdown(killerTimer);
     const styleTag = shooterState.playStyle === "ffa"
       ? "自由混戰"
       : shooterState.playStyle === "mole"
@@ -5558,7 +5614,7 @@ function updateHUD() {
     document.getElementById("hpBarWrap").style.display = "block";
     document.getElementById("hudKiller").textContent =
       shooterState.playStyle === "ffa" ? `槍戰 · ${survivors.length} 人混戰` : "槍戰 · 紅藍隊";
-    document.getElementById("hudKillerTimer").textContent = `剩餘 ${tLeft}`;
+    document.getElementById("hudKillerTimer").textContent = `倒數 ${tLeft}`;
     warning.classList.remove("show");
     const distElEarly = document.getElementById("missionDist");
     if (distElEarly) {
@@ -5622,9 +5678,9 @@ function updateHUD() {
 
   const distEl = document.getElementById("missionDist");
   if (distEl) {
-    distEl.textContent = playAsKiller
-      ? `最近倖存 ${distK.toFixed(0)}m · 獵人時間倒數中`
-      : `出口 ${distExit.toFixed(0)}m · 獵人 ${distK.toFixed(0)}m · HP ${hp}`;
+      distEl.textContent = playAsKiller
+      ? `最近倖存 ${distK.toFixed(0)}m · 倒數 ${countdown}`
+      : `出口 ${distExit.toFixed(0)}m · 獵人 ${distK.toFixed(0)}m · 倒數 ${countdown}`;
   }
 
   const mapLabel = document.getElementById("hudMapName");
@@ -5690,8 +5746,7 @@ function updateHUD() {
       doorsL > 0 ? `開啟所有門（剩 ${doorsL}）· 鑰匙 ${keysL}` :
       isAtExit(focus) ? "已到達出口！" : `全員前往出口 · 鑰匙 ${keysL}`;
     document.getElementById("hudKiller").textContent = "無獵人 · 鑰匙逃脫";
-    document.getElementById("hudKillerTimer").textContent =
-      `剩餘 ${Math.floor(Math.max(0, killerTimer) / 60)}:${String(Math.max(0, Math.ceil(killerTimer)) % 60).padStart(2, "0")}`;
+    document.getElementById("hudKillerTimer").textContent = `倒數 ${formatCountdown(killerTimer)}`;
     warning.classList.remove("show");
     if (distEl) {
       distEl.textContent = `門 ${doorsL} · 鑰匙 ${keysL} · 出口 ${distExit.toFixed(0)}m · HP ${hp}`;
@@ -5896,6 +5951,7 @@ function loopFrame(now) {
     updateMinions(dt);
     updateVfx(dt);
     tickMuzzleFlashes(dt);
+    tickDeflectVfx(dt);
     if (isShooterMode()) {
       updateShooterFov();
       const sh = scene?.userData?.shadowLight;
@@ -6150,7 +6206,7 @@ function boot() {
         if (id === "katana") {
           const res = tryKatanaParry(h);
           if (res.ok && res.reason === "start") {
-            playShooterSfx("hitWall", playSfx, 0.08);
+            playMeleeWindSfx(0.06);
             showToast("格擋 3 秒", 800);
           } else if (!res.ok && res.reason === "cd") showToast("格擋冷卻中", 600);
           updateCrosshair();
