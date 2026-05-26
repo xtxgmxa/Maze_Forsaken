@@ -774,14 +774,24 @@ export function attachShooterGun(p) {
   syncGunVisual(p);
 }
 
-function heldPartMat(color, opacity = 1) {
-  return new THREE.MeshBasicMaterial({
+function heldPartMat(color, opacity = 1, opts = {}) {
+  const emissive = opts.emissive ?? color;
+  return new THREE.MeshStandardMaterial({
     color,
+    emissive,
+    emissiveIntensity: opts.emissiveIntensity ?? 0.22,
+    metalness: opts.metalness ?? 0.35,
+    roughness: opts.roughness ?? 0.58,
     transparent: opacity < 1,
     opacity,
     depthTest: false,
     depthWrite: false,
   });
+}
+
+function accentPart(mesh, w, h, d, color, x, y, z, ry = 0) {
+  setHeldPart(mesh, w, h, d, color);
+  placeHeldPart(mesh, x, y, z, 0, ry, 0);
 }
 
 function setHeldPart(mesh, w, h, d, color, opacity = 1) {
@@ -804,77 +814,158 @@ function hideFpParts(parts) {
 
 function layoutKatanaParts(parts, flashCol) {
   const { body, barrel, grip, acc1, acc2, acc3 } = parts;
-  const blade = flashCol ?? 0xf6f9ff;
-  const edge = flashCol ? 0xffe8b8 : 0xd8e4f8;
-  setHeldPart(body, 0.048, 0.09, 1.32, blade);
-  placeHeldPart(body, 0.02, 0.02, 0.72, 0.06, 0.04, 0);
-  setHeldPart(acc1, 0.012, 0.1, 1.28, edge);
-  placeHeldPart(acc1, 0.065, 0.025, 0.7, 0.06, 0.04, 0);
-  setHeldPart(barrel, 0.34, 0.05, 0.12, 0xffd966);
+  const blade = flashCol ?? 0xf8fbff;
+  const edge = flashCol ? 0xffe8b8 : 0xe2eeff;
+  setHeldPart(body, 0.052, 0.095, 1.34, blade, 1, { emissiveIntensity: 0.28 });
+  placeHeldPart(body, 0.02, 0.025, 0.74, 0.06, 0.04, 0);
+  setHeldPart(acc1, 0.014, 0.105, 1.3, edge, 1, { emissiveIntensity: 0.35 });
+  placeHeldPart(acc1, 0.068, 0.028, 0.72, 0.06, 0.04, 0);
+  setHeldPart(barrel, 0.36, 0.055, 0.13, 0xffd966, 1, { metalness: 0.55, emissiveIntensity: 0.4 });
   placeHeldPart(barrel, 0.02, 0.0, 0.14, 0, 0, 0);
-  setHeldPart(acc2, 0.1, 0.04, 0.08, 0xccb04a);
-  placeHeldPart(acc2, 0.02, -0.02, 0.06, 0, 0, 0);
-  setHeldPart(grip, 0.085, 0.085, 0.38, 0x1a2038);
+  accentPart(acc2, 0.11, 0.045, 0.09, 0xccb04a, 0.02, -0.02, 0.06);
+  setHeldPart(grip, 0.09, 0.09, 0.4, 0x141a2e, 1, { roughness: 0.82, metalness: 0.1 });
   placeHeldPart(grip, 0.02, -0.02, -0.2, 0.1, 0, 0);
-  setHeldPart(acc3, 0.11, 0.11, 0.11, 0x252a40);
-  placeHeldPart(acc3, 0.02, -0.03, -0.42, 0, 0, 0);
+  accentPart(acc3, 0.12, 0.12, 0.12, 0x2a3048, 0.02, -0.03, -0.42);
 }
 
 function layoutGunParts(parts, id, flashCol) {
   const { body, barrel, grip, acc1, acc2, acc3 } = parts;
   const col = flashCol ?? GUN_COLORS[id] ?? 0x888899;
   hideFpParts(parts);
+  const trim = 0x2a2a36;
+  const stud = 0x44445a;
   if (id === "smg") {
-    setHeldPart(body, 0.38, 0.14, 0.48, col);
+    setHeldPart(body, 0.4, 0.15, 0.5, col, 1, { emissiveIntensity: 0.3 });
     placeHeldPart(body, 0, 0, 0.04);
-    setHeldPart(barrel, 0.07, 0.07, 0.32, 0x2a2a38);
-    placeHeldPart(barrel, 0, 0.02, 0.38);
-    setHeldPart(grip, 0.1, 0.2, 0.12, 0x181822);
+    accentPart(acc2, 0.08, 0.04, 0.42, trim, 0, 0.09, 0.1);
+    setHeldPart(barrel, 0.075, 0.075, 0.34, 0x1e1e28, 1, { metalness: 0.65 });
+    placeHeldPart(barrel, 0, 0.02, 0.4);
+    accentPart(acc1, 0.06, 0.06, 0.06, stud, 0, 0.1, 0.52);
+    setHeldPart(grip, 0.11, 0.22, 0.13, 0x12121c, 1, { roughness: 0.85 });
     placeHeldPart(grip, 0, -0.12, -0.02);
-    setHeldPart(acc1, 0.1, 0.22, 0.14, 0x222230);
-    placeHeldPart(acc1, 0.06, -0.08, 0.02);
+    accentPart(acc3, 0.09, 0.05, 0.14, 0x334455, 0.07, -0.04, 0.08);
     return;
   }
   if (id === "shotgun") {
-    setHeldPart(body, 0.44, 0.16, 0.52, col);
+    setHeldPart(body, 0.46, 0.17, 0.54, col, 1, { emissiveIntensity: 0.28 });
     placeHeldPart(body, 0, 0, 0.02);
-    setHeldPart(barrel, 0.06, 0.06, 0.38, 0x252530);
-    placeHeldPart(barrel, -0.05, 0.03, 0.42);
-    setHeldPart(acc1, 0.06, 0.06, 0.38, 0x252530);
-    placeHeldPart(acc1, 0.05, 0.03, 0.42);
-    setHeldPart(grip, 0.12, 0.1, 0.22, 0x1a1a24);
+    setHeldPart(barrel, 0.065, 0.065, 0.4, 0x1a1a24, 1, { metalness: 0.7 });
+    placeHeldPart(barrel, -0.055, 0.03, 0.44);
+    setHeldPart(acc1, 0.065, 0.065, 0.4, 0x1a1a24, 1, { metalness: 0.7 });
+    placeHeldPart(acc1, 0.055, 0.03, 0.44);
+    accentPart(acc2, 0.16, 0.13, 0.4, 0x3a2e22, 0, -0.02, -0.24);
+    setHeldPart(grip, 0.13, 0.11, 0.24, 0x14141e, 1, { roughness: 0.8 });
     placeHeldPart(grip, 0, -0.1, -0.08);
-    setHeldPart(acc2, 0.14, 0.12, 0.38, 0x2a2218);
-    placeHeldPart(acc2, 0, -0.02, -0.22);
+    accentPart(acc3, 0.07, 0.07, 0.07, stud, -0.08, 0.1, 0.36);
     return;
   }
   if (id === "sniper") {
-    setHeldPart(body, 0.4, 0.14, 0.58, col);
+    setHeldPart(body, 0.42, 0.15, 0.6, col, 1, { emissiveIntensity: 0.26 });
     placeHeldPart(body, 0, 0, 0.04);
-    setHeldPart(barrel, 0.06, 0.06, 0.58, 0x1e1e2a);
-    placeHeldPart(barrel, 0, 0.03, 0.52);
-    setHeldPart(acc1, 0.08, 0.08, 0.22, 0x445566);
-    placeHeldPart(acc1, 0, 0.1, 0.18);
-    setHeldPart(grip, 0.1, 0.2, 0.13, 0x141420);
+    setHeldPart(barrel, 0.065, 0.065, 0.62, 0x181822, 1, { metalness: 0.72 });
+    placeHeldPart(barrel, 0, 0.03, 0.54);
+    setHeldPart(acc1, 0.1, 0.09, 0.24, 0x3a4a5a, 1, { metalness: 0.5 });
+    placeHeldPart(acc1, 0, 0.11, 0.2);
+    setHeldPart(grip, 0.11, 0.21, 0.14, 0x101018, 1, { roughness: 0.82 });
     placeHeldPart(grip, 0, -0.12, -0.04);
-    setHeldPart(acc2, 0.08, 0.05, 0.2, 0x333344);
-    placeHeldPart(acc2, 0, -0.14, 0.28);
+    accentPart(acc2, 0.09, 0.05, 0.22, trim, 0, -0.14, 0.3);
+    accentPart(acc3, 0.06, 0.06, 0.06, stud, 0.06, 0.12, 0.08);
     return;
   }
-  setHeldPart(body, 0.42, 0.15, 0.54, col);
+  setHeldPart(body, 0.44, 0.16, 0.56, col, 1, { emissiveIntensity: 0.28 });
   placeHeldPart(body, 0, 0, 0.04);
-  setHeldPart(barrel, 0.07, 0.07, 0.4, 0x2a2a38);
-  placeHeldPart(barrel, 0, 0.02, 0.42);
-  setHeldPart(grip, 0.1, 0.2, 0.12, 0x181822);
+  setHeldPart(barrel, 0.075, 0.075, 0.42, 0x1e1e28, 1, { metalness: 0.62 });
+  placeHeldPart(barrel, 0, 0.02, 0.44);
+  accentPart(acc2, 0.1, 0.05, 0.18, trim, 0, 0.1, 0.2);
+  setHeldPart(grip, 0.11, 0.21, 0.13, 0x12121c, 1, { roughness: 0.84 });
   placeHeldPart(grip, 0, -0.12, -0.02);
-  setHeldPart(acc1, 0.12, 0.08, 0.2, 0x333340);
-  placeHeldPart(acc1, 0.05, 0.08, 0.12);
+  accentPart(acc1, 0.12, 0.09, 0.22, 0x333348, 0.05, 0.09, 0.14);
+  accentPart(acc3, 0.06, 0.06, 0.06, stud, -0.06, 0.1, 0.34);
 }
 
 const RECOIL_STRENGTH = { smg: 0.055, rifle: 0.095, shotgun: 0.16, sniper: 0.2 };
 const RECOIL_DURATION = { smg: 0.1, rifle: 0.13, shotgun: 0.18, sniper: 0.22 };
 const KATANA_SWING_DURATION = 0.44;
 const SWING_AMP = 2.45;
+export const KATANA_PARRY_DURATION = 3;
+export const KATANA_PARRY_COOLDOWN = 3;
+
+export function tickKatanaParry(p, dt) {
+  if (!p) return;
+  if ((p._katanaParryT ?? 0) > 0) {
+    p._katanaParryT = Math.max(0, p._katanaParryT - dt);
+    if (p._katanaParryT <= 0) p._katanaParryCdT = KATANA_PARRY_COOLDOWN;
+  } else if ((p._katanaParryCdT ?? 0) > 0) {
+    p._katanaParryCdT = Math.max(0, p._katanaParryCdT - dt);
+  }
+}
+
+/** @returns {{ ok: boolean, reason?: string }} */
+export function tryKatanaParry(p) {
+  if (!p || p.weaponId !== "katana") return { ok: false, reason: "weapon" };
+  if ((p._katanaParryT ?? 0) > 0) return { ok: true, reason: "active" };
+  if ((p._katanaParryCdT ?? 0) > 0) return { ok: false, reason: "cd" };
+  p._katanaParryT = KATANA_PARRY_DURATION;
+  return { ok: true, reason: "start" };
+}
+
+export function isKatanaParryActive(p) {
+  return (p?._katanaParryT ?? 0) > 0;
+}
+
+/** @returns {{ mode: 'ready'|'active'|'cd', fill: number, label: string }} */
+export function getKatanaParryUi(p) {
+  const active = p?._katanaParryT ?? 0;
+  if (active > 0) {
+    return {
+      mode: "active",
+      fill: active / KATANA_PARRY_DURATION,
+      label: `格擋 ${active.toFixed(1)}s`,
+    };
+  }
+  const cd = p?._katanaParryCdT ?? 0;
+  if (cd > 0) {
+    return {
+      mode: "cd",
+      fill: 1 - cd / KATANA_PARRY_COOLDOWN,
+      label: `冷卻 ${cd.toFixed(1)}s`,
+    };
+  }
+  return { mode: "ready", fill: 1, label: "格擋就緒" };
+}
+
+/** 霰彈：近距集中高傷，遠距散開低傷 */
+export function computeShotgunMods(p, fireDir, players, isEnemyFn) {
+  if (p?.weaponId !== "shotgun") return { spreadMult: 1, dmgMult: 1, dist: Infinity };
+  const fx = fireDir?.x ?? Math.sin(p.yaw ?? 0);
+  const fz = fireDir?.z ?? Math.cos(p.yaw ?? 0);
+  const fLen = Math.hypot(fx, fz) || 1;
+  const nx = fx / fLen;
+  const nz = fz / fLen;
+  let bestD = Infinity;
+  for (const t of players || []) {
+    if (!t || t === p) continue;
+    if (isEnemyFn && !isEnemyFn(p, t)) continue;
+    if ((t.hp ?? 0) <= 0) continue;
+    const dx = t.pos.x - p.pos.x;
+    const dz = t.pos.z - p.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 26) continue;
+    const dot = (dx / (d || 1)) * nx + (dz / (d || 1)) * nz;
+    if (dot < 0.45) continue;
+    if (d < bestD) bestD = d;
+  }
+  const close = 3.2;
+  const far = 15;
+  const t = bestD < Infinity
+    ? Math.min(1, Math.max(0, (bestD - close) / (far - close)))
+    : 0.9;
+  return {
+    spreadMult: 0.32 + t * 1.75,
+    dmgMult: 1.12 - t * 0.74,
+    dist: bestD,
+  };
+}
 
 /** 揮刀：0 下劈、1 右掃、2 左掃（連按輪替） */
 export function startKatanaSwing(p) {
@@ -893,6 +984,7 @@ export function applyGunRecoil(p, weaponId) {
 
 export function tickFpWeaponMotion(p, dt) {
   if (!p) return;
+  tickKatanaParry(p, dt);
   if ((p._katanaSwingT ?? 0) > 0) p._katanaSwingT = Math.max(0, p._katanaSwingT - dt);
   if ((p._fpRecoilT ?? 0) > 0) p._fpRecoilT = Math.max(0, p._fpRecoilT - dt);
 }
@@ -954,8 +1046,12 @@ export function syncGunVisual(p) {
   p.gunMesh.visible = true;
   if (p.weaponId === "pad") {
     hideFpParts(parts);
-    setHeldPart(parts.body, 0.52, 0.14, 0.52, 0x33eeff, 0.52);
-    setHeldPart(parts.barrel, 0.2, 0.08, 0.2, 0x88ffee, 0.72);
+    setHeldPart(parts.body, 0.48, 0.12, 0.48, 0x33eeff, 0.55, { emissiveIntensity: 0.45 });
+    placeHeldPart(parts.body, 0, 0, 0.04);
+    setHeldPart(parts.barrel, 0.14, 0.06, 0.14, 0x66ffee, 0.8, { emissiveIntensity: 0.5 });
+    placeHeldPart(parts.barrel, 0, 0.08, 0);
+    accentPart(parts.grip, 0.08, 0.22, 0.08, 0x22aacc, 0, -0.06, -0.04);
+    accentPart(parts.acc1, 0.06, 0.04, 0.06, 0xaaffff, 0.1, 0.1, 0.12);
     p.gunMesh.position.set(0.36, 1.1, 0.38);
     p.gunMesh.rotation.set(0, 0.12, 0);
     p.gunMesh.scale.set(1.05, 1.05, 1.05);
@@ -1027,10 +1123,12 @@ function syncFpHeldBlockRig(rig, weaponId, flash = 0) {
   const flashCol = flash > 0.15 ? 0xffd7a2 : null;
   hideFpParts(parts);
   if (id === "pad") {
-    setHeldPart(parts.body, 0.52, 0.14, 0.52, flashCol ?? 0x33eeff, 0.55);
+    setHeldPart(parts.body, 0.5, 0.12, 0.5, flashCol ?? 0x33eeff, 0.55, { emissiveIntensity: 0.45 });
     placeHeldPart(parts.body, 0, 0, 0);
-    setHeldPart(parts.barrel, 0.2, 0.08, 0.2, flashCol ?? 0x88ffee, 0.75);
-    placeHeldPart(parts.barrel, 0, 0.06, 0);
+    setHeldPart(parts.barrel, 0.16, 0.07, 0.16, flashCol ?? 0x88ffee, 0.75, { emissiveIntensity: 0.5 });
+    placeHeldPart(parts.barrel, 0, 0.07, 0.02);
+    accentPart(parts.grip, 0.07, 0.2, 0.07, 0x22aacc, 0, -0.05, -0.06);
+    accentPart(parts.acc1, 0.05, 0.05, 0.05, 0xccffff, 0.12, 0.1, 0.1);
     return;
   }
   if (id === "katana") layoutKatanaParts(parts, flashCol);

@@ -117,6 +117,74 @@ export function spawnHitVfx(scene, x, z, opts = {}) {
   }
 }
 
+const MUZZLE_GEO = new THREE.PlaneGeometry(0.55, 0.55);
+const muzzleMatCache = new Map();
+
+function muzzleFlashMat(color) {
+  if (!muzzleMatCache.has(color)) {
+    muzzleMatCache.set(color, new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    }));
+  }
+  return muzzleMatCache.get(color);
+}
+
+/** 漆彈開火：槍口短暫光暈 + 漆霧粒子 */
+export function spawnPaintMuzzleFlash(scene, x, y, z, dir, color = 0xffaa66) {
+  if (!scene) return;
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  if (dir && (dir.x != null || dir.isVector3)) {
+    const v = dir.isVector3 ? dir : new THREE.Vector3(dir.x, dir.y ?? 0, dir.z);
+    if (v.lengthSq() > 1e-6) g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), v.clone().normalize());
+  }
+  const core = new THREE.Mesh(MUZZLE_GEO, muzzleFlashMat(0xfff4d8));
+  core.position.z = -0.08;
+  g.add(core);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.42, 10),
+    muzzleFlashMat(color)
+  );
+  ring.position.z = -0.12;
+  g.add(ring);
+  for (let i = 0; i < 5; i++) {
+    const blob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06 + Math.random() * 0.05, 5, 5),
+      muzzleFlashMat(color)
+    );
+    blob.position.set(
+      (Math.random() - 0.5) * 0.2,
+      (Math.random() - 0.5) * 0.16,
+      -0.15 - Math.random() * 0.25
+    );
+    g.add(blob);
+  }
+  scene.add(g);
+  pool.push({ mesh: g, life: 0.11, scale: 0.55, spin: 0, isMuzzle: true });
+}
+
+export function tickMuzzleFlashes(dt) {
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const v = pool[i];
+    if (!v.isMuzzle) continue;
+    v.life -= dt;
+    const u = Math.max(0, v.life / 0.11);
+    v.mesh.scale.setScalar(v.scale * (0.4 + (1 - u) * 1.8));
+    v.mesh.traverse((c) => {
+      if (c.material?.opacity != null) c.material.opacity = u * 0.92;
+    });
+    if (v.life <= 0) {
+      v.mesh.parent?.remove(v.mesh);
+      pool.splice(i, 1);
+    }
+  }
+}
+
 export function clearVfxPool() {
   for (let i = pool.length - 1; i >= 0; i--) {
     pool[i].mesh?.parent?.remove(pool[i].mesh);

@@ -652,27 +652,36 @@
       display: flex !important;
       pointer-events: auto;
       z-index: 95;
-      padding-top: max(72px, calc(64px + env(safe-area-inset-top, 0px)));
-      align-items: flex-start;
+      align-items: center;
+      justify-content: center;
+      padding: max(12px, env(safe-area-inset-top, 12px)) 10px 16px;
+    }
+    body.shooter-end-stats-only #shooterScoreboard {
+      padding-top: max(12px, env(safe-area-inset-top, 12px));
     }
     body.shooter-end-ui #shooterScoreboard .sb-panel {
       min-width: min(92vw, 520px);
-      max-height: min(58vh, 380px);
+      max-height: min(72vh, 480px);
       margin-top: 0;
-      transform: scale(0.92);
-      transform-origin: top center;
+      transform: none;
+      transform-origin: center center;
     }
-    body.shooter-end-ui #overlay {
+    body.shooter-end-stats-only #overlay {
+      display: none !important;
+    }
+    body.shooter-end-menu #shooterScoreboard {
+      display: none !important;
+    }
+    body.shooter-end-menu #overlay {
+      display: flex !important;
       z-index: 96;
-      pointer-events: none;
-      background: transparent;
-    }
-    body.shooter-end-ui #overlay #btnRetry {
       pointer-events: auto;
+      background: rgba(4, 6, 14, 0.88);
+      justify-content: center;
     }
-    body.shooter-end-ui #shooterScoreboardBackdrop {
+    body.shooter-end-stats-only #shooterScoreboardBackdrop {
       display: block !important;
-      background: rgba(2, 4, 10, 0.35);
+      background: rgba(2, 4, 10, 0.72);
     }
     #btnTouchScoreboard {
       display: none;
@@ -1578,6 +1587,18 @@
     .touch-btn.touch-jump[data-ico]::before { font-size: 1.35rem; color: #aaffcc; }
     .touch-btn.touch-attack[data-ico]::before { font-size: 1.5rem; color: #ffaa88; }
     .touch-btn.touch-scope[data-ico]::before { font-size: 1.2rem; color: #aaddff; }
+    .touch-btn.touch-scope.katana-parry[data-ico]::before { font-size: 1.15rem; color: #c8f0ff; }
+    .touch-btn.touch-scope.katana-parry.parry-active {
+      border-color: #66eeff !important;
+      box-shadow: 0 0 16px rgba(80, 220, 255, 0.55);
+      background: rgba(12, 40, 56, 0.92) !important;
+    }
+    .touch-btn.touch-slide[data-ico]::before {
+      font-size: 1.05rem;
+      display: inline-block;
+      transform: rotate(82deg) translate(1px, -2px);
+      color: #ffcc88;
+    }
     .touch-gun.active-gun {
       border-color: #ffcc44 !important;
       box-shadow: 0 0 10px rgba(255, 200, 60, 0.35);
@@ -1833,6 +1854,45 @@
     }
     #katanaReticle.show { display: block; }
     body.touch-ui #katanaReticle.show { display: block; opacity: 0.9; }
+    #katanaParryBar {
+      display: none;
+      position: fixed;
+      left: 50%;
+      bottom: max(108px, calc(96px + env(safe-area-inset-bottom, 0px)));
+      transform: translateX(-50%);
+      width: min(200px, 42vw);
+      z-index: 18;
+      pointer-events: none;
+    }
+    #katanaParryBar:not([hidden]) { display: block; }
+    #katanaParryTrack {
+      height: 8px;
+      border-radius: 6px;
+      background: rgba(8, 16, 28, 0.85);
+      border: 1px solid rgba(120, 200, 255, 0.35);
+      overflow: hidden;
+    }
+    #katanaParryFill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #44aaff, #88ffee);
+      transition: width 0.08s linear;
+    }
+    #katanaParryBar.parry-active #katanaParryFill {
+      background: linear-gradient(90deg, #66ffcc, #aaffff);
+      box-shadow: 0 0 10px #44ffcc;
+    }
+    #katanaParryBar.parry-cd #katanaParryFill {
+      background: linear-gradient(90deg, #553355, #886688);
+    }
+    #katanaParryLabel {
+      display: block;
+      text-align: center;
+      font-size: 0.68rem;
+      color: #a8d8ff;
+      margin-top: 3px;
+      text-shadow: 0 1px 4px #000;
+    }
     body.touch-ui #controls-hint { display: none !important; }
     body.touch-ui #designerCreditHud {
       bottom: 196px;
@@ -3000,13 +3060,13 @@
       <div class="touch-row touch-cluster-shooter" id="touchRowShooter" hidden aria-hidden="true"></div>
       <div class="touch-row touch-cluster-actions" id="touchRowMove">
         <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft" data-ico="⚡" title="衝刺" aria-label="衝刺"></button>
-        <button type="button" id="touchScope" class="touch-btn touch-scope" data-ico="◎" hidden title="開鏡" aria-label="開鏡"></button>
+        <button type="button" id="touchScope" class="touch-btn touch-scope" data-ico="◎" hidden title="開鏡／格擋" aria-label="開鏡"></button>
         <button type="button" id="touchAttack" class="touch-btn touch-attack" data-ico="●" aria-label="開火" title="開火">
           <span class="touch-skill-key">射</span>
           <span class="touch-skill-name">開火</span>
         </button>
         <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space" data-ico="↑" title="跳躍" aria-label="跳躍"></button>
-        <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft" data-ico="⇣" title="滑壘" aria-label="滑壘"></button>
+        <button type="button" id="touchSlide" class="touch-btn touch-sm touch-slide" data-code="ControlLeft" data-ico="人" title="滑壘" aria-label="滑壘"></button>
       </div>
     </div>
     <div id="touchShooterBar" hidden>
@@ -3014,7 +3074,7 @@
       <button type="button" id="touchGun2" class="touch-btn touch-gun active-gun" data-ico="╬" title="步槍" aria-label="步槍"></button>
       <button type="button" id="touchGun3" class="touch-btn touch-gun" data-ico="▦" title="霰彈槍" aria-label="霰彈槍"></button>
       <button type="button" id="touchGun4" class="touch-btn touch-gun" data-ico="◎" title="狙擊槍" aria-label="狙擊槍"></button>
-      <button type="button" id="touchGun5" class="touch-btn touch-gun" data-ico="⬆" title="彈跳板" aria-label="彈跳板"></button>
+      <button type="button" id="touchGun5" class="touch-btn touch-gun" data-ico="⌁" title="彈跳板" aria-label="彈跳板"></button>
       <button type="button" id="touchGun6" class="touch-btn touch-gun" data-ico="刀" title="武士刀" aria-label="武士刀"></button>
     </div>
   </div>
@@ -3121,6 +3181,10 @@
   <div id="shooterWeaponBar" hidden aria-label="武器欄"></div>
   <div id="crosshair" aria-hidden="true"><span class="ch-dot"></span></div>
   <div id="katanaReticle" aria-hidden="true" title="近戰距離參考（約 2.6m）"></div>
+  <div id="katanaParryBar" hidden aria-hidden="true">
+    <div id="katanaParryTrack"><div id="katanaParryFill"></div></div>
+    <span id="katanaParryLabel">格擋就緒</span>
+  </div>
   <div id="scopeOverlay" aria-hidden="true"></div>
   <div id="damageLayer"></div>
   <div id="killBanner" aria-hidden="true">KILL</div>

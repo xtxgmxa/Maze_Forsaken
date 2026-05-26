@@ -37,6 +37,7 @@ import {
   setupMoleRound, tickMoleAlerts, isMoleTeamkillViolation, scoreMoleKill, checkMoleRoundEnd,
   isShooterMoleMode, clearShooterDownedState, SHOOTER_TEAMS,
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
+  tryKatanaParry, isKatanaParryActive, getKatanaParryUi, computeShotgunMods,
 } from "./shooterMode.js";
 import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { updateShooterLadderClimb } from "./shooterPhysics.js";
@@ -135,6 +136,7 @@ import {
 import {
   playAbilityVfx, updateVfx, applyMeshAnim, applyLocomotionAnim,
   spawnHitVfx, clearVfxPool, spawnProjectileVfx, setVfxBudget,
+  spawnPaintMuzzleFlash, tickMuzzleFlashes,
 } from "./vfx.js";
 
 const WALK_SPEED = 10.5;
@@ -292,11 +294,64 @@ function syncKillerMesh(k) {
   k.mesh.rotation.y = k.yaw ?? Math.atan2(k.vel?.x || 0, k.vel?.z || 1);
 }
 
+let shooterEndPending = null;
+
+function revealShooterEndMenu() {
+  if (!shooterEndPending) return;
+  const { won, message, opts } = shooterEndPending;
+  document.body.classList.remove("shooter-end-stats-only");
+  document.body.classList.add("shooter-end-menu");
+  showShooterScoreboard(false);
+  overlay.classList.add("show", "shooter-end");
+  overlay.classList.toggle("win", won);
+  overlay.classList.toggle("lose", !won);
+  document.getElementById("overlayTitle").textContent = opts.shortTitle || (won ? "勝利" : "落敗");
+  document.getElementById("overlayText").textContent = opts.shortSub || message || "";
+}
+
+function syncTouchShooterSecondaryBtn() {
+  const scope = document.getElementById("touchScope");
+  if (!scope) return;
+  const human = getHumanSurvivor();
+  const id = getShooterWeapon(human?.weaponId)?.id;
+  if (id === "katana") {
+    scope.dataset.ico = "⛨";
+    scope.title = "格擋（反彈子彈 3 秒）";
+    scope.setAttribute("aria-label", "格擋");
+    scope.classList.toggle("katana-parry", true);
+    scope.classList.toggle("parry-active", isKatanaParryActive(human));
+  } else {
+    scope.dataset.ico = "◎";
+    scope.title = "開鏡";
+    scope.setAttribute("aria-label", "開鏡");
+    scope.classList.remove("katana-parry", "parry-active");
+  }
+}
+
+function updateKatanaParryHud() {
+  const bar = document.getElementById("katanaParryBar");
+  const fill = document.getElementById("katanaParryFill");
+  const lbl = document.getElementById("katanaParryLabel");
+  if (!bar || !fill) return;
+  const human = getHumanSurvivor();
+  const show = isShooterMode() && gameState === "play" && human?.weaponId === "katana" && !isSpectating();
+  bar.hidden = !show;
+  if (!show) return;
+  const ui = getKatanaParryUi(human);
+  fill.style.width = `${Math.round(ui.fill * 100)}%`;
+  bar.classList.toggle("parry-active", ui.mode === "active");
+  bar.classList.toggle("parry-cd", ui.mode === "cd");
+  bar.classList.toggle("parry-ready", ui.mode === "ready");
+  if (lbl) lbl.textContent = ui.label;
+  syncTouchShooterSecondaryBtn();
+}
+
 function updateCrosshair() {
   const ch = document.getElementById("crosshair");
   const scopeOv = document.getElementById("scopeOverlay");
   const katanaRet = document.getElementById("katanaReticle");
   if (!ch) return;
+  updateKatanaParryHud();
   if (isSpectating()) {
     ch.classList.remove("show", "sniper", "sniper-scope");
     if (scopeOv) scopeOv.classList.remove("show");
@@ -325,7 +380,7 @@ function updateCrosshair() {
   if (katanaRet) katanaRet.classList.toggle("show", hideCrosshair);
 }
 
-const WEAPON_BAR_ICONS = { smg: "▮", rifle: "╬", shotgun: "▦", sniper: "◎", pad: "⬆", katana: "刀" };
+const WEAPON_BAR_ICONS = { smg: "▮", rifle: "╬", shotgun: "▦", sniper: "◎", pad: "⌁", katana: "刀" };
 
 function initShooterWeaponBar() {
   const bar = document.getElementById("shooterWeaponBar");
@@ -799,6 +854,10 @@ function initMenu() {
     else if (nearMissionStation) openMathQuiz(nearMissionStation);
   });
   bindShooterScoreboardUi((force) => {
+    if (gameState === "end" && document.body.classList.contains("shooter-end-stats-only")) {
+      revealShooterEndMenu();
+      return;
+    }
     if (!isShooterMode()) return;
     if (force === false) showShooterScoreboard(false);
     else showShooterScoreboard(!shooterScoreboardOpen);
@@ -1208,9 +1267,12 @@ function returnToMenu() {
   document.getElementById("shooterSplitGrid")?.style && (document.getElementById("shooterSplitGrid").style.display = "none");
   document.getElementById("hudEscHint")?.classList.remove("show");
   document.body.classList.remove(
-    "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui", "scoreboard-open",
+    "keyhunt-play", "keyhunt-has-keys", "spectating", "shooter-play", "shooter-end-ui",
+    "shooter-end-stats-only", "shooter-end-menu", "scoreboard-open",
     "split-2p", "split-2p-v", "split-4p"
   );
+  shooterEndPending = null;
+  overlay?.classList.remove("shooter-end");
   refreshMenuForMode();
   syncGameCanvasVisibility();
 }
@@ -1392,6 +1454,8 @@ function initRenderer() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
     if (!renderer.domElement.parentElement) {
       document.body.appendChild(renderer.domElement);
     }
@@ -1434,25 +1498,30 @@ function ensureGraphics() {
 
 function setupLights() {
   if (!scene) return;
-  scene.add(new THREE.AmbientLight(0xd4dcff, 1.28));
-  const hemi = new THREE.HemisphereLight(0xc8e8ff, 0x4e6078, 0.92);
+  scene.add(new THREE.AmbientLight(0xb8c4e8, 0.72));
+  const hemi = new THREE.HemisphereLight(0xb8dcff, 0x3a4558, 0.58);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xfff8ee, 1.05);
-  dir.position.set(18, 42, 14);
+  const dir = new THREE.DirectionalLight(0xfff6e8, 1.35);
+  dir.position.set(22, 48, 16);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
+  dir.shadow.mapSize.set(1536, 1536);
   dir.shadow.camera.near = 2;
-  dir.shadow.camera.far = 90;
-  const sh = 38;
+  dir.shadow.camera.far = 95;
+  const sh = 42;
   dir.shadow.camera.left = -sh;
   dir.shadow.camera.right = sh;
   dir.shadow.camera.top = sh;
   dir.shadow.camera.bottom = -sh;
-  dir.shadow.bias = -0.0008;
+  dir.shadow.bias = -0.0006;
+  dir.shadow.normalBias = 0.02;
   dir.target.position.set(0, 0, 0);
   scene.add(dir);
   scene.add(dir.target);
   scene.userData.shadowLight = dir;
+  const fill = new THREE.DirectionalLight(0x88aaff, 0.28);
+  fill.position.set(-14, 18, -20);
+  scene.add(fill);
+  scene.userData.fillLight = fill;
 }
 
 function clearScene() {
@@ -2674,10 +2743,18 @@ function tryShooterFire(p) {
     p.mesh,
     survivors
   );
-  for (const pr of fireShooterWeapon(p, aimYaw, aimDir)) {
+  const style = shooterState?.playStyle ?? shooterPlayStyle;
+  const shotgunMods = p.weaponId === "shotgun"
+    ? computeShotgunMods(p, aimDir, survivors, (owner, tgt) => isShooterEnemy(owner, tgt, style, shooterState))
+    : null;
+  const muzzleX = p.pos.x + aimDir.x * 0.85;
+  const muzzleY = eyeY + aimDir.y * 0.85;
+  const muzzleZ = p.pos.z + aimDir.z * 0.85;
+  for (const pr of fireShooterWeapon(p, aimYaw, aimDir, { shotgunMods })) {
     pr.color = p.paintColor ?? pr.color;
     projectiles.push(pr);
   }
+  spawnPaintMuzzleFlash(scene, muzzleX, muzzleY, muzzleZ, aimDir, p.paintColor ?? p._shooterColor ?? 0xff8844);
   playShooterSfx("fire", playSfx, 0.03);
   muzzleFlash(p);
   if (!p.isAI && cam) syncHeldWeaponOnCamera(p, cam, scene);
@@ -3758,17 +3835,15 @@ function endGame(won, message, opts = {}) {
   document.exitPointerLock?.();
 
   if (opts.shooter) {
-    document.body.classList.add("shooter-end-ui");
-    overlay.classList.add("show", "shooter-end");
-    overlay.classList.toggle("win", won);
-    overlay.classList.toggle("lose", !won);
+    shooterEndPending = { won, message, opts };
+    document.body.classList.add("shooter-end-ui", "shooter-end-stats-only");
+    document.body.classList.remove("shooter-end-menu");
+    overlay.classList.remove("show", "win", "lose", "shooter-end");
     clickPrompt.classList.remove("show");
-    const title = opts.shortTitle || (won ? "勝利" : "落敗");
-    const sub = opts.shortSub || message || "";
-    document.getElementById("overlayTitle").textContent = title;
-    document.getElementById("overlayText").textContent = sub;
     renderShooterScoreboard(survivors, getHumanSurvivor(), opts.playStyle ?? shooterPlayStyle);
     showShooterScoreboard(true);
+    const closeHint = document.querySelector("#shooterScoreboard .sb-hint");
+    if (closeHint) closeHint.textContent = "點「關閉」查看勝負與返回選單";
     const audio = getAudioSettings();
     playShooterResultMusic(won, audio.music ?? 0.28);
     return;
@@ -3901,6 +3976,17 @@ function setupInput() {
       e.preventDefault();
       const human = getHumanSurvivor();
       const id = getShooterWeapon(human?.weaponId)?.id;
+      if (human && id === "katana") {
+        const res = tryKatanaParry(human);
+        if (res.ok && res.reason === "start") {
+          playShooterSfx("hitWall", playSfx, 0.08);
+          showToast("格擋 3 秒 · 可反彈子彈", 900);
+        } else if (!res.ok && res.reason === "cd") {
+          showToast("格擋冷卻中", 600);
+        }
+        updateCrosshair();
+        return;
+      }
       if (human && id !== "pad" && id !== "katana") {
         shooterAds = true;
         document.body.classList.add("shooter-ads");
@@ -4753,6 +4839,41 @@ function syncProjectileMeshes() {
   });
 }
 
+function tryDeflectProjectile(pr, i) {
+  if (!pr.fromShooter) return false;
+  for (const s of survivors) {
+    if ((s._katanaParryT ?? 0) <= 0) continue;
+    if (s === pr.owner) continue;
+    if (isShooterPlayerDown(s) || (s.hp ?? 0) <= 0) continue;
+    const dx = pr.x - s.pos.x;
+    const dz = pr.z - s.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 1.75) continue;
+    const fy = Math.sin(s.yaw ?? 0);
+    const fz = Math.cos(s.yaw ?? 0);
+    const fn = Math.hypot(fy, fz) || 1;
+    const facing = (dx / (d || 1)) * (fy / fn) + (dz / (d || 1)) * (fz / fn);
+    if (facing < 0.2) continue;
+    projectiles.splice(i, 1);
+    spawnHitVfx(scene, s.pos.x, s.pos.z, { color: 0xaaddff, scale: 0.65, lite: true });
+    playShooterSfx("hitWall", playSfx, 0.05);
+    const spd = Math.hypot(pr.vx, pr.vz) || 20;
+    const ref = {
+      ...pr,
+      vx: -pr.vx * 0.85,
+      vz: -pr.vz * 0.85,
+      vy: pr.vy != null ? Math.abs(pr.vy) * 0.35 + 2 : pr.vy,
+      owner: s,
+      life: Math.min(pr.life ?? 1, 1.1),
+      fromShooter: true,
+      _deflected: true,
+    };
+    projectiles.push(ref);
+    return true;
+  }
+  return false;
+}
+
 function updateProjectiles(dt) {
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const pr = projectiles[i];
@@ -4763,6 +4884,8 @@ function updateProjectiles(dt) {
     const nx = pr.x + pr.vx * dt;
     const nz = pr.z + pr.vz * dt;
     const ny = pr.vy != null ? (pr.y ?? 1.2) + pr.vy * dt : pr.y;
+
+    if (tryDeflectProjectile(pr, i)) continue;
 
     let hit = pr.life <= 0;
     let hitType = "wall";
@@ -4973,6 +5096,13 @@ function updateCamera() {
   const { yaw, pitch } = getPlayerCamAngles(focus);
   updateCameraForPlayer(camera, focus, yaw, pitch);
   syncLocalFpHeldWeapons();
+  const sl = scene?.userData?.shadowLight;
+  if (sl && focus.pos) {
+    const y = worldHeight(focus);
+    sl.position.set(focus.pos.x + 20, y + 44, focus.pos.z + 14);
+    sl.target.position.set(focus.pos.x, y + 1.2, focus.pos.z);
+    sl.target.updateMatrixWorld();
+  }
 }
 
 function renderShooterSplitView(W, H) {
@@ -5733,10 +5863,22 @@ function loopFrame(now) {
             bot.pos.x + dir.x * 0.85, eyeY + dir.y * 0.85, bot.pos.z + dir.z * 0.85,
             dir.x, dir.y, dir.z, bot.paintColor ?? bot._shooterColor, bot.mesh, survivors
           );
-          for (const pr of fireShooterWeapon(bot, yaw, dir)) {
+          const bStyle = shooterState?.playStyle ?? shooterPlayStyle;
+          const bMods = bot.weaponId === "shotgun"
+            ? computeShotgunMods(bot, dir, survivors, (o, t) => isShooterEnemy(o, t, bStyle, shooterState))
+            : null;
+          for (const pr of fireShooterWeapon(bot, yaw, dir, { shotgunMods: bMods })) {
             pr.color = bot.paintColor ?? pr.color;
             projectiles.push(pr);
           }
+          spawnPaintMuzzleFlash(
+            scene,
+            bot.pos.x + dir.x * 0.85,
+            eyeY + dir.y * 0.85,
+            bot.pos.z + dir.z * 0.85,
+            dir,
+            bot.paintColor ?? bot._shooterColor ?? 0xff8844
+          );
           muzzleFlash(bot);
           if (Math.random() < 0.35) playSfx("shoot", 0.06);
         },
@@ -5753,6 +5895,7 @@ function loopFrame(now) {
     syncProjectileMeshes();
     updateMinions(dt);
     updateVfx(dt);
+    tickMuzzleFlashes(dt);
     if (isShooterMode()) {
       updateShooterFov();
       const sh = scene?.userData?.shadowLight;
@@ -6003,7 +6146,16 @@ function boot() {
         if (gameState !== "play" || !isShooterMode()) return;
         const h = getHumanSurvivor();
         const id = getShooterWeapon(h?.weaponId)?.id;
-        if (!h || id === "pad" || id === "katana") return;
+        if (!h || id === "pad") return;
+        if (id === "katana") {
+          const res = tryKatanaParry(h);
+          if (res.ok && res.reason === "start") {
+            playShooterSfx("hitWall", playSfx, 0.08);
+            showToast("格擋 3 秒", 800);
+          } else if (!res.ok && res.reason === "cd") showToast("格擋冷卻中", 600);
+          updateCrosshair();
+          return;
+        }
         shooterAds = !shooterAds;
         document.body.classList.toggle("shooter-ads", shooterAds);
         updateShooterFov();
