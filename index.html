@@ -1553,8 +1553,9 @@
       font-weight: bold; color: #aaddff;
     }
     body.touch-ui.shooter-play #touchShooterBar {
-      gap: 4px;
+      gap: 3px;
       padding: 2px 6px;
+      max-width: min(72vw, 260px);
       bottom: max(6px, calc(4px + env(safe-area-inset-bottom, 0px)));
     }
     body.touch-ui.shooter-play .touch-gun {
@@ -1572,6 +1573,9 @@
       width: 36px;
       height: 36px;
       font-size: 0.8rem;
+    }
+    body.touch-ui.tablet-touch.shooter-play #touchShooterBar {
+      max-width: min(52vw, 360px);
     }
     body.touch-ui.shooter-play #scopeOverlay::after {
       width: min(46vmin, 240px);
@@ -2886,14 +2890,14 @@
       </div>
       <div class="touch-row touch-cluster-shooter" id="touchRowShooter" hidden aria-hidden="true"></div>
       <div class="touch-row touch-cluster-actions" id="touchRowMove">
-        <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft">滑壘</button>
+        <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft">衝刺</button>
+        <button type="button" id="touchScope" class="touch-btn touch-scope" hidden>鏡</button>
         <button type="button" id="touchAttack" class="touch-btn touch-attack" aria-label="開火">
           <span class="touch-skill-key">射</span>
           <span class="touch-skill-name">開火</span>
         </button>
         <button type="button" id="touchJump" class="touch-btn touch-jump primary" data-code="Space">跳</button>
-        <button type="button" id="touchScope" class="touch-btn touch-scope" hidden>鏡</button>
-        <button type="button" id="touchSprint" class="touch-btn touch-sm" data-code="ShiftLeft">衝刺</button>
+        <button type="button" id="touchSlide" class="touch-btn touch-sm" data-code="ControlLeft">滑壘</button>
       </div>
     </div>
     <div id="touchShooterBar" hidden>
@@ -2902,6 +2906,7 @@
       <button type="button" id="touchGun3" class="touch-btn touch-gun">3</button>
       <button type="button" id="touchGun4" class="touch-btn touch-gun">4</button>
       <button type="button" id="touchGun5" class="touch-btn touch-gun" title="放置彈跳板">5</button>
+      <button type="button" id="touchGun6" class="touch-btn touch-gun" title="武士刀">6</button>
     </div>
   </div>
 

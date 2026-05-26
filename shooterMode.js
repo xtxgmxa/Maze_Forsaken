@@ -491,6 +491,7 @@ export const SHOOTER_WEAPONS = [
   { id: "shotgun", name: "霰彈槍", slot: 3, damage: 7, fireCd: 0.58, spread: 0.2, speed: 26, color: 0xff8844, pellets: 6 },
   { id: "sniper", name: "狙擊槍", slot: 4, damage: 42, fireCd: 1.15, spread: 0.0005, speed: 58, color: 0xff66cc, pellets: 1, headshotKill: true },
   { id: "pad", name: "彈跳板", slot: 5, damage: 0, fireCd: 0.55, spread: 0, speed: 0, color: 0x33eeff, pellets: 0, placePad: true },
+  { id: "katana", name: "武士刀", slot: 6, damage: 36, fireCd: 0.46, spread: 0, speed: 0, color: 0xcfd8e8, pellets: 0, melee: true, meleeRange: 2.6 },
 ];
 
 export function getShooterWeapon(id) {
@@ -525,7 +526,7 @@ export function applyShooterLoadout(p, weaponId = "rifle") {
   p.weaponId = w.id;
   p.maxHp = 140;
   p.hp = 140;
-  p._shooterSpeedMult = w.id === "sniper" ? 0.9 : w.id === "shotgun" ? 0.94 : w.id === "pad" ? 0.98 : 1;
+  p._shooterSpeedMult = w.id === "sniper" ? 0.9 : w.id === "shotgun" ? 0.94 : w.id === "pad" ? 0.98 : w.id === "katana" ? 1.06 : 1;
   p._shooterColor = p.paintColor ?? w.color;
   p._shooterFireCd = w.fireCd;
   p._shooterDamage = w.damage;
@@ -716,6 +717,7 @@ export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) 
 }
 
 export function fireShooterWeapon(p, yaw, fireDir = null) {
+  if (p?.weaponId === "katana") return [];
   const n = p._shooterPellets ?? 1;
   const list = [];
   for (let i = 0; i < n; i++) {
@@ -725,7 +727,7 @@ export function fireShooterWeapon(p, yaw, fireDir = null) {
   return list;
 }
 
-const GUN_COLORS = { smg: 0x44ddff, rifle: 0xffcc44, shotgun: 0xff8844, sniper: 0xff66cc };
+const GUN_COLORS = { smg: 0x44ddff, rifle: 0xffcc44, shotgun: 0xff8844, sniper: 0xff66cc, katana: 0xcfd8e8 };
 
 export function attachShooterGun(p) {
   if (!p?.mesh || p.gunMesh) return;
@@ -758,6 +760,24 @@ export function syncGunVisual(p) {
   if (!p?.gunMesh) return;
   if (p.weaponId === "pad") {
     p.gunMesh.visible = false;
+    return;
+  }
+  if (p.weaponId === "katana") {
+    p.gunMesh.visible = true;
+    const body = p.gunMesh.children[0];
+    const barrel = p.gunMesh.children[1];
+    const grip = p.gunMesh.children[2];
+    if (body?.geometry) body.geometry = new THREE.BoxGeometry(0.06, 0.1, 0.95);
+    if (barrel?.geometry) barrel.geometry = new THREE.BoxGeometry(0.03, 0.08, 0.55);
+    if (grip?.geometry) grip.geometry = new THREE.BoxGeometry(0.11, 0.18, 0.18);
+    p.gunMesh.position.set(0.34, 1.08, 0.36);
+    p.gunMesh.rotation.set(0.05, 0.55, 0.1);
+    const bodyMat = body?.material;
+    const barrelMat = barrel?.material;
+    const gripMat = grip?.material;
+    if (bodyMat?.color) bodyMat.color.setHex(0xdde6f8);
+    if (barrelMat?.color) barrelMat.color.setHex(0x9fb2d1);
+    if (gripMat?.color) gripMat.color.setHex(0x1f2533);
     return;
   }
   p.gunMesh.visible = true;
@@ -854,14 +874,18 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
       c.material.color.setHex(flash > 0.2 ? 0xffaa44 : col);
     }
   });
-  const sx = id === "shotgun" ? 1.28 : id === "smg" ? 0.9 : id === "sniper" ? 1.05 : 1;
+  const sx = id === "shotgun" ? 1.28 : id === "smg" ? 0.9 : id === "sniper" ? 1.05 : id === "katana" ? 0.56 : 1;
   if (gunBody) {
-    gunBody.scale.set(sx, 1, id === "shotgun" ? 1.1 : id === "sniper" ? 1.4 : 1);
+    gunBody.scale.set(sx, id === "katana" ? 0.9 : 1, id === "shotgun" ? 1.1 : id === "sniper" ? 1.4 : id === "katana" ? 2.25 : 1);
   }
   if (id === "sniper") {
     fpGunMesh.position.set(0.32, -0.26, -0.44);
+  } else if (id === "katana") {
+    fpGunMesh.position.set(0.48, -0.34, -0.28);
+    fpGunMesh.rotation.set(0.16, 0.22, -0.08);
   } else {
     fpGunMesh.position.set(0.38, -0.28, -0.48);
+    fpGunMesh.rotation.set(0.03, 0.05, 0);
   }
 }
 
@@ -1167,7 +1191,7 @@ export function getShooterKillAnnounce(killer, victim, human) {
   return `${shooterPlayerLabel(killer)} 擊倒 ${vName}`;
 }
 
-const BOT_VISION = { smg: 20, rifle: 26, shotgun: 14, sniper: 30 };
+const BOT_VISION = { smg: 20, rifle: 26, shotgun: 14, sniper: 30, katana: 8 };
 
 function botEyeY(bot) {
   return 1.52 + (bot._jumpY ?? 0) + (bot.elev ?? 0);
@@ -1314,7 +1338,7 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     }
 
     const wId = getShooterWeapon(bot.weaponId).id;
-    const ideal = { smg: 12, rifle: 18, shotgun: 8, sniper: 26 }[wId] ?? 15;
+    const ideal = { smg: 12, rifle: 18, shotgun: 8, sniper: 26, katana: 3.1 }[wId] ?? 15;
     const minR = ideal * 0.55;
     const maxR = ideal * 1.22;
     const bd = Math.hypot(target.pos.x - bot.pos.x, target.pos.z - bot.pos.z);
@@ -1388,14 +1412,33 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
     } else if (inCombat) {
       smoothBotYaw(bot, yawTo, dt, 4.5);
     }
+    const preX = bot.pos.x;
+    const preZ = bot.pos.z;
     api.moveEntity(bot, dt, { x: mx, z: mz, sprint });
+    const moved = Math.hypot(bot.pos.x - preX, bot.pos.z - preZ);
+    if (Math.hypot(mx, mz) > 0.2 && moved < 0.05) {
+      bot._shooterStuckT = (bot._shooterStuckT ?? 0) + dt * 1.3;
+      if ((bot._shooterStuckT ?? 0) > 1.4) {
+        const escapeYaw = (bot.yaw ?? 0) + (Math.random() > 0.5 ? 1 : -1) * (Math.PI * 0.5);
+        api.moveEntity(bot, dt, {
+          x: Math.sin(escapeYaw) * 1.05,
+          z: Math.cos(escapeYaw) * 1.05,
+          sprint: true,
+        });
+        if ((bot.onGround || (bot._jumpY ?? 0) <= 0.08) && Math.random() < 0.75) {
+          bot.velY = 14.5;
+          bot.onGround = false;
+        }
+        bot._shooterHuntRefresh = 0;
+      }
+    }
 
     const visionMax = BOT_VISION[wId] ?? 22;
     const inRange = bd >= minR * 0.65 && bd <= Math.min(maxR * 1.15, visionMax);
     const hasLos = botCanSeeTarget(bot, target, ctx, maze, state);
     const wantShoot = inRange && hasLos;
     const moleSnipe = bot.isMole && moleMode && state?.moleCanShoot && isSameShooterTeam(bot, target);
-    const fireDelay = moleSnipe ? 0.55 : wId === "sniper" ? 0.45 : 0.28;
+    const fireDelay = moleSnipe ? 0.55 : wId === "sniper" ? 0.45 : wId === "katana" ? 0.2 : 0.28;
     if (wantShoot && canShooterFire(bot, api.elapsed, state)) {
       const readyAt = bot._nextShotReady ?? 0;
       if (api.elapsed >= readyAt) {

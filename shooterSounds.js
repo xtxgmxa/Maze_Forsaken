@@ -16,6 +16,12 @@ const SAMPLE_PATHS = {
   pickupHeal: resolveAsset("assets/audio/sfx/paintball_pickup_heal.mp3"),
 };
 
+function normalizeAssetPath(path) {
+  if (!path || typeof path !== "string") return "";
+  if (/^(https?:)?\/\//i.test(path) || path.startsWith("data:")) return path;
+  return resolveAsset(path.replace(/^\.?\//, ""));
+}
+
 let config = { ...SAMPLE_PATHS };
 const buffers = {};
 let loadPromise = null;
@@ -37,6 +43,9 @@ export async function loadShooterSounds() {
       if (res.ok) {
         const data = await res.json();
         config = { ...SAMPLE_PATHS, ...data };
+        for (const [id, path] of Object.entries(config)) {
+          if (typeof path === "string") config[id] = normalizeAssetPath(path);
+        }
         delete config._comment;
       }
     } catch {

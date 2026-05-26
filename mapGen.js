@@ -3,7 +3,10 @@ export function getLevelMapSeed(level, gameMode = "solo") {
   const id = level?.id ?? 1;
   let salt = 0;
   for (let i = 0; i < gameMode.length; i++) salt = (salt * 31 + gameMode.charCodeAt(i)) >>> 0;
-  return ((id * 9973) ^ (salt * 17) ^ (level.mapSeed ?? 0)) >>> 0;
+  const layoutKey = level?.shooterLayout || level?.mapStyle || "";
+  let layoutSalt = 0;
+  for (let i = 0; i < layoutKey.length; i++) layoutSalt = (layoutSalt * 131 + layoutKey.charCodeAt(i)) >>> 0;
+  return ((id * 9973) ^ (salt * 17) ^ (layoutSalt * 13) ^ (level.mapSeed ?? 0)) >>> 0;
 }
 
 export function getMapStyle(level, gameMode) {

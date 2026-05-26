@@ -4,13 +4,14 @@
  */
 import { getAudioContext, getSfxBus, playSfx } from "./audio.js";
 import { fetchDecodeAudio } from "./audioLoad.js";
+import { resolveAsset } from "./assetUrls.js";
 
-const CONFIG_URL = "assets/audio/game-sounds.json";
+const CONFIG_URL = resolveAsset("assets/audio/game-sounds.json");
 const DEFAULT_PATHS = {
-  footstep: "assets/audio/sfx/footstep.mp3",
-  jump: "assets/audio/sfx/jump.mp3",
-  land: "assets/audio/sfx/land.mp3",
-  bouncePad: "assets/audio/sfx/bounce_pad.mp3",
+  footstep: resolveAsset("assets/audio/sfx/footstep.mp3"),
+  jump: resolveAsset("assets/audio/sfx/jump.mp3"),
+  land: resolveAsset("assets/audio/sfx/land.mp3"),
+  bouncePad: resolveAsset("assets/audio/sfx/bounce_pad.mp3"),
 };
 
 const FALLBACK = {
@@ -25,6 +26,12 @@ const buffers = {};
 let loadPromise = null;
 const lastPlay = {};
 
+function normalizeAssetPath(path) {
+  if (!path || typeof path !== "string") return "";
+  if (/^(https?:)?\/\//i.test(path) || path.startsWith("data:")) return path;
+  return resolveAsset(path.replace(/^\.?\//, ""));
+}
+
 export async function loadGameSounds() {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
@@ -33,6 +40,9 @@ export async function loadGameSounds() {
       if (res.ok) {
         const data = await res.json();
         config = { ...DEFAULT_PATHS, ...data };
+        for (const [id, path] of Object.entries(config)) {
+          if (typeof path === "string") config[id] = normalizeAssetPath(path);
+        }
         delete config._comment;
       }
     } catch {

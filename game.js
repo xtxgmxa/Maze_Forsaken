@@ -309,10 +309,13 @@ function updateCrosshair() {
   const shooterAim = isShooterMode() && gameState === "play" && !isShooterSplitView();
   ch.classList.toggle("show", killerAim || shooterAim);
   const human = getHumanSurvivor();
-  const sniper = shooterAim && getShooterWeapon(human?.weaponId)?.id === "sniper";
+  const wId = getShooterWeapon(human?.weaponId)?.id;
+  const sniper = shooterAim && wId === "sniper";
+  const hideCrosshair = shooterAim && wId === "katana";
+  ch.classList.toggle("show", (killerAim || shooterAim) && !hideCrosshair);
   ch.classList.toggle("sniper", sniper);
   ch.classList.toggle("sniper-scope", sniper && shooterAds);
-  if (scopeOv) scopeOv.classList.toggle("show", sniper && shooterAds);
+  if (scopeOv) scopeOv.classList.toggle("show", shooterAim && shooterAds);
 }
 
 // ─── Menu ───────────────────────────────────────────────────────────────────
@@ -1458,7 +1461,10 @@ function applyLookPitch(delta, sens = 0.0022) {
 function getShooterActiveFov() {
   const p = getHumanSurvivor();
   const w = getShooterWeapon(p?.weaponId);
-  if (w.id === "sniper" && shooterAds) return shooterSettings.scopeFov;
+  if (shooterAds) {
+    if (w.id === "sniper") return shooterSettings.scopeFov;
+    return Math.max(40, Math.min(68, Math.round(shooterSettings.fov * 0.52)));
+  }
   return shooterSettings.fov;
 }
 
@@ -2543,6 +2549,48 @@ function tryShooterFire(p) {
     }
     return;
   }
+  if (p.weaponId === "katana") {
+    const w = getShooterWeapon("katana");
+    const range = w.meleeRange ?? 2.6;
+    const style = shooterState?.playStyle ?? shooterPlayStyle;
+    const moleMode = isShooterMoleMode(shooterState);
+    const aimDir = getShooterAimDirForPlayer(p);
+    let best = null;
+    let bestD = Infinity;
+    for (const s of survivors) {
+      if (s === p || isShooterPlayerDown(s) || (s.hp ?? 0) <= 0) continue;
+      if (!moleMode && !isShooterEnemy(p, s, style, shooterState)) continue;
+      if (moleMode && (s._shooterDowned || s._awaitingRespawn)) continue;
+      const dx = s.pos.x - p.pos.x;
+      const dz = s.pos.z - p.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > range || d >= bestD) continue;
+      const dirX = dx / Math.max(0.0001, d);
+      const dirZ = dz / Math.max(0.0001, d);
+      const frontDot = dirX * aimDir.x + dirZ * aimDir.z;
+      if (frontDot < 0.2) continue;
+      const hitY = worldHeight(s) + 1.05;
+      if (shooterRayBlocked(ctx, maze, p.pos.x, p.pos.z, worldHeight(p) + 1.35, s.pos.x, hitY, s.pos.z, verticalWorldState)) continue;
+      best = s;
+      bestD = d;
+    }
+    p._shootCd = elapsed + (p._shooterFireCd ?? 0.46);
+    muzzleFlash(p);
+    if (best) {
+      const hitDir = p._lastFireDir && p._lastFireDir.lengthSq() > 0.001
+        ? p._lastFireDir.clone().normalize()
+        : new THREE.Vector3(Math.sin(p.yaw ?? 0), 0, Math.cos(p.yaw ?? 0));
+      const isHead = isShooterHeadshot(p, best, hitDir);
+      const dmg = isHead ? 40 : 30 + Math.floor(Math.random() * 9);
+      damageSurvivor(best, p, dmg, { shooter: true });
+      showHitMarker();
+      playShooterSfx("hitBody", playSfx, 0.03);
+      showToast(`武士刀命中 ${best.displayName || best.charDef?.name || "目標"} · -${dmg}`, 500, "hit");
+    } else {
+      playSfx("slash", 0.05);
+    }
+    return;
+  }
   const { yaw, pitch } = getPlayerCamAngles(p);
   const cam = getShooterCameraForPlayer(p);
   if (cam) updateCameraForPlayer(cam, p, yaw, pitch);
@@ -2575,7 +2623,7 @@ function tryShooterWeaponSwitch(slot) {
   if (!p || !isShooterMode()) return;
   const w = SHOOTER_WEAPONS.find((x) => x.slot === slot);
   if (!w || p.weaponId === w.id) return;
-  if (w.id !== "sniper") shooterAds = false;
+  if (w.id === "pad" || w.id === "katana") shooterAds = false;
   document.body.classList.toggle("shooter-ads", shooterAds);
   applyShooterLoadout(p, w.id);
   syncGunVisual(p);
@@ -2590,7 +2638,14 @@ function tryShooterWeaponSwitch(slot) {
   if (p._padPreview) p._padPreview.visible = w.id === "pad";
   if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
   playSfx("ui");
-  showToast(w.id === "pad" ? "彈跳板：左鍵放置 · 半透明預覽" : `裝備：${w.name}`, 500);
+  showToast(
+    w.id === "pad"
+      ? "彈跳板：左鍵放置 · 半透明預覽"
+      : w.id === "katana"
+        ? "武士刀：近距高傷 · 無準星"
+        : `裝備：${w.name}`,
+    600
+  );
 }
 
 function tryJump(p, profile, gp = null) {
@@ -3710,6 +3765,7 @@ function setupInput() {
       if (e.code === "Digit3" || e.code === "Numpad3") { tryShooterWeaponSwitch(3); return; }
       if (e.code === "Digit4" || e.code === "Numpad4") { tryShooterWeaponSwitch(4); return; }
       if (e.code === "Digit5" || e.code === "Numpad5") { tryShooterWeaponSwitch(5); return; }
+      if (e.code === "Digit6" || e.code === "Numpad6") { tryShooterWeaponSwitch(6); return; }
     }
     if (gameState !== "play") return;
     if (!isKeyHuntMode() && !isPlatformerMode() && !isShooterMode()) handleAbilityKeys(e.code, true);
@@ -3753,7 +3809,8 @@ function setupInput() {
     if (e.button === 2 && isShooterMode()) {
       e.preventDefault();
       const human = getHumanSurvivor();
-      if (human && getShooterWeapon(human.weaponId)?.id === "sniper") {
+      const id = getShooterWeapon(human?.weaponId)?.id;
+      if (human && id !== "pad" && id !== "katana") {
         shooterAds = true;
         document.body.classList.add("shooter-ads");
         updateShooterFov();
@@ -5804,12 +5861,13 @@ function boot() {
       onShooterScope: () => {
         if (gameState !== "play" || !isShooterMode()) return;
         const h = getHumanSurvivor();
-        if (!h || getShooterWeapon(h.weaponId)?.id !== "sniper") return;
+        const id = getShooterWeapon(h?.weaponId)?.id;
+        if (!h || id === "pad" || id === "katana") return;
         shooterAds = !shooterAds;
         document.body.classList.toggle("shooter-ads", shooterAds);
         updateShooterFov();
         updateCrosshair();
-        updateTouchGunHighlight(getShooterWeapon(h.weaponId)?.slot ?? 4);
+        updateTouchGunHighlight(getShooterWeapon(h.weaponId)?.slot ?? 2);
       },
       onShooterWeapon: (slot) => tryShooterWeaponSwitch(slot),
       onKillerAttack: () => {

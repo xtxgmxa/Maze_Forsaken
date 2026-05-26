@@ -208,7 +208,7 @@ function bindAttackButton(btn) {
 }
 
 function bindShooterTouchUi() {
-  for (let slot = 1; slot <= 5; slot++) {
+  for (let slot = 1; slot <= 6; slot++) {
     const btn = document.getElementById(`touchGun${slot}`);
     if (!btn) continue;
     const pick = (e) => {
@@ -233,7 +233,7 @@ function bindShooterTouchUi() {
 }
 
 export function updateTouchGunHighlight(activeSlot = 2) {
-  for (let slot = 1; slot <= 5; slot++) {
+  for (let slot = 1; slot <= 6; slot++) {
     const btn = document.getElementById(`touchGun${slot}`);
     if (btn) btn.classList.toggle("active-gun", slot === activeSlot);
   }
