@@ -1,7 +1,44 @@
-import { collides, moveWithCollision } from "./maze.js";
+import { collides, moveWithCollision, shooterLineBlocked } from "./maze.js";
 
 function insideAabb(px, pz, x, z, halfW, halfD) {
   return Math.abs(px - x) <= halfW && Math.abs(pz - z) <= halfD;
+}
+
+/** 射線高度落在掩體內側時視為被擋（不可穿箱打到人） */
+export function lineHitsShooterCover(px, pz, py, state) {
+  if (!state?.platforms?.length) return false;
+  for (const pl of state.platforms) {
+    if (pl.solidSides === false) continue;
+    const hw = pl.halfW ?? 1;
+    const hd = pl.halfD ?? 1;
+    if (!insideAabb(px, pz, pl.x, pl.z, hw, hd)) continue;
+    const top = pl.blockTop ?? pl.y ?? 1;
+    const base = pl.baseY ?? 0;
+    if (py >= top + 0.3) continue;
+    if (py < base - 0.35) continue;
+    return true;
+  }
+  return false;
+}
+
+/** 迷宮牆 + 槍戰掩體／平台 */
+export function shooterRayBlocked(ctx, maze, x0, z0, y0, x1, z1, y1, vState = null) {
+  if (shooterLineBlocked(ctx, maze, x0, z0, y0, x1, z1, y1)) return true;
+  if (!vState?.platforms?.length) return false;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const dy = y1 - y0;
+  const len3 = Math.hypot(dx, dz, dy);
+  if (len3 < 0.05) return false;
+  const steps = Math.max(10, Math.ceil(len3 / (ctx.cell * 0.15)));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const sx = x0 + dx * t;
+    const sz = z0 + dz * t;
+    const sy = y0 + dy * t;
+    if (lineHitsShooterCover(sx, sz, sy, vState)) return true;
+  }
+  return false;
 }
 
 /** 掩體／立柱：腳下高度低於台面時擋住水平移動（不可穿進長方體） */

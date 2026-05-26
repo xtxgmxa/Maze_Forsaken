@@ -118,8 +118,10 @@ import {
   generateMaze, generateMazeSeeded, createSeededRandom, createMazeContext, cellCenter, buildMazeMeshes, ensureMazeGrid,
   createExitMarker, moveWithCollision, collides, bfsNextStep, worldToCell, isCellReachable,
   addMazeLoops, applyMapStyle, createTeleporters, buildTeleporterMeshes,
-  spawnWorldItems, buildItemMeshes, shooterLineBlocked,
+  spawnWorldItems, buildItemMeshes,
 } from "./maze.js";
+import { shooterRayBlocked } from "./shooterCollision.js";
+import { resolveAsset } from "./assetUrls.js";
 import {
   createPlayerState, tickCooldowns, tryAbility,
   getSpeedMult, isInvisibleToKiller, hasShield, consumeShield,
@@ -266,7 +268,7 @@ let spectateIndex = 0;
 let musicEl;
 function initAudio() {
   loadAudioSettings();
-  musicEl = new Audio("assets/music.mp3");
+  musicEl = new Audio(resolveAsset("assets/music.mp3"));
   musicEl.loop = true;
   applyAudioSettings(musicEl);
 }
@@ -816,12 +818,6 @@ function initMenu() {
     });
   };
   bindPauseBtn(document.getElementById("btnHudPause"));
-  document.getElementById("btnPauseMobileSettings")?.addEventListener("click", () => {
-    document.getElementById("pausePanel")?.classList.remove("show");
-    if (gameState === "paused") gameState = "play";
-    openMobileSettingsPanel();
-  });
-
   refreshMenuForMode();
   updateMenuPreview();
   document.querySelectorAll(".menu-tab, #menuPrev, #menuNext").forEach((el) => {
@@ -1166,7 +1162,7 @@ function returnToMenu() {
 }
 
 function openSettings() {
-  initAudioEngine();
+  initAudioEngine().then(() => connectMusicElement(musicEl));
   document.getElementById("settingsPanel")?.classList.add("show");
   renderSettingsForm();
 }
@@ -1256,13 +1252,17 @@ function renderSettingsForm() {
     if (mvl && mv) mvl.textContent = `${mv.value}%`;
     if (svl && sv) svl.textContent = `${sv.value}%`;
   };
-  document.getElementById("setMusicVol")?.addEventListener("input", (e) => {
-    setAudioSettings({ music: Number(e.target.value) / 100 }, musicEl);
+  const applyVol = async (partial) => {
+    await initAudioEngine();
+    connectMusicElement(musicEl);
+    setAudioSettings(partial, musicEl);
     syncVolLabels();
+  };
+  document.getElementById("setMusicVol")?.addEventListener("input", (e) => {
+    applyVol({ music: Number(e.target.value) / 100 });
   });
   document.getElementById("setSfxVol")?.addEventListener("input", (e) => {
-    setAudioSettings({ sfx: Number(e.target.value) / 100 }, musicEl);
-    syncVolLabels();
+    applyVol({ sfx: Number(e.target.value) / 100 });
   });
 
   const sf = document.getElementById("setShooterFov");
@@ -1621,7 +1621,7 @@ function syncShooterPlayerVisibility() {
     const alive = (s.hp ?? 0) > 0 && !s._awaitingRespawn;
     if (s._shooterDowned) {
       const hideAt = s._shooterBodyHideAt;
-      s.mesh.visible = alive && (hideAt == null || elapsed < hideAt);
+      s.mesh.visible = hideAt == null || elapsed < hideAt;
       continue;
     }
     if (!alive) {
@@ -1893,7 +1893,7 @@ function eliminateShooterForTeamkill(p, reason) {
   p._shooterDowned = true;
   p._shooterDownedAt = elapsed;
   p._shooterDownedYaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
-  p._shooterBodyHideAt = elapsed + 5.5;
+  p._shooterBodyHideAt = p.isAI ? elapsed + 5.5 : null;
   p._awaitingRespawn = false;
   p.vel = { x: 0, z: 0 };
   p.velY = 0;
@@ -3068,6 +3068,7 @@ async function runStartGame() {
       bouncePads,
       isShooter: true,
     };
+    if (shooterState) shooterState.coverState = verticalWorldState;
   } else {
     shooterArenaGroup = null;
     verticalWorldState = buildVerticalWorld(ctx, maze, scene, {
@@ -4605,7 +4606,7 @@ function updateProjectiles(dt) {
     let hit = pr.life <= 0;
     let hitType = "wall";
     if (!hit && pr.fromShooter && ctx && maze
-      && shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, nx, ny ?? prevY, nz)) {
+      && shooterRayBlocked(ctx, maze, prevX, prevZ, prevY, nx, ny ?? prevY, nz, verticalWorldState)) {
       hit = true;
       hitType = "wall";
     }
@@ -4638,7 +4639,7 @@ function updateProjectiles(dt) {
         if (moleMode && !isShooterCombatActive(s)) continue;
         if (Math.hypot(s.pos.x - pr.x, s.pos.z - pr.z) < 1.35) {
           const hitY = worldHeight(s) + 1.05;
-          if (shooterLineBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z)) continue;
+          if (shooterRayBlocked(ctx, maze, prevX, prevZ, prevY, s.pos.x, hitY, s.pos.z, verticalWorldState)) continue;
           projectiles.splice(i, 1);
           let dmg = pr.damage || 22;
           let headshot = false;
@@ -5787,6 +5788,7 @@ function boot() {
       },
       isKeyHunt: isKeyHuntMode,
       isShooterMode,
+      openSettings: () => openSettings(),
       isHumanKiller: isHumanKillerControl,
       getTouchProfile: getTouchBindingProfile,
       getShooterWeaponSlot: () => {

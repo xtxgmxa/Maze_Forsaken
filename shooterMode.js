@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { cellCenter, bfsNextStep, shooterLineBlocked } from "./maze.js";
+import { cellCenter, bfsNextStep } from "./maze.js";
+import { shooterRayBlocked } from "./shooterCollision.js";
 import { lambertStud } from "./mapTextures.js";
 import { PAINT_PALETTE } from "./paintballSplats.js";
 import { addRivalsBouncePad } from "./verticalWorld.js";
@@ -650,7 +651,7 @@ export function tickShooterDownedPose(p, elapsed, worldHeightFn) {
   p.mesh.position.y = wh - layT * 0.42;
   p.mesh.rotation.y = p._shooterDownedYaw ?? p.yaw ?? p.mesh.rotation.y;
   p.mesh.visible = true;
-  if (p._shooterBodyHideAt != null && elapsed >= p._shooterBodyHideAt) {
+  if (!p._awaitingRespawn && p._shooterBodyHideAt != null && elapsed >= p._shooterBodyHideAt) {
     p.mesh.visible = false;
   }
 }
@@ -663,8 +664,8 @@ export function clearShooterDownedState(p) {
   p._autoRespawnAt = 0;
   p._shooterBodyHideAt = null;
   if (p.mesh) {
-    p.mesh.rotation.x = 0;
     p.mesh.visible = true;
+    resetShooterCharacterPose(p);
   }
 }
 
@@ -1176,15 +1177,16 @@ function botTargetHeadY(target) {
   return 1.05 + (target._jumpY ?? 0) + (target.elev ?? 0);
 }
 
-function botCanSeeTarget(bot, other, ctx, maze) {
+function botCanSeeTarget(bot, other, ctx, maze, state) {
   const bd = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
   const wId = getShooterWeapon(bot.weaponId).id;
   const maxD = BOT_VISION[wId] ?? 22;
   if (bd > maxD || bd < 0.6) return false;
-  return !shooterLineBlocked(
+  return !shooterRayBlocked(
     ctx, maze,
     bot.pos.x, bot.pos.z, botEyeY(bot),
-    other.pos.x, botTargetHeadY(other), other.pos.z
+    other.pos.x, botTargetHeadY(other), other.pos.z,
+    state?.coverState
   );
 }
 
@@ -1217,7 +1219,7 @@ function pickShooterBotTarget(bot, players, style, state, ctx, maze) {
   for (const other of players) {
     if (!isShooterEnemy(bot, other, style, state)) continue;
     if (!isShooterCombatActive(other)) continue;
-    if (!botCanSeeTarget(bot, other, ctx, maze)) continue;
+    if (!botCanSeeTarget(bot, other, ctx, maze, state)) continue;
     const d = Math.hypot(other.pos.x - bot.pos.x, other.pos.z - bot.pos.z);
     const bias = other.isAI ? 0 : -12;
     const score = d + bias;
@@ -1390,7 +1392,7 @@ export function updateShooterBots(dt, players, ctx, maze, state, api) {
 
     const visionMax = BOT_VISION[wId] ?? 22;
     const inRange = bd >= minR * 0.65 && bd <= Math.min(maxR * 1.15, visionMax);
-    const hasLos = botCanSeeTarget(bot, target, ctx, maze);
+    const hasLos = botCanSeeTarget(bot, target, ctx, maze, state);
     const wantShoot = inRange && hasLos;
     const moleSnipe = bot.isMole && moleMode && state?.moleCanShoot && isSameShooterTeam(bot, target);
     const fireDelay = moleSnipe ? 0.55 : wId === "sniper" ? 0.45 : 0.28;
@@ -1509,7 +1511,7 @@ export function onShooterDowned(killer, victim, state, elapsed, spawnHeal) {
   victim._shooterDowned = true;
   victim._shooterDownedAt = elapsed;
   victim._shooterDownedYaw = victim.yaw ?? 0;
-  victim._shooterBodyHideAt = elapsed + 5.5;
+  victim._shooterBodyHideAt = victim.isAI ? elapsed + 5.5 : null;
   victim._respawnUntil = 0;
 
   if (victim.mesh) {

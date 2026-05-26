@@ -1,4 +1,6 @@
 /** 程式化音效 — 音量高於背景音樂 */
+import { resolveAsset } from "./assetUrls.js";
+
 const AUDIO_SETTINGS_KEY = "forsaken_audio_v1";
 const DEFAULT_AUDIO = { music: 0.28, sfx: 1.0 };
 
@@ -31,7 +33,9 @@ export function getAudioSettings() {
 }
 
 export function applyAudioSettings(musicEl = null) {
-  if (musicEl) musicEl.volume = Math.max(0, Math.min(1, audioSettings.music));
+  const mv = Math.max(0, Math.min(1, audioSettings.music));
+  if (musicConnected && musicGain) musicGain.gain.value = mv;
+  else if (musicEl) musicEl.volume = mv;
   if (sfxBus) sfxBus.gain.value = 1.2 * Math.max(0, Math.min(2, audioSettings.sfx));
 }
 
@@ -229,7 +233,7 @@ export function getSfxBus() {
   return sfxBus;
 }
 
-const FOOTSTEP_URL = "assets/audio/sfx/footstep.mp3";
+const FOOTSTEP_URL = resolveAsset("assets/audio/sfx/footstep.mp3");
 let footstepBuffer = null;
 let footstepLoadPromise = null;
 

@@ -2,17 +2,18 @@
  * 槍戰漆彈音效：讀取 assets/audio/shooter-sounds.json
  * 未配置或載入失敗時，由 audio.js 的合成音 fallback。
  */
-import { getAudioContext, getSfxBus } from "./audio.js";
+import { getAudioContext, getAudioSettings, getSfxBus } from "./audio.js";
 import { fetchDecodeAudio } from "./audioLoad.js";
+import { resolveAsset } from "./assetUrls.js";
 
-const CONFIG_URL = "assets/audio/shooter-sounds.json";
+const CONFIG_URL = resolveAsset("assets/audio/shooter-sounds.json");
 
 const SAMPLE_PATHS = {
-  fire: "assets/audio/sfx/paintball_fire.mp3",
-  hitBody: "assets/audio/sfx/paintball_hit_body.mp3",
-  hitWall: "assets/audio/sfx/paintball_hit_wall.mp3",
-  headshot: "assets/audio/sfx/paintball_headshot.mp3",
-  pickupHeal: "assets/audio/sfx/paintball_pickup_heal.mp3",
+  fire: resolveAsset("assets/audio/sfx/paintball_fire.mp3"),
+  hitBody: resolveAsset("assets/audio/sfx/paintball_hit_body.mp3"),
+  hitWall: resolveAsset("assets/audio/sfx/paintball_hit_wall.mp3"),
+  headshot: resolveAsset("assets/audio/sfx/paintball_headshot.mp3"),
+  pickupHeal: resolveAsset("assets/audio/sfx/paintball_pickup_heal.mp3"),
 };
 
 let config = { ...SAMPLE_PATHS };
@@ -75,7 +76,8 @@ export function playShooterSfx(id, playSfx, minGap = 0.04) {
       const src = actx.createBufferSource();
       src.buffer = buf;
       const g = actx.createGain();
-      g.gain.value = id === "fire" ? 0.55 : 0.72;
+      const sfxMul = Math.max(0, Math.min(2, getAudioSettings().sfx ?? 1));
+      g.gain.value = (id === "fire" ? 0.55 : 0.72) * sfxMul;
       src.connect(g);
       const bus = getSfxBus();
       g.connect(bus || actx.destination);

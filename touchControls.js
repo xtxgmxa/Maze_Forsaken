@@ -1,6 +1,9 @@
 /** 觸控操作（僅在觸控／粗指標裝置啟用，不影響一般電腦滑鼠鍵盤） */
 
-import { getAudioSettings, setAudioSettings, resetAudioSettings } from "./audio.js";
+import {
+  getAudioSettings, setAudioSettings, resetAudioSettings,
+  initAudioEngine, connectMusicElement,
+} from "./audio.js";
 
 const MOBILE_SETTINGS_KEY = "forsaken_mobile_v1";
 const IMMERSIVE_KEY = "forsaken_immersive_v1";
@@ -388,10 +391,12 @@ export function initMobileSettingsUI() {
   const music = document.getElementById("mobileMusicVol");
   const sfx = document.getElementById("mobileSfxVol");
 
-  const apply = () => {
+  const apply = async () => {
     mobileSettings.lookSens = Number(sens?.value ?? DEFAULT_MOBILE.lookSens);
     mobileSettings.stickDead = Number(dead?.value ?? DEFAULT_MOBILE.stickDead);
     saveMobileSettings();
+    await initAudioEngine();
+    connectMusicElement(musicElRef);
     setAudioSettings({
       music: Number(music?.value ?? 28) / 100,
       sfx: Number(sfx?.value ?? 100) / 100,
@@ -447,7 +452,9 @@ export function initMobileSettingsUI() {
     document.getElementById(id)?.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openMobileSettingsPanel();
+      const ctx = getCtx();
+      if (ctx.openSettings) ctx.openSettings();
+      else openMobileSettingsPanel();
     });
   });
 }
