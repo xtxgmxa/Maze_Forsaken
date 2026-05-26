@@ -331,12 +331,12 @@ export const SHOOTER_LAYOUTS = {
 
 const LAYOUT_PALETTES = {
   urban_quick: { sky: 0x1a2430, floor: 0x3a4a38, fog: 0x1a2430, secret: 0x66cc88, pad: 0x33eeff },
-  arena_ring: { sky: 0x2a1810, floor: 0x9a5038, fog: 0x3a2018, secret: 0xffaa44, pad: 0xff6644 },
+  arena_ring: { sky: 0x2a3848, floor: 0x7a5848, fog: 0x2e3a48, secret: 0xffaa44, pad: 0xff8844 },
   urban_plaza: { sky: 0x283038, floor: 0x5c5e62, fog: 0x283038, secret: 0x88ddff, pad: 0x44aaff },
-  dock_yard: { sky: 0x1a1408, floor: 0x4a3020, fog: 0x2a1808, secret: 0xffcc66, pad: 0xffaa33 },
+  dock_yard: { sky: 0x1e2838, floor: 0x4a4038, fog: 0x243038, secret: 0xffcc66, pad: 0xffaa33 },
   sky_open: { sky: 0x88ccff, floor: 0x446688, fog: 0x6699cc, secret: 0xffffff, pad: 0x66ffff },
   sky_twin_towers: { sky: 0x4488dd, floor: 0x335577, fog: 0x5588aa, secret: 0xaaddff, pad: 0x44ddff },
-  arena_sniper_mega: { sky: 0xc9b080, floor: 0xd4b896, fog: 0xb8a070, secret: 0x886644, pad: 0xff8844 },
+  arena_sniper_mega: { sky: 0x88a8c8, floor: 0xa8b0a0, fog: 0x7898b8, secret: 0x886644, pad: 0xdd9966 },
   neon_grid: { sky: 0x120818, floor: 0x281030, fog: 0x180a20, secret: 0xff44ff, pad: 0xff66cc },
   bounce_alley: { sky: 0x2a3828, floor: 0x5a6a48, fog: 0x2a3828, secret: 0xaaff66, pad: 0x44ff88 },
   ambush_corridor: { sky: 0x101820, floor: 0x2a3038, fog: 0x101820, secret: 0x44ff99, pad: 0x33ccaa },

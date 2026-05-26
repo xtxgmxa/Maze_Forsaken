@@ -77,7 +77,10 @@ export function syncShooterOverheadLabels({
       if (!target.mesh.visible) continue;
       let bodyVisible = false;
       target.mesh.traverse((c) => {
-        if (c.isMesh && c.visible && c.material?.opacity > 0.35 && c !== target.gunMesh) bodyVisible = true;
+        if (c.isMesh && c.visible && c !== target.gunMesh) {
+          const op = c.material?.opacity;
+          if (op == null || op > 0.35) bodyVisible = true;
+        }
       });
       if (!bodyVisible) continue;
       const rel = getShooterRelationLabel(viewer, target, playStyle, state);

@@ -222,6 +222,13 @@ const SFX = {
     noiseBurst(0.1, 0.18);
     tone(180, 0.08, "triangle", 0.16);
   },
+  parry_start: () => {
+    tone(620, 0.04, "triangle", 0.2);
+    tone(980, 0.07, "sine", 0.24);
+    tone(1480, 0.09, "sine", 0.18);
+    noiseBurst(0.05, 0.14);
+    tone(320, 0.14, "sawtooth", 0.16);
+  },
   quiz_open: () => tone(600, 0.08, "sine", 0.2),
   hurt: () => {
     tone(150, 0.12, "sawtooth", 0.32);
@@ -312,12 +319,14 @@ export function playSfx(name, minGap = 0.04) {
   initAudioEngine().then((ok) => { if (ok) play(); });
 }
 
-export function bindAudioUnlock() {
+export function bindAudioUnlock(onUnlocked) {
   const unlock = () => {
-    initAudioEngine();
-    window.removeEventListener("pointerdown", unlock);
-    window.removeEventListener("keydown", unlock);
+    initAudioEngine().then((ok) => {
+      if (actx?.state === "suspended") actx.resume().catch(() => {});
+      if (ok && typeof onUnlocked === "function") onUnlocked();
+    });
   };
-  window.addEventListener("pointerdown", unlock);
+  window.addEventListener("pointerdown", unlock, { passive: true });
+  window.addEventListener("touchstart", unlock, { passive: true });
   window.addEventListener("keydown", unlock);
 }

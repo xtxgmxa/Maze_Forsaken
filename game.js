@@ -41,7 +41,7 @@ import {
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
   tryKatanaParry, isKatanaParryActive, getKatanaParryUi, computeShotgunMods,
 } from "./shooterMode.js";
-import { loadShooterSounds, preloadShooterSounds, playShooterSfx } from "./shooterSounds.js";
+import { loadShooterSounds, preloadShooterSounds, warmShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { updateShooterLadderClimb } from "./shooterPhysics.js";
 import { moveWithShooterCollision } from "./shooterCollision.js";
 import { getShooterLayout } from "./shooterLayouts.js";
@@ -70,13 +70,13 @@ import {
   getActiveInventoryList, getPassiveList, applyPassive,
 } from "./inventory.js";
 import {
-  initAudioEngine, playSfx, bindAudioUnlock, loadAudioSettings, getAudioSettings,
+  initAudioEngine, playSfx, bindAudioUnlock, resumeGameAudio, loadAudioSettings, getAudioSettings,
   setAudioSettings, resetAudioSettings, applyAudioSettings, connectMusicElement, setMusicZoneTint,
   stopGameMusic, suspendGameAudio,
 } from "./audio.js";
 import {
-  loadGameSounds, preloadGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
-  playSlideSfx, playKatanaSwingSfx, playMeleeWindSfx, playParryDeflectSfx,
+  loadGameSounds, preloadGameSounds, warmGameSounds, playFootstepSfx, playJumpSfx, playLandSfx, playBouncePadSfx,
+  playSlideSfx, playKatanaSwingSfx, playMeleeWindSfx, playParryStartSfx, playParryDeflectSfx,
 } from "./gameSounds.js";
 import {
   buildZoneParticles, clearZoneParticles, tickZoneParticles,
@@ -140,6 +140,7 @@ import {
   playAbilityVfx, updateVfx, applyMeshAnim, applyLocomotionAnim,
   spawnHitVfx, clearVfxPool, spawnProjectileVfx, setVfxBudget,
   spawnPaintMuzzleFlash, tickMuzzleFlashes, spawnDeflectVfx, tickDeflectVfx,
+  spawnKatanaParryBurst, tickKatanaAuraVfx, tickKatanaBurstVfx, clearKatanaAuras,
 } from "./vfx.js";
 
 const WALK_SPEED = 10.5;
@@ -1045,7 +1046,7 @@ function tryEnterShooterSpectate(toastMsg) {
   if (targets.length) {
     spectateIndex = Math.min(Math.max(0, spectateIndex), targets.length - 1);
     const focus = targets[spectateIndex];
-    if (focus?.yaw != null) camYaw = focus.yaw;
+    if (focus?.yaw != null && spectateIndex === 0) camYaw = focus.yaw;
   }
   syncSpectateUi();
   if (toastMsg && !human.isAI) showToast(toastMsg, 2800);
@@ -1078,8 +1079,7 @@ function cycleSpectate(dir) {
   const targets = getSpectateTargets();
   if (!targets.length) return;
   spectateIndex = (spectateIndex + dir + targets.length) % targets.length;
-  const focus = getCameraFocus();
-  if (focus?.yaw != null) camYaw = focus.yaw;
+  getCameraFocus();
   updateSpectateBanner();
   playSfx("ui", 0.08);
 }
@@ -1107,8 +1107,8 @@ function updateSpectateBanner() {
         : "已淘汰 · 觀戰中 · 等待本局結束";
     } else {
       sub.textContent = total > 1
-        ? (isTouchUiEnabled() ? "點 ‹ › 切換視角" : "[ ] 或 ← → 切換視角")
-        : "觀戰中 · ESC 暫停";
+        ? (isTouchUiEnabled() ? "右側滑動轉向 · ‹ › 切換" : "滑鼠／右搖桿轉向 · [ ] 切換")
+        : (isTouchUiEnabled() ? "右側滑動可自由轉向 · ESC 暫停" : "滑鼠／右搖桿可自由轉向 · ESC 暫停");
     }
   }
 }
@@ -1302,6 +1302,7 @@ function returnToMenu() {
   clickPrompt.classList.remove("show");
   document.exitPointerLock?.();
   clearVfxPool();
+  clearKatanaAuras(scene);
   clearShooterTeamMarkers(survivors);
   hideGamepadHud();
   hideShooterSplitHud();
@@ -1777,15 +1778,24 @@ function getShooterAimDir() {
   return getShooterAimDirForPlayer(getHumanSurvivor());
 }
 
+function ensureSurvivorBodyDrawn(s) {
+  if (!s?.mesh) return;
+  s.mesh.visible = true;
+  s.mesh.traverse((c) => {
+    if (!c.isMesh || c === s.gunMesh) return;
+    c.visible = true;
+    if (c.material && c.material.opacity != null && c.material.opacity < 0.2) {
+      c.material.opacity = Math.max(c.material.opacity, 0.88);
+    }
+  });
+}
+
 function syncShooterPlayerVisibility() {
   if (!isShooterMode()) return;
   const human = getHumanSurvivor();
   const locals = getLocalHumanPlayers();
   const spectating = isSpectating();
   const split = isShooterSplitView();
-  const showFp = !spectating && (split
-    ? locals.some((s) => s && !isShooterPlayerDown(s))
-    : !!(human && !isShooterPlayerDown(human)));
   setFpGunVisible(false);
   const fpTargets = !spectating
     ? (split
@@ -1813,7 +1823,7 @@ function syncShooterPlayerVisibility() {
     }
     const isLocalFp = fpTargets.includes(s);
     if (isLocalFp && !spectating) s.mesh.visible = false;
-    else s.mesh.visible = true;
+    else ensureSurvivorBodyDrawn(s);
   }
 }
 
@@ -1914,11 +1924,6 @@ function getCollisionOpts() {
   return { vaultClear: 2.5, vaultJumpMin: 0.22, radiusScale: 0.88 };
 }
 
-async function resumeGameAudio() {
-  try {
-    await initAudioEngine();
-  } catch { /* */ }
-}
 
 function isShooterSpawnBlocked(x, z, elev, vState) {
   const r = 0.38;
@@ -3358,6 +3363,7 @@ async function runStartGame() {
   clearZoneParticles(scene);
   clearScene();
   clearVfxPool();
+  clearKatanaAuras(scene);
   if (isShooterMode()) {
     applyShooterMapAtmosphere(scene, selectedLevel);
     const mapId = getShooterMapIdentity(selectedLevel);
@@ -3566,8 +3572,8 @@ async function runStartGame() {
   }
   if (isShooterMode()) {
     clearShooterHealOrbs(scene);
-    loadShooterSounds().then(() => preloadShooterSounds());
-    preloadGameSounds();
+    warmGameSounds();
+    warmShooterSounds();
     if (isShooterMoleMode(shooterState)) {
       setupMoleRound(survivors, shooterState);
     }
@@ -3697,7 +3703,8 @@ async function runStartGame() {
   setMissionText();
   initAudioEngine().then(() => {
     connectMusicElement(musicEl);
-    preloadGameSounds();
+    warmGameSounds();
+    if (isShooterMode()) warmShooterSounds();
   });
   musicEl?.play().catch(() => {});
 
@@ -4157,7 +4164,7 @@ function setupInput() {
       if (human && id === "katana") {
         const res = tryKatanaParry(human);
         if (res.ok && res.reason === "start") {
-          playMeleeWindSfx(0.06);
+          onKatanaParryStarted(human);
           showToast("格擋 4 秒 · 可反彈子彈", 900);
         } else if (!res.ok && res.reason === "cd") {
           showToast("格擋冷卻中", 600);
@@ -5023,6 +5030,16 @@ function syncProjectileMeshes() {
   });
 }
 
+function onKatanaParryStarted(p) {
+  if (!p || !scene) return;
+  playParryStartSfx(0.1);
+  const yaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
+  const hy = worldHeight(p) + 1.35 + (p._jumpY ?? 0);
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  spawnKatanaParryBurst(scene, p.pos.x + fx * 0.55, hy, p.pos.z + fz * 0.55, yaw);
+}
+
 function tryDeflectProjectile(pr, i) {
   if (!pr.fromShooter) return false;
   for (const s of survivors) {
@@ -5206,7 +5223,7 @@ function ensureSplitCameras(n = 4) {
 }
 
 function getPlayerCamAngles(p) {
-  if (!p || p.profile === "p1") return { yaw: camYaw, pitch: camPitch };
+  if (isSpectating() || !p || p.profile === "p1") return { yaw: camYaw, pitch: camPitch };
   return { yaw: p._camYaw ?? p.yaw ?? 0, pitch: p._camPitch ?? 0 };
 }
 
@@ -5228,11 +5245,18 @@ function updateCameraForPlayer(cam, focus, yaw, pitch) {
       );
       return;
     }
-    const dist = 9;
-    const cx = focus.pos.x - Math.sin(yaw) * dist;
-    const cz = focus.pos.z - Math.cos(yaw) * dist;
-    cam.position.set(cx, eyeY + 2.8, cz);
-    cam.lookAt(focus.pos.x, eyeY + 0.4, focus.pos.z);
+    const dist = 9.5;
+    const cosP = Math.cos(pitch);
+    const sinP = Math.sin(pitch);
+    const cx = focus.pos.x - Math.sin(yaw) * cosP * dist;
+    const cz = focus.pos.z - Math.cos(yaw) * cosP * dist;
+    const cy = eyeY + 2.6 + sinP * dist * 0.55;
+    cam.position.set(cx, cy, cz);
+    cam.lookAt(
+      focus.pos.x + Math.sin(yaw) * 1.2,
+      eyeY + 0.55 + sinP * 1.5,
+      focus.pos.z + Math.cos(yaw) * 1.2
+    );
     return;
   }
   const lerpK = 0.2;
@@ -6044,6 +6068,9 @@ function loopFrame(now) {
     updateSurvivors(dt);
     tickShooterSpawnUnstuck(dt);
     if (lanSync) lanSync.tick(dt);
+    if (frameCount % 60 === 0 && gameState === "play") {
+      resumeGameAudio().catch(() => {});
+    }
     if (ledgeHintState?.hints?.length && verticalWorldState) {
       const ledgeFocus = getHumanSurvivor() || survivors[0];
       if (ledgeFocus) {
@@ -6167,7 +6194,9 @@ function loopFrame(now) {
     updateVfx(dt);
     tickMuzzleFlashes(dt);
     tickDeflectVfx(dt);
+    tickKatanaBurstVfx(dt);
     if (isShooterMode()) {
+      tickKatanaAuraVfx(scene, survivors, dt);
       updateShooterFov();
       const sh = scene?.userData?.shadowLight;
       const focus = getHumanSurvivor() || getCameraFocus();
@@ -6422,7 +6451,10 @@ async function tryInitLanModule() {
 function boot() {
   initAudio();
   bindMobileAudioElement(musicEl);
-  bindAudioUnlock();
+  bindAudioUnlock(() => {
+    warmGameSounds();
+    warmShooterSounds();
+  });
   initMenu();
   tryInitLanModule();
   document.addEventListener("visibilitychange", () => {
@@ -6430,7 +6462,6 @@ function boot() {
       if (gameState === "menu" || gameState === "end") {
         stopGameMusic(musicEl);
         stopShooterResultMusic();
-      } else {
         suspendGameAudio();
       }
       return;
@@ -6496,7 +6527,7 @@ function boot() {
         if (id === "katana") {
           const res = tryKatanaParry(h);
           if (res.ok && res.reason === "start") {
-            playMeleeWindSfx(0.06);
+            onKatanaParryStarted(h);
             showToast("格擋 4 秒", 800);
           } else if (!res.ok && res.reason === "cd") showToast("格擋冷卻中", 600);
           updateCrosshair();

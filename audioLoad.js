@@ -6,6 +6,16 @@
 export function audioPathCandidates(path) {
   if (!path || typeof path !== "string") return [];
   const out = [path];
+  try {
+    if (/^https?:\/\//i.test(path) || path.startsWith("file:")) {
+      const u = new URL(path);
+      const rel = u.pathname.replace(/^\//, "");
+      if (rel) {
+        out.push(rel);
+        out.push(`./${rel}`);
+      }
+    }
+  } catch { /* */ }
   if (/^assets\//i.test(path)) {
     out.push(`Maze_Forsaken/${path}`);
     out.push(`./Maze_Forsaken/${path}`);

@@ -6,14 +6,15 @@ let cloudGroup = null;
 
 const SKY_PRESETS = {
   day: { top: 0x5eb3ff, bottom: 0xb8e4ff, fog: 0xb8d8f0, sun: 0xfff4e0, hemiSky: 0x88ccff, hemiGround: 0x6a7a58, cloud: 0xffffff },
-  dusk: { top: 0xff8844, bottom: 0x3a2858, fog: 0x6a4868, sun: 0xffaa66, hemiSky: 0xff9966, hemiGround: 0x4a3848, cloud: 0xffddcc },
+  /** 偏藍紫暮光，避免刺眼橘紅 */
+  dusk: { top: 0x6a88aa, bottom: 0x2a3048, fog: 0x3a4458, sun: 0xc8d0e0, hemiSky: 0x7a90b0, hemiGround: 0x3a4048, cloud: 0xd8e4f0 },
   night: { top: 0x0a1028, bottom: 0x1a2848, fog: 0x0e1428, sun: 0x8899cc, hemiSky: 0x223355, hemiGround: 0x0a0818, cloud: 0x334466 },
 };
 
 const SHOOTER_PRESET = {
   sky_open: "day", sky_twin_towers: "day", sky_runway: "day", paintball_camp: "day",
   neon_grid: "night", neon_spire: "night",
-  arena_ring: "dusk", dock_yard: "dusk", urban_quick: "dusk",
+  arena_ring: "dusk", dock_yard: "dusk", urban_quick: "day",
 };
 
 function pickPresetFromSkyColor(skyHex) {
@@ -21,9 +22,21 @@ function pickPresetFromSkyColor(skyHex) {
   const g = (skyHex >> 8) & 255;
   const b = skyHex & 255;
   const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+  const warm = r > g + 18 && r > b + 10;
   if (lum > 0.62) return "day";
-  if (lum > 0.28) return "dusk";
+  if (warm || lum > 0.28) return "dusk";
   return "night";
+}
+
+/** 壓低暖色天空的飽和度，避免刺眼紅橙 */
+function softenSkyColor(hex, warmBias = 0.42) {
+  const c = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  if (hsl.s > 0.12) hsl.s *= warmBias;
+  hsl.l = Math.min(0.72, hsl.l * 0.92 + 0.04);
+  c.setHSL(hsl.h, hsl.s, hsl.l);
+  return c.getHex();
 }
 
 function removeSky(scene) {
@@ -111,9 +124,14 @@ export function applyMapAtmosphere(scene, opts = {}) {
   const fogHex = opts.fog ?? skyHex;
   const presetKey = opts.preset || pickPresetFromSkyColor(skyHex);
   const preset = SKY_PRESETS[presetKey] || SKY_PRESETS.dusk;
-  const top = new THREE.Color(opts.skyTop ?? preset.top);
-  const bottom = new THREE.Color(opts.skyBottom ?? skyHex);
-  const fogCol = new THREE.Color(fogHex);
+  const warmSky = ((skyHex >> 16) & 255) > ((skyHex >> 8) & 255) + 12;
+  const soften = warmSky || presetKey === "dusk";
+  const topHex = soften ? softenSkyColor(opts.skyTop ?? preset.top) : (opts.skyTop ?? preset.top);
+  const bottomHex = soften ? softenSkyColor(opts.skyBottom ?? skyHex, 0.5) : (opts.skyBottom ?? skyHex);
+  const fogUse = soften ? softenSkyColor(fogHex, 0.48) : fogHex;
+  const top = new THREE.Color(topHex);
+  const bottom = new THREE.Color(bottomHex);
+  const fogCol = new THREE.Color(fogUse);
 
   scene.background = bottom.clone();
   scene.fog = new THREE.Fog(fogCol.getHex(), opts.fogNear ?? 18, opts.fogFar ?? 120);

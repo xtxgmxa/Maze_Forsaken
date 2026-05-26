@@ -5,5 +5,7 @@
   "land": "assets/audio/sfx/land.mp3",
   "bouncePad": "assets/audio/sfx/bounce_pad.mp3",
   "slide": "assets/audio/sfx/slide.mp3",
-  "katanaSwing": "assets/audio/sfx/katana_swing.mp3"
+  "katanaSwing": "assets/audio/sfx/katana_swing.mp3",
+  "parryStart": "assets/audio/sfx/katana_parry.mp3",
+  "parryDeflect": "assets/audio/sfx/parry_deflect.mp3"
 }

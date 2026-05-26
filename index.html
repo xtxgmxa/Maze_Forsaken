@@ -928,6 +928,11 @@
     body.spectating #abilityBar,
     body.spectating #inventoryBar,
     body.spectating #keyHuntBar { display: none !important; }
+    body.touch-ui.spectating #touchLookZone {
+      display: block !important;
+      pointer-events: auto;
+      z-index: 14;
+    }
     body.spectating #hud .hud-block { opacity: 0.85; }
     body.spectating #spectateBanner {
       top: auto !important;

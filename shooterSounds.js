@@ -63,7 +63,10 @@ export function getShooterSoundConfig() {
 export async function preloadShooterSounds() {
   await loadShooterSounds();
   const actx = getAudioContext();
-  if (!actx) return;
+  if (!actx) return false;
+  if (actx.state === "suspended") {
+    try { await actx.resume(); } catch { /* */ }
+  }
   for (const [id, path] of Object.entries(config)) {
     if (!path || typeof path !== "string") continue;
     if (id === "winMusic" || id === "loseMusic") continue;
@@ -71,6 +74,15 @@ export async function preloadShooterSounds() {
     if (buf) buffers[id] = buf;
     else delete buffers[id];
   }
+  return true;
+}
+
+export async function warmShooterSounds() {
+  const { initAudioEngine } = await import("./audio.js");
+  const ok = await initAudioEngine();
+  if (!ok) return false;
+  await loadShooterSounds();
+  return preloadShooterSounds();
 }
 
 export function playShooterSfx(id, playSfx, minGap = 0.04) {
@@ -82,6 +94,7 @@ export function playShooterSfx(id, playSfx, minGap = 0.04) {
   const actx = getAudioContext();
   if (buf && actx) {
     try {
+      if (actx.state === "suspended") actx.resume().catch(() => {});
       const src = actx.createBufferSource();
       src.buffer = buf;
       const g = actx.createGain();
@@ -95,6 +108,11 @@ export function playShooterSfx(id, playSfx, minGap = 0.04) {
     } catch {
       /* fallback */
     }
+  }
+  if (!buf && config[id] && actx) {
+    fetchDecodeAudio(actx, config[id]).then((b) => {
+      if (b) buffers[id] = b;
+    });
   }
   if (playSfx && FALLBACK_SFX[id]) {
     playSfx(FALLBACK_SFX[id], minGap);

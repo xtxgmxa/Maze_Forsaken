@@ -238,6 +238,7 @@ export const SURVIVORS = [
 export function buildForsakenCharacter(def, scale = 1) {
   const s = (def.scale || 1) * scale;
   const root = new THREE.Group();
+  root.frustumCulled = false;
   const mat = (color, emissive = 0x000000, ei = 0.1) => plasticPBR(color, emissive, ei);
   const limbW = 0.42;
   const limbH = 0.88;

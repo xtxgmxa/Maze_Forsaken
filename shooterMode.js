@@ -812,15 +812,25 @@ function hideFpParts(parts) {
   for (const m of Object.values(parts)) if (m) m.visible = false;
 }
 
-function layoutKatanaParts(parts, flashCol) {
+export function katanaGlowIntensity(p) {
+  const t = p?._katanaParryT ?? 0;
+  if (t <= 0) return 0;
+  const phase = (KATANA_PARRY_DURATION - t) * 9;
+  return 0.5 + Math.sin(phase) * 0.28 + Math.sin(phase * 2.4) * 0.14;
+}
+
+function layoutKatanaParts(parts, flashCol, glow = 0) {
   const { body, barrel, grip, acc1, acc2, acc3 } = parts;
-  const blade = flashCol ?? 0xf8fbff;
-  const edge = flashCol ? 0xffe8b8 : 0xe2eeff;
-  setHeldPart(body, 0.052, 0.095, 1.34, blade, 1, { emissiveIntensity: 0.28 });
+  const blade = flashCol ?? (glow > 0.15 ? 0xd8f4ff : 0xf8fbff);
+  const edge = flashCol ? 0xffe8b8 : (glow > 0.15 ? 0xa8eeff : 0xe2eeff);
+  const ei = 0.28 + glow * 0.72;
+  const edgeEi = 0.35 + glow * 0.85;
+  setHeldPart(body, 0.052, 0.095, 1.34, blade, 1, { emissiveIntensity: ei });
   placeHeldPart(body, 0.02, 0.025, 0.74, 0.06, 0.04, 0);
-  setHeldPart(acc1, 0.014, 0.105, 1.3, edge, 1, { emissiveIntensity: 0.35 });
+  setHeldPart(acc1, 0.014, 0.105, 1.3, edge, 1, { emissiveIntensity: edgeEi });
   placeHeldPart(acc1, 0.068, 0.028, 0.72, 0.06, 0.04, 0);
-  setHeldPart(barrel, 0.36, 0.055, 0.13, 0xffd966, 1, { metalness: 0.55, emissiveIntensity: 0.4 });
+  const guardCol = glow > 0.15 ? 0xffeeaa : 0xffd966;
+  setHeldPart(barrel, 0.36, 0.055, 0.13, guardCol, 1, { metalness: 0.55, emissiveIntensity: 0.4 + glow * 0.5 });
   placeHeldPart(barrel, 0.02, 0.0, 0.14, 0, 0, 0);
   accentPart(acc2, 0.11, 0.045, 0.09, 0xccb04a, 0.02, -0.02, 0.06);
   setHeldPart(grip, 0.09, 0.09, 0.4, 0x141a2e, 1, { roughness: 0.82, metalness: 0.1 });
@@ -1066,7 +1076,8 @@ export function syncGunVisual(p) {
     return;
   }
   if (p.weaponId === "katana") {
-    layoutKatanaParts(parts);
+    const glow = katanaGlowIntensity(p);
+    layoutKatanaParts(parts, glow > 0.12 ? 0xb8ecff : null, glow);
     const parryT = p._katanaParryT ?? 0;
     if (parryT > 0 && p.gunMesh.parent === p.mesh) {
       const u = parryT / KATANA_PARRY_DURATION;
@@ -1132,11 +1143,11 @@ function buildFpHeldBlockRig() {
   return rig;
 }
 
-function syncFpHeldBlockRig(rig, weaponId, flash = 0) {
+function syncFpHeldBlockRig(rig, weaponId, flash = 0, parryGlow = 0) {
   const parts = rig.userData.parts;
   if (!parts) return;
   const id = weaponId || "rifle";
-  const flashCol = flash > 0.15 ? 0xffd7a2 : null;
+  const flashCol = flash > 0.15 ? 0xffd7a2 : (parryGlow > 0.12 ? 0xc8f4ff : null);
   hideFpParts(parts);
   if (id === "pad") {
     setHeldPart(parts.body, 0.5, 0.12, 0.5, flashCol ?? 0x33eeff, 0.55, { emissiveIntensity: 0.45 });
@@ -1147,7 +1158,7 @@ function syncFpHeldBlockRig(rig, weaponId, flash = 0) {
     accentPart(parts.acc1, 0.05, 0.05, 0.05, 0xccffff, 0.12, 0.1, 0.1);
     return;
   }
-  if (id === "katana") layoutKatanaParts(parts, flashCol);
+  if (id === "katana") layoutKatanaParts(parts, flashCol, parryGlow);
   else layoutGunParts(parts, id, flashCol);
 }
 
@@ -1358,8 +1369,18 @@ export function tickGunFlash(p, dt, cam) {
     p._fpFlash -= dt;
     flash = Math.max(flash, (p._fpFlash ?? 0) / 0.06);
   }
+  const parryGlow = p.weaponId === "katana" ? katanaGlowIntensity(p) : 0;
   if (!p.isAI && p._fpHeldRig?.visible) {
-    syncFpHeldBlockRig(p._fpHeldRig, p.weaponId, flash);
+    syncFpHeldBlockRig(p._fpHeldRig, p.weaponId, flash, parryGlow);
+  }
+  if (!p.isAI && p.weaponId === "katana" && fpGunMesh?.visible) {
+    const katBlade = fpGunMesh.getObjectByName("fpKatanaBlade");
+    const katGuard = fpGunMesh.getObjectByName("fpKatanaGuard");
+    const bc = parryGlow > 0.12 ? 0xb8f8ff : (flash > 0.15 ? 0xffd7a2 : 0xf2f6ff);
+    if (katBlade?.material?.color) katBlade.material.color.setHex(bc);
+    if (katGuard?.material?.color) {
+      katGuard.material.color.setHex(parryGlow > 0.12 ? 0xffeecc : 0xe8c86a);
+    }
   }
 }
 

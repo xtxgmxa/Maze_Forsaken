@@ -29,6 +29,7 @@ const DEFAULT_PATHS = {
   slide: resolveAsset("assets/audio/sfx/slide.mp3"),
 
   katanaSwing: resolveAsset("assets/audio/sfx/katana_swing.mp3"),
+  parryStart: resolveAsset("assets/audio/sfx/katana_parry.mp3"),
   parryDeflect: resolveAsset("assets/audio/sfx/parry_deflect.mp3"),
 
 };
@@ -53,6 +54,7 @@ export const ACTION_SFX = {
 
   meleeWind: { sample: null, fallback: "swing_wind", vol: 0.5 },
 
+  parryStart: { sample: "parryStart", fallback: "parry_start", vol: 0.92 },
   parryDeflect: { sample: "parryDeflect", fallback: "hit", vol: 0.82 },
 
 };
@@ -72,6 +74,8 @@ const FALLBACK = {
   slide: "slide",
 
   katanaSwing: "slash",
+  parryStart: "parry_start",
+  parryDeflect: "hit",
 
 };
 
@@ -150,75 +154,64 @@ export function getGameSoundConfig() {
 
 
 export async function preloadGameSounds() {
-
   await loadGameSounds();
-
   const actx = getAudioContext();
-
-  if (!actx) return;
-
-  for (const [id, path] of Object.entries(config)) {
-
-    if (!path || typeof path !== "string") continue;
-
-    const buf = await fetchDecodeAudio(actx, path);
-
-    if (buf) buffers[id] = buf;
-
-    else delete buffers[id];
-
+  if (!actx) return false;
+  if (actx.state === "suspended") {
+    try { await actx.resume(); } catch { /* */ }
   }
+  for (const [id, path] of Object.entries(config)) {
+    if (!path || typeof path !== "string") continue;
+    const buf = await fetchDecodeAudio(actx, path);
+    if (buf) buffers[id] = buf;
+    else delete buffers[id];
+  }
+  return true;
+}
 
+/** 音效引擎就緒後重試預載（避免開局前 actx 尚未建立） */
+export async function warmGameSounds() {
+  const { initAudioEngine } = await import("./audio.js");
+  const ok = await initAudioEngine();
+  if (!ok) return false;
+  return preloadGameSounds();
 }
 
 
 
 function playSample(id, minGap = 0.05, vol = 0.78) {
-
   const now = performance.now();
-
   if (lastPlay[id] && now - lastPlay[id] < minGap * 1000) return false;
-
   lastPlay[id] = now;
 
   const buf = buffers[id];
-
   const actx = getAudioContext();
-
   const bus = getSfxBus();
 
   if (buf && actx && bus) {
-
     try {
-
+      if (actx.state === "suspended") actx.resume().catch(() => {});
       const src = actx.createBufferSource();
-
       src.buffer = buf;
-
       const g = actx.createGain();
-
       g.gain.value = vol;
-
       src.connect(g);
-
       g.connect(bus);
-
       src.start(0);
-
       return true;
-
     } catch {
-
       /* fallback */
-
     }
+  }
 
+  if (!buf && config[id] && actx) {
+    fetchDecodeAudio(actx, config[id]).then((b) => {
+      if (b) buffers[id] = b;
+    });
   }
 
   if (FALLBACK[id]) playSfx(FALLBACK[id], minGap);
-
   return false;
-
 }
 
 
@@ -297,10 +290,12 @@ export function playMeleeWindSfx(minGap = 0.04) {
 
 
 
+export function playParryStartSfx(minGap = 0.12) {
+  return playActionSfx("parryStart", minGap);
+}
+
 export function playParryDeflectSfx(minGap = 0.02) {
-
   return playActionSfx("parryDeflect", minGap);
-
 }
 
 

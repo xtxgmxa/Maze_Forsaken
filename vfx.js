@@ -236,6 +236,203 @@ export function tickMuzzleFlashes(dt) {
   }
 }
 
+const katanaAuras = new Map();
+const KATANA_AURA_GEO = new THREE.SphereGeometry(0.5, 10, 8);
+const KATANA_WIND_GEO = new THREE.BoxGeometry(0.035, 0.45, 1.35);
+
+function katanaAuraKey(p) {
+  return p?.profile || p?.charDef?.id || `p${p?.pos?.x ?? 0}`;
+}
+
+function katanaAddMat(color, opacity = 0.5) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+}
+
+function buildKatanaLightning() {
+  const pts = [];
+  let y = 0.15;
+  let x = 0;
+  for (let i = 0; i < 7; i++) {
+    pts.push(new THREE.Vector3(x, y, 0));
+    x += (Math.random() - 0.5) * 0.35;
+    y += 0.22 + Math.random() * 0.18;
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const line = new THREE.Line(
+    geo,
+    new THREE.LineBasicMaterial({
+      color: 0xe8f8ff,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  line.frustumCulled = false;
+  return line;
+}
+
+function createKatanaAuraGroup() {
+  const group = new THREE.Group();
+  group.name = "katanaAura";
+  const glow = new THREE.Mesh(KATANA_AURA_GEO, katanaAddMat(0x55ccff, 0.32));
+  glow.name = "katanaGlow";
+  const glowCore = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 8, 6),
+    katanaAddMat(0xffffff, 0.55)
+  );
+  glowCore.position.y = 0.35;
+  const wind = new THREE.Group();
+  wind.name = "katanaWind";
+  for (let i = 0; i < 5; i++) {
+    const streak = new THREE.Mesh(KATANA_WIND_GEO, katanaAddMat(0xaaddff, 0.45));
+    const a = (i / 5) * Math.PI * 2;
+    streak.position.set(Math.cos(a) * 0.42, 0.25 + (i % 2) * 0.15, Math.sin(a) * 0.42);
+    streak.rotation.y = a + Math.PI * 0.5;
+    streak.rotation.x = -0.35;
+    wind.add(streak);
+  }
+  const lightning = buildKatanaLightning();
+  lightning.position.set(0.08, 0.1, 0.12);
+  group.add(glow, glowCore, wind, lightning);
+  group.frustumCulled = false;
+  return { group, glow, glowCore, wind, lightning, time: 0, flicker: 0 };
+}
+
+function disposeKatanaAura(aura) {
+  if (!aura?.group) return;
+  aura.group.traverse((c) => {
+    c.geometry?.dispose();
+    if (c.material && !c.material.isLineBasicMaterial) c.material.dispose?.();
+    else if (c.material) c.material.dispose?.();
+  });
+}
+
+/** 格擋啟動：刀身前爆環 + 氣流 */
+export function spawnKatanaParryBurst(scene, x, y, z, yaw = 0) {
+  if (!scene) return;
+  const g = new THREE.Group();
+  g.position.set(x, y ?? 1.35, z);
+  g.rotation.y = yaw;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.72, 14),
+    katanaAddMat(0x88eeff, 0.95)
+  );
+  ring.rotation.x = -Math.PI / 2;
+  g.add(ring);
+  for (let i = 0; i < 4; i++) {
+    const bolt = buildKatanaLightning();
+    bolt.rotation.y = (i / 4) * Math.PI * 2 + Math.random() * 0.4;
+    bolt.position.set((Math.random() - 0.5) * 0.25, 0.1, (Math.random() - 0.5) * 0.25);
+    g.add(bolt);
+  }
+  for (let i = 0; i < 6; i++) {
+    const streak = new THREE.Mesh(KATANA_WIND_GEO, katanaAddMat(0xccffff, 0.7));
+    const a = (i / 6) * Math.PI * 2;
+    streak.position.set(Math.cos(a) * 0.2, 0.15, Math.sin(a) * 0.2);
+    streak.rotation.y = a;
+    streak.rotation.x = -0.5 - Math.random() * 0.3;
+    g.add(streak);
+  }
+  scene.add(g);
+  pool.push({ mesh: g, life: 0.38, scale: 0.65, spin: 0.12, isKatanaBurst: true });
+}
+
+/** 格擋持續：發光氣場 + 閃電（跟隨玩家） */
+export function tickKatanaAuraVfx(scene, players, dt) {
+  if (!scene) return;
+  const active = new Set();
+  for (const p of players || []) {
+    if (p.weaponId !== "katana" || (p._katanaParryT ?? 0) <= 0) continue;
+    const key = katanaAuraKey(p);
+    active.add(key);
+    let aura = katanaAuras.get(key);
+    if (!aura) {
+      aura = createKatanaAuraGroup();
+      scene.add(aura.group);
+      katanaAuras.set(key, aura);
+    }
+    const yaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
+    const jump = p._jumpY ?? 0;
+    const elev = p.elev ?? 0;
+    const hy = (p.pos?.y ?? 0) + 1.05 + jump + elev;
+    aura.group.position.set(
+      p.pos.x + Math.sin(yaw) * 0.42,
+      hy,
+      p.pos.z + Math.cos(yaw) * 0.42
+    );
+    aura.group.rotation.y = yaw + Math.PI * 0.5;
+    aura.time += dt;
+    aura.flicker += dt;
+    const pulse = 0.72 + Math.sin(aura.time * 13) * 0.28;
+    aura.group.scale.setScalar(0.9 + pulse * 0.22);
+    aura.glow.material.opacity = 0.22 + pulse * 0.28;
+    aura.glowCore.material.opacity = 0.35 + pulse * 0.4;
+    aura.wind.rotation.y += dt * 7.5;
+    aura.wind.children.forEach((c, i) => {
+      c.material.opacity = 0.28 + Math.sin(aura.time * 10 + i) * 0.22;
+    });
+    if (aura.flicker > 0.06) {
+      aura.flicker = 0;
+      aura.lightning.visible = Math.random() > 0.25;
+      aura.lightning.rotation.z = (Math.random() - 0.5) * 1.1;
+      aura.lightning.rotation.x = (Math.random() - 0.5) * 0.5;
+      const pts = [];
+      let ly = 0.1;
+      let lx = 0;
+      for (let i = 0; i < 7; i++) {
+        pts.push(new THREE.Vector3(lx, ly, 0));
+        lx += (Math.random() - 0.5) * 0.38;
+        ly += 0.2 + Math.random() * 0.16;
+      }
+      aura.lightning.geometry.dispose();
+      aura.lightning.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    }
+  }
+  for (const [key, aura] of [...katanaAuras]) {
+    if (active.has(key)) continue;
+    scene.remove(aura.group);
+    disposeKatanaAura(aura);
+    katanaAuras.delete(key);
+  }
+}
+
+export function tickKatanaBurstVfx(dt) {
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const v = pool[i];
+    if (!v.isKatanaBurst) continue;
+    v.life -= dt;
+    v.mesh.rotation.y += v.spin * 14 * dt;
+    v.mesh.scale.setScalar(v.scale * (1 + (0.38 - v.life) * 2.8));
+    v.mesh.traverse((c) => {
+      if (c.material?.opacity != null) c.material.opacity *= 0.92;
+    });
+    if (v.life <= 0) {
+      v.mesh.parent?.remove(v.mesh);
+      v.mesh.traverse((c) => {
+        c.geometry?.dispose();
+        c.material?.dispose?.();
+      });
+      pool.splice(i, 1);
+    }
+  }
+}
+
+export function clearKatanaAuras(scene) {
+  for (const aura of katanaAuras.values()) {
+    scene?.remove(aura.group);
+    disposeKatanaAura(aura);
+  }
+  katanaAuras.clear();
+}
+
 export function clearVfxPool() {
   for (let i = pool.length - 1; i >= 0; i--) {
     pool[i].mesh?.parent?.remove(pool[i].mesh);

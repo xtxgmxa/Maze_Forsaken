@@ -12,7 +12,7 @@ const IDENTITIES = {
   },
   arena_ring: {
     tagline: "競技 · 中央圓環",
-    floorA: 0x9a5038, floorB: 0x7a3828, wall: 0xaa6644, wallAlt: 0x884422, accent: 0xff6644, sky: 0x2a1810, fog: 0x3a2018,
+    floorA: 0x9a5038, floorB: 0x7a3828, wall: 0xaa6644, wallAlt: 0x884422, accent: 0xff6644, sky: 0x2a3848, fog: 0x2e3a48,
   },
   urban_plaza: {
     tagline: "廣場 · 十字高台",
@@ -20,7 +20,7 @@ const IDENTITIES = {
   },
   dock_yard: {
     tagline: "碼頭 · 貨櫃列",
-    floorA: 0x5a4030, floorB: 0x3a2818, wall: 0x776655, wallAlt: 0x554433, accent: 0xffaa44, sky: 0x1a1408, fog: 0x2a1808,
+    floorA: 0x5a4030, floorB: 0x3a2818, wall: 0x776655, wallAlt: 0x554433, accent: 0xffaa44, sky: 0x1e2838, fog: 0x243038,
   },
   sky_open: {
     tagline: "天空 · 雲台開闊",
@@ -32,7 +32,7 @@ const IDENTITIES = {
   },
   arena_sniper_mega: {
     tagline: "荒原 · 四角狙台",
-    floorA: 0xd4b896, floorB: 0xb89870, wall: 0x998866, wallAlt: 0x776644, accent: 0xff8844, sky: 0xc9b080, fog: 0xb8a070,
+    floorA: 0xd4b896, floorB: 0xb89870, wall: 0x998866, wallAlt: 0x776644, accent: 0xff8844, sky: 0x88a8c8, fog: 0x7898b8,
   },
   neon_grid: {
     tagline: "霓虹 · 網格迷城",
