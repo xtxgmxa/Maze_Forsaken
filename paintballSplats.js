@@ -127,13 +127,17 @@ function spawnPaintOnWorldSurface(scene, point, normal, color) {
 }
 
 function wallFaceKey(face) {
-  const q = (v) => Math.round(v * 4);
-  return `${q(face.px)}_${q(face.pz)}_${face.nx}_${face.nz}`;
+  const qCell = (v) => Math.round(v * 4);
+  const qAlong = (v) => Math.round(v * 9);
+  const along = Math.abs(face.nx) > 0.5 ? (face.hitZ ?? face.pz) : (face.hitX ?? face.px);
+  return `${qCell(face.px)}_${qCell(face.pz)}_${face.nx}_${face.nz}_${qAlong(along)}`;
 }
 
 function orientGroupToWall(group, face) {
   const eps = 0.26;
-  group.position.set(face.px + face.nx * eps, 0, face.pz + face.nz * eps);
+  const wx = Math.abs(face.nx) > 0.5 ? face.px + face.nx * eps : (face.hitX ?? face.px);
+  const wz = Math.abs(face.nz) > 0.5 ? face.pz + face.nz * eps : (face.hitZ ?? face.pz);
+  group.position.set(wx, 0, wz);
   if (face.nx > 0) group.rotation.y = -Math.PI / 2;
   else if (face.nx < 0) group.rotation.y = Math.PI / 2;
   else if (face.nz > 0) group.rotation.y = 0;
@@ -141,10 +145,11 @@ function orientGroupToWall(group, face) {
 }
 
 /** 同一面牆累積擴散漆彈 */
-function addBlobWallSplat(scene, face, color) {
+function addBlobWallSplat(scene, face, color, opts = {}) {
   const key = wallFaceKey(face);
   let entry = wallAccum.get(key);
   const mat = splatMat(color, 0.94);
+  const light = !!opts.light;
 
   if (entry?.group?.parent) {
     const group = entry.group;
@@ -410,7 +415,7 @@ export function spawnPaintSplat(scene, ctx, maze, x, z, color) {
   addFloorBlob(scene, x, z, color ?? 0xff4466);
 }
 
-export function spawnPaintAtHit(scene, ctx, maze, x, z, color, prevX, prevZ, fireDir = null, hitType = "wall") {
+export function spawnPaintAtHit(scene, ctx, maze, x, z, color, prevX, prevZ, fireDir = null, hitType = "wall", opts = {}) {
   if (!scene || !ctx || !maze) return;
   const col = color ?? 0xff4466;
   if (hitType === "floor") {
@@ -420,6 +425,9 @@ export function spawnPaintAtHit(scene, ctx, maze, x, z, color, prevX, prevZ, fir
   const x0 = prevX ?? x;
   const z0 = prevZ ?? z;
   const face = raycastWallFace(ctx, maze, x0, z0, x, z);
-  if (face) addBlobWallSplat(scene, face, col);
-  else addFloorBlob(scene, x, z, col);
+  if (face) {
+    face.hitX = x;
+    face.hitZ = z;
+    addBlobWallSplat(scene, face, col, opts);
+  } else addFloorBlob(scene, x, z, col);
 }

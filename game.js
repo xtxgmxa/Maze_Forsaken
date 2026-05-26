@@ -4747,6 +4747,9 @@ function syncProjectileMeshes() {
     if (!m) return;
     m.position.set(pr.x, pr.y ?? 1.2, pr.z);
     m.material.color.setHex(pr.color || 0xff2244);
+    const multi = (pr.pelletTotal ?? 1) > 1;
+    const s = multi ? 0.42 + ((pr.pelletIndex ?? 0) % 3) * 0.04 : 1;
+    m.scale.setScalar(s);
   });
 }
 
@@ -4784,7 +4787,17 @@ function updateProjectiles(dt) {
     }
 
     if (hit) {
-      if (hitType === "wall" && pr.fromShooter) playShooterSfx("hitWall", playSfx, 0.06);
+      if (pr.fromShooter) {
+        const hx = hit ? (prevX + pr.x) * 0.5 : pr.x;
+        const hz = hit ? (prevZ + pr.z) * 0.5 : pr.z;
+        spawnPaintAtHit(scene, ctx, maze, hx, hz, pr.color, prevX, prevZ, pr.fireDir, hitType, {
+          light: (pr.pelletTotal ?? 1) > 1,
+        });
+        if (hitType === "wall") {
+          const gap = (pr.pelletTotal ?? 1) > 1 ? 0.02 : 0.06;
+          playShooterSfx("hitWall", playSfx, gap);
+        }
+      }
       projectiles.splice(i, 1);
       continue;
     }

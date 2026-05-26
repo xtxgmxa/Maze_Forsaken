@@ -491,7 +491,7 @@ export function buildMoleEndResults(players, human, state) {
 export const SHOOTER_WEAPONS = [
   { id: "smg", name: "衝鋒槍", slot: 1, damage: 8, fireCd: 0.14, spread: 0.035, speed: 30, color: 0x44ddff, pellets: 1 },
   { id: "rifle", name: "步槍", slot: 2, damage: 18, fireCd: 0.36, spread: 0.008, speed: 34, color: 0xffcc44, pellets: 1 },
-  { id: "shotgun", name: "霰彈槍", slot: 3, damage: 7, fireCd: 0.58, spread: 0.2, speed: 26, color: 0xff8844, pellets: 6 },
+  { id: "shotgun", name: "霰彈槍", slot: 3, damage: 7, fireCd: 0.58, spread: 0.26, speed: 26, color: 0xff8844, pellets: 9 },
   { id: "sniper", name: "狙擊槍", slot: 4, damage: 42, fireCd: 1.15, spread: 0.0005, speed: 58, color: 0xff66cc, pellets: 1, headshotKill: true },
   { id: "pad", name: "彈跳板", slot: 5, damage: 0, fireCd: 0.55, spread: 0, speed: 0, color: 0x33eeff, pellets: 0, placePad: true },
   { id: "katana", name: "武士刀", slot: 6, damage: 36, fireCd: 0.46, spread: 0, speed: 0, color: 0xcfd8e8, pellets: 0, melee: true, meleeRange: 2.6 },
@@ -680,7 +680,7 @@ export function tryManualShooterRespawn(p, ctx, maze, players) {
   return true;
 }
 
-export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) {
+export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null, pelletJitter = null) {
   const spread = (p._shooterSpread ?? 0) * pelletOffset;
   const spd = p._shooterBulletSpeed ?? 30;
   const muzzle = 0.85;
@@ -690,7 +690,15 @@ export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) 
     dir = new THREE.Vector3(v.x, v.y, v.z);
     if (dir.lengthSq() < 1e-6) dir.set(Math.sin(yaw), 0, Math.cos(yaw));
     else dir.normalize();
-    if (spread) {
+    if (pelletJitter) {
+      const baseYaw = Math.atan2(dir.x, dir.z);
+      const horiz = Math.hypot(dir.x, dir.z) || 1;
+      const basePitch = Math.atan2(dir.y, horiz);
+      const jy = baseYaw + (pelletJitter.yaw ?? 0);
+      const jp = basePitch + (pelletJitter.pitch ?? 0);
+      const cosP = Math.cos(jp);
+      dir.set(Math.sin(jy) * cosP, Math.sin(jp), Math.cos(jy) * cosP).normalize();
+    } else if (spread) {
       const horiz = Math.hypot(dir.x, dir.z) || 1;
       const baseYaw = Math.atan2(dir.x, dir.z) + spread;
       dir.x = Math.sin(baseYaw) * horiz;
@@ -698,8 +706,10 @@ export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) 
       dir.normalize();
     }
   } else {
-    const aim = yaw + spread;
-    dir = new THREE.Vector3(Math.sin(aim), 0, Math.cos(aim));
+    const aim = yaw + spread + (pelletJitter?.yaw ?? 0);
+    const pitch = pelletJitter?.pitch ?? 0;
+    const cosP = Math.cos(pitch);
+    dir = new THREE.Vector3(Math.sin(aim) * cosP, Math.sin(pitch), Math.cos(aim) * cosP);
   }
   const eyeY = 1.52 + (p._jumpY ?? 0) + (p.elev ?? 0);
   const fd = { x: dir.x, y: dir.y, z: dir.z };
@@ -722,10 +732,23 @@ export function makeShooterProjectile(p, yaw, pelletOffset = 0, fireDir = null) 
 export function fireShooterWeapon(p, yaw, fireDir = null) {
   if (p?.weaponId === "katana") return [];
   const n = p._shooterPellets ?? 1;
+  const spreadBase = p._shooterSpread ?? 0;
   const list = [];
   for (let i = 0; i < n; i++) {
+    let jitter = null;
+    if (n > 1) {
+      const s = spreadBase || 0.22;
+      jitter = {
+        yaw: (Math.random() - 0.5) * s * 2.4,
+        pitch: (Math.random() - 0.5) * s * 1.6,
+      };
+    }
     const off = n <= 1 ? 0 : (i / (n - 1) - 0.5) * 2;
-    list.push(makeShooterProjectile(p, yaw, off, fireDir));
+    const pr = makeShooterProjectile(p, yaw, jitter ? 0 : off, fireDir, jitter);
+    pr.pelletIndex = i;
+    pr.pelletTotal = n;
+    pr.weaponId = p.weaponId;
+    list.push(pr);
   }
   return list;
 }
@@ -734,24 +757,16 @@ const GUN_COLORS = { smg: 0x44ddff, rifle: 0xffcc44, shotgun: 0xff8844, sniper: 
 
 export function attachShooterGun(p) {
   if (!p?.mesh || p.gunMesh) return;
-  const id = p.weaponId || "rifle";
   const gun = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.42, 0.16, 0.55),
-    new THREE.MeshBasicMaterial({ color: GUN_COLORS[id] || 0x888899 })
-  );
-  body.position.z = 0.08;
-  const barrel = new THREE.Mesh(
-    new THREE.BoxGeometry(0.1, 0.1, 0.42),
-    new THREE.MeshBasicMaterial({ color: 0x333344 })
-  );
-  barrel.position.set(0, 0.02, 0.52);
-  const grip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.22, 0.14),
-    new THREE.MeshBasicMaterial({ color: 0x222233 })
-  );
-  grip.position.set(0, -0.14, -0.08);
-  gun.add(body, barrel, grip);
+  const partNames = ["body", "barrel", "grip", "acc1", "acc2", "acc3"];
+  for (const n of partNames) {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.1, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0x888899 })
+    );
+    m.name = `wp_${n}`;
+    gun.add(m);
+  }
   gun.position.set(0.38, 1.12, 0.42);
   gun.rotation.y = 0.15;
   p.mesh.add(gun);
@@ -776,9 +791,90 @@ function setHeldPart(mesh, w, h, d, color, opacity = 1) {
   mesh.visible = true;
 }
 
+function placeHeldPart(mesh, x, y, z, rx = 0, ry = 0, rz = 0) {
+  if (!mesh) return;
+  mesh.position.set(x, y, z);
+  mesh.rotation.set(rx, ry, rz);
+}
+
+function hideFpParts(parts) {
+  if (!parts) return;
+  for (const m of Object.values(parts)) if (m) m.visible = false;
+}
+
+function layoutKatanaParts(parts, flashCol) {
+  const { body, barrel, grip, acc1, acc2, acc3 } = parts;
+  const blade = flashCol ?? 0xf6f9ff;
+  const edge = flashCol ? 0xffe8b8 : 0xd8e4f8;
+  setHeldPart(body, 0.048, 0.09, 1.32, blade);
+  placeHeldPart(body, 0.02, 0.02, 0.72, 0.06, 0.04, 0);
+  setHeldPart(acc1, 0.012, 0.1, 1.28, edge);
+  placeHeldPart(acc1, 0.065, 0.025, 0.7, 0.06, 0.04, 0);
+  setHeldPart(barrel, 0.34, 0.05, 0.12, 0xffd966);
+  placeHeldPart(barrel, 0.02, 0.0, 0.14, 0, 0, 0);
+  setHeldPart(acc2, 0.1, 0.04, 0.08, 0xccb04a);
+  placeHeldPart(acc2, 0.02, -0.02, 0.06, 0, 0, 0);
+  setHeldPart(grip, 0.085, 0.085, 0.38, 0x1a2038);
+  placeHeldPart(grip, 0.02, -0.02, -0.2, 0.1, 0, 0);
+  setHeldPart(acc3, 0.11, 0.11, 0.11, 0x252a40);
+  placeHeldPart(acc3, 0.02, -0.03, -0.42, 0, 0, 0);
+}
+
+function layoutGunParts(parts, id, flashCol) {
+  const { body, barrel, grip, acc1, acc2, acc3 } = parts;
+  const col = flashCol ?? GUN_COLORS[id] ?? 0x888899;
+  hideFpParts(parts);
+  if (id === "smg") {
+    setHeldPart(body, 0.38, 0.14, 0.48, col);
+    placeHeldPart(body, 0, 0, 0.04);
+    setHeldPart(barrel, 0.07, 0.07, 0.32, 0x2a2a38);
+    placeHeldPart(barrel, 0, 0.02, 0.38);
+    setHeldPart(grip, 0.1, 0.2, 0.12, 0x181822);
+    placeHeldPart(grip, 0, -0.12, -0.02);
+    setHeldPart(acc1, 0.1, 0.22, 0.14, 0x222230);
+    placeHeldPart(acc1, 0.06, -0.08, 0.02);
+    return;
+  }
+  if (id === "shotgun") {
+    setHeldPart(body, 0.44, 0.16, 0.52, col);
+    placeHeldPart(body, 0, 0, 0.02);
+    setHeldPart(barrel, 0.06, 0.06, 0.38, 0x252530);
+    placeHeldPart(barrel, -0.05, 0.03, 0.42);
+    setHeldPart(acc1, 0.06, 0.06, 0.38, 0x252530);
+    placeHeldPart(acc1, 0.05, 0.03, 0.42);
+    setHeldPart(grip, 0.12, 0.1, 0.22, 0x1a1a24);
+    placeHeldPart(grip, 0, -0.1, -0.08);
+    setHeldPart(acc2, 0.14, 0.12, 0.38, 0x2a2218);
+    placeHeldPart(acc2, 0, -0.02, -0.22);
+    return;
+  }
+  if (id === "sniper") {
+    setHeldPart(body, 0.4, 0.14, 0.58, col);
+    placeHeldPart(body, 0, 0, 0.04);
+    setHeldPart(barrel, 0.06, 0.06, 0.58, 0x1e1e2a);
+    placeHeldPart(barrel, 0, 0.03, 0.52);
+    setHeldPart(acc1, 0.08, 0.08, 0.22, 0x445566);
+    placeHeldPart(acc1, 0, 0.1, 0.18);
+    setHeldPart(grip, 0.1, 0.2, 0.13, 0x141420);
+    placeHeldPart(grip, 0, -0.12, -0.04);
+    setHeldPart(acc2, 0.08, 0.05, 0.2, 0x333344);
+    placeHeldPart(acc2, 0, -0.14, 0.28);
+    return;
+  }
+  setHeldPart(body, 0.42, 0.15, 0.54, col);
+  placeHeldPart(body, 0, 0, 0.04);
+  setHeldPart(barrel, 0.07, 0.07, 0.4, 0x2a2a38);
+  placeHeldPart(barrel, 0, 0.02, 0.42);
+  setHeldPart(grip, 0.1, 0.2, 0.12, 0x181822);
+  placeHeldPart(grip, 0, -0.12, -0.02);
+  setHeldPart(acc1, 0.12, 0.08, 0.2, 0x333340);
+  placeHeldPart(acc1, 0.05, 0.08, 0.12);
+}
+
 const RECOIL_STRENGTH = { smg: 0.055, rifle: 0.095, shotgun: 0.16, sniper: 0.2 };
 const RECOIL_DURATION = { smg: 0.1, rifle: 0.13, shotgun: 0.18, sniper: 0.22 };
-const KATANA_SWING_DURATION = 0.36;
+const KATANA_SWING_DURATION = 0.44;
+const SWING_AMP = 2.45;
 
 /** 揮刀：0 下劈、1 右掃、2 左掃（連按輪替） */
 export function startKatanaSwing(p) {
@@ -820,24 +916,25 @@ function getFpMotionOffsets(p, weaponId) {
   if (id === "katana" && (p._katanaSwingT ?? 0) > 0) {
     const u = 1 - p._katanaSwingT / KATANA_SWING_DURATION;
     const kind = p._katanaSwingIdx ?? 0;
+    const a = SWING_AMP;
     if (kind === 0) {
-      const chop = u < 0.28 ? u / 0.28 : u < 0.58 ? 1 : 1 - (u - 0.58) / 0.42;
-      off.rot[0] += -1.55 + chop * 2.35;
-      off.rot[2] += Math.sin(u * Math.PI * 2) * 0.18;
-      off.pos[1] += -0.1 + chop * 0.16;
-      off.pos[2] += -0.06 + chop * 0.2;
+      const chop = u < 0.25 ? u / 0.25 : u < 0.55 ? 1 : 1 - (u - 0.55) / 0.45;
+      off.rot[0] += (-1.75 + chop * 2.85) * a;
+      off.rot[2] += Math.sin(u * Math.PI * 2) * 0.32 * a;
+      off.pos[1] += (-0.14 + chop * 0.28) * a;
+      off.pos[2] += (-0.1 + chop * 0.32) * a;
     } else if (kind === 1) {
       const sweep = Math.sin(u * Math.PI);
-      off.rot[1] += -1.05 + u * 2.1;
-      off.rot[0] += sweep * 0.42;
-      off.pos[0] += sweep * 0.12;
-      off.pos[2] += sweep * 0.04;
+      off.rot[1] += (-1.35 + u * 2.7) * a;
+      off.rot[0] += sweep * 0.72 * a;
+      off.pos[0] += sweep * 0.22 * a;
+      off.pos[2] += sweep * 0.08 * a;
     } else {
       const sweep = Math.sin(u * Math.PI);
-      off.rot[1] += 1.05 - u * 2.1;
-      off.rot[0] += sweep * 0.38;
-      off.pos[0] -= sweep * 0.12;
-      off.pos[2] += sweep * 0.04;
+      off.rot[1] += (1.35 - u * 2.7) * a;
+      off.rot[0] += sweep * 0.68 * a;
+      off.pos[0] -= sweep * 0.22 * a;
+      off.pos[2] += sweep * 0.08 * a;
     }
   }
   return off;
@@ -846,53 +943,52 @@ function getFpMotionOffsets(p, weaponId) {
 /** 第三人稱／第一人稱手持（樂高方塊風） */
 export function syncGunVisual(p) {
   if (!p?.gunMesh) return;
-  const body = p.gunMesh.children[0];
-  const barrel = p.gunMesh.children[1];
-  const grip = p.gunMesh.children[2];
+  const parts = {
+    body: p.gunMesh.children.find((c) => c.name === "wp_body") || p.gunMesh.children[0],
+    barrel: p.gunMesh.children.find((c) => c.name === "wp_barrel") || p.gunMesh.children[1],
+    grip: p.gunMesh.children.find((c) => c.name === "wp_grip") || p.gunMesh.children[2],
+    acc1: p.gunMesh.children.find((c) => c.name === "wp_acc1") || p.gunMesh.children[3],
+    acc2: p.gunMesh.children.find((c) => c.name === "wp_acc2") || p.gunMesh.children[4],
+    acc3: p.gunMesh.children.find((c) => c.name === "wp_acc3") || p.gunMesh.children[5],
+  };
   p.gunMesh.visible = true;
   if (p.weaponId === "pad") {
-    setHeldPart(body, 0.52, 0.14, 0.52, 0x33eeff, 0.52);
-    setHeldPart(barrel, 0.2, 0.08, 0.2, 0x88ffee, 0.72);
-    if (grip) grip.visible = false;
+    hideFpParts(parts);
+    setHeldPart(parts.body, 0.52, 0.14, 0.52, 0x33eeff, 0.52);
+    setHeldPart(parts.barrel, 0.2, 0.08, 0.2, 0x88ffee, 0.72);
     p.gunMesh.position.set(0.36, 1.1, 0.38);
     p.gunMesh.rotation.set(0, 0.12, 0);
     p.gunMesh.scale.set(1.05, 1.05, 1.05);
     return;
   }
-  if (grip) grip.visible = true;
   if (p.weaponId === "katana") {
-    setHeldPart(body, 0.09, 0.07, 1.14, 0xf8fbff);
-    setHeldPart(barrel, 0.28, 0.045, 0.11, 0xffd966);
-    setHeldPart(grip, 0.09, 0.09, 0.36, 0x1e2438);
+    layoutKatanaParts(parts);
     const swingT = p._katanaSwingT ?? 0;
+    const a = SWING_AMP * 0.92;
     if (swingT > 0 && p.gunMesh.parent === p.mesh) {
       const u = 1 - swingT / KATANA_SWING_DURATION;
       const kind = p._katanaSwingIdx ?? 0;
       const baseRot = new THREE.Euler(-0.08, 0.62, 0.22);
       if (kind === 0) {
-        const chop = u < 0.28 ? u / 0.28 : u < 0.58 ? 1 : 1 - (u - 0.58) / 0.42;
-        baseRot.x += -0.9 + chop * 1.4;
+        const chop = u < 0.25 ? u / 0.25 : u < 0.55 ? 1 : 1 - (u - 0.55) / 0.45;
+        baseRot.x += (-1.1 + chop * 1.75) * a;
       } else if (kind === 1) {
-        baseRot.y += -0.7 + u * 1.4;
-        baseRot.x += Math.sin(u * Math.PI) * 0.25;
+        baseRot.y += (-0.85 + u * 1.7) * a;
+        baseRot.x += Math.sin(u * Math.PI) * 0.45 * a;
       } else {
-        baseRot.y += 0.7 - u * 1.4;
-        baseRot.x += Math.sin(u * Math.PI) * 0.22;
+        baseRot.y += (0.85 - u * 1.7) * a;
+        baseRot.x += Math.sin(u * Math.PI) * 0.4 * a;
       }
-      p.gunMesh.position.set(0.36, 1.1, 0.32);
       p.gunMesh.rotation.copy(baseRot);
     } else {
-      p.gunMesh.position.set(0.36, 1.1, 0.32);
       p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
     }
+    p.gunMesh.position.set(0.36, 1.1, 0.32);
     p.gunMesh.scale.set(1.15, 1.15, 1.15);
     return;
   }
   const id = p.weaponId || "rifle";
-  const col = GUN_COLORS[id] || 0x888899;
-  setHeldPart(body, 0.42, 0.16, 0.55, col);
-  setHeldPart(barrel, 0.1, 0.1, id === "sniper" ? 0.52 : 0.4, 0x333344);
-  setHeldPart(grip, 0.12, 0.22, 0.14, 0x222233);
+  layoutGunParts(parts, id);
   p.gunMesh.position.set(0.38, 1.12, 0.42);
   p.gunMesh.rotation.set(0, 0.15, 0);
   const sx = id === "shotgun" ? 1.25 : id === "smg" ? 0.82 : id === "sniper" ? 1.15 : 1;
@@ -912,39 +1008,33 @@ const FP_HAND_POSE = {
 function buildFpHeldBlockRig() {
   const rig = new THREE.Group();
   rig.name = "fpHeldRig";
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
-  body.name = "fpPartBody";
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
-  barrel.name = "fpPartBarrel";
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
-  grip.name = "fpPartGrip";
-  rig.add(body, barrel, grip);
-  rig.userData.parts = { body, barrel, grip };
+  const parts = {};
+  for (const n of ["body", "barrel", "grip", "acc1", "acc2", "acc3"]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), heldPartMat(0xffffff));
+    m.name = `fp_${n}`;
+    m.visible = false;
+    rig.add(m);
+    parts[n] = m;
+  }
+  rig.userData.parts = parts;
   return rig;
 }
 
 function syncFpHeldBlockRig(rig, weaponId, flash = 0) {
-  const { body, barrel, grip } = rig.userData.parts || {};
-  if (!body) return;
+  const parts = rig.userData.parts;
+  if (!parts) return;
   const id = weaponId || "rifle";
   const flashCol = flash > 0.15 ? 0xffd7a2 : null;
+  hideFpParts(parts);
   if (id === "pad") {
-    setHeldPart(body, 0.52, 0.14, 0.52, flashCol ?? 0x33eeff, 0.55);
-    setHeldPart(barrel, 0.2, 0.08, 0.2, flashCol ?? 0x88ffee, 0.75);
-    if (grip) grip.visible = false;
+    setHeldPart(parts.body, 0.52, 0.14, 0.52, flashCol ?? 0x33eeff, 0.55);
+    placeHeldPart(parts.body, 0, 0, 0);
+    setHeldPart(parts.barrel, 0.2, 0.08, 0.2, flashCol ?? 0x88ffee, 0.75);
+    placeHeldPart(parts.barrel, 0, 0.06, 0);
     return;
   }
-  if (grip) grip.visible = true;
-  if (id === "katana") {
-    setHeldPart(body, 0.1, 0.1, 1.12, flashCol ?? 0xf4f8ff);
-    setHeldPart(barrel, 0.26, 0.05, 0.1, flashCol ?? 0xe8c86a);
-    setHeldPart(grip, 0.1, 0.1, 0.34, 0x1a1e2b);
-    return;
-  }
-  const col = GUN_COLORS[id] || 0x888899;
-  setHeldPart(body, 0.42, 0.16, 0.55, flashCol ?? col);
-  setHeldPart(barrel, 0.1, 0.1, id === "sniper" ? 0.52 : 0.4, 0x333344);
-  setHeldPart(grip, 0.12, 0.22, 0.14, 0x222233);
+  if (id === "katana") layoutKatanaParts(parts, flashCol);
+  else layoutGunParts(parts, id, flashCol);
 }
 
 function ensureFpHeldRig(p) {
