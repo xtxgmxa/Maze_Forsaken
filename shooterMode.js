@@ -23,7 +23,8 @@ function shooterRng(seed) {
 
 function cellPassable(maze, w, h, gx, gz) {
   if (gx < 0 || gz < 0 || gx >= w || gz >= h) return false;
-  const c = maze[gz][gx];
+  const c = maze?.[gz]?.[gx];
+  if (!c) return false;
   const open = !c.left || !c.right || !c.top || !c.bottom;
   return open;
 }
@@ -54,7 +55,8 @@ export function carveShooterSecretPassages(ctx, maze, level = {}) {
     const gx = 1 + Math.floor(rng() * Math.max(1, w - 2));
     const gz = 1 + Math.floor(rng() * Math.max(1, h - 2));
     if (!cellPassable(maze, w, h, gx, gz)) continue;
-    const c = maze[gz][gx];
+    const c = maze?.[gz]?.[gx];
+    if (!c) continue;
     const dirs = [];
     if (c.right && gx < w - 1 && cellPassable(maze, w, h, gx + 1, gz)) dirs.push("right");
     if (c.bottom && gz < h - 1 && cellPassable(maze, w, h, gx, gz + 1)) dirs.push("bottom");
@@ -64,16 +66,16 @@ export function carveShooterSecretPassages(ctx, maze, level = {}) {
     const dir = dirs[Math.floor(rng() * dirs.length)];
     if (dir === "right") {
       c.right = false;
-      maze[gz][gx + 1].left = false;
+      if (maze?.[gz]?.[gx + 1]) maze[gz][gx + 1].left = false;
     } else if (dir === "bottom") {
       c.bottom = false;
-      maze[gz + 1][gx].top = false;
+      if (maze?.[gz + 1]?.[gx]) maze[gz + 1][gx].top = false;
     } else if (dir === "left") {
       c.left = false;
-      maze[gz][gx - 1].right = false;
+      if (maze?.[gz]?.[gx - 1]) maze[gz][gx - 1].right = false;
     } else {
       c.top = false;
-      maze[gz - 1][gx].bottom = false;
+      if (maze?.[gz - 1]?.[gx]) maze[gz - 1][gx].bottom = false;
     }
     carved++;
   }
@@ -291,6 +293,7 @@ export function spawnShooterBouncePads(ctx, maze, group, level, platforms = []) 
   const want = Math.min(16, level.bouncePads ?? 4);
   const spots = [...(layout.pads || [])];
   const rng = shooterRng((level.mapSeed ?? 2) ^ 0xb0adc3);
+  const usedPad = new Set();
 
   const tryPadAt = (gx, gz, elev = 0, sp = {}) => {
     const key = `${gx},${gz},${elev}`;
@@ -767,17 +770,17 @@ export function syncGunVisual(p) {
     const body = p.gunMesh.children[0];
     const barrel = p.gunMesh.children[1];
     const grip = p.gunMesh.children[2];
-    if (body?.geometry) body.geometry = new THREE.BoxGeometry(0.06, 0.1, 0.95);
-    if (barrel?.geometry) barrel.geometry = new THREE.BoxGeometry(0.03, 0.08, 0.55);
-    if (grip?.geometry) grip.geometry = new THREE.BoxGeometry(0.11, 0.18, 0.18);
-    p.gunMesh.position.set(0.34, 1.08, 0.36);
-    p.gunMesh.rotation.set(0.05, 0.55, 0.1);
+    if (body?.geometry) body.geometry = new THREE.BoxGeometry(0.05, 0.08, 0.88);
+    if (barrel?.geometry) barrel.geometry = new THREE.BoxGeometry(0.18, 0.03, 0.08);
+    if (grip?.geometry) grip.geometry = new THREE.BoxGeometry(0.07, 0.08, 0.24);
+    p.gunMesh.position.set(0.36, 1.1, 0.32);
+    p.gunMesh.rotation.set(-0.08, 0.62, 0.22);
     const bodyMat = body?.material;
     const barrelMat = barrel?.material;
     const gripMat = grip?.material;
-    if (bodyMat?.color) bodyMat.color.setHex(0xdde6f8);
-    if (barrelMat?.color) barrelMat.color.setHex(0x9fb2d1);
-    if (gripMat?.color) gripMat.color.setHex(0x1f2533);
+    if (bodyMat?.color) bodyMat.color.setHex(0xe7edf9);
+    if (barrelMat?.color) barrelMat.color.setHex(0xd2b36a);
+    if (gripMat?.color) gripMat.color.setHex(0x1a1e2b);
     return;
   }
   p.gunMesh.visible = true;
@@ -827,28 +830,36 @@ export function attachFpGun(cam, weaponId = "rifle") {
   const gun = new THREE.Group();
   gun.name = "fpGunBody";
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.36), fpGunMat(col));
+  body.name = "fpBody";
   body.position.z = 0.04;
   const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.34), fpGunMat(0x2a2a38));
+  barrel.name = "fpBarrel";
   barrel.position.set(0, 0.02, 0.38);
   const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.18, 0.11), fpGunMat(0x151520));
+  grip.name = "fpGrip";
   grip.position.set(0, -0.11, -0.04);
   const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.1), fpGunMat(0x333344));
+  guard.name = "fpGuard";
   guard.position.set(0, -0.02, 0.12);
   const scope = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), fpGunMat(0x556677));
   scope.position.set(0, 0.09, 0.04);
   scope.name = "fpScope";
-  const katanaBlade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.06, 1.22), fpGunMat(0xdde6f8));
+  const katanaBlade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.045, 1.05), fpGunMat(0xe7edf9));
   katanaBlade.name = "fpKatanaBlade";
-  katanaBlade.position.set(0.1, -0.02, 0.8);
-  katanaBlade.rotation.set(-0.05, 0.12, 0.04);
+  katanaBlade.position.set(0.0, 0.0, 0.62);
+  katanaBlade.rotation.set(0.08, 0.01, 0);
   katanaBlade.visible = false;
-  const katanaGuard = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.08), fpGunMat(0x1f2533));
+  const katanaGuard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, 0.08), fpGunMat(0xd2b36a));
   katanaGuard.name = "fpKatanaGuard";
-  katanaGuard.position.set(0.06, -0.06, 0.17);
-  katanaGuard.rotation.set(0.02, 0.16, 0);
+  katanaGuard.position.set(0.0, 0.0, 0.08);
+  katanaGuard.rotation.set(0, 0, 0);
   katanaGuard.visible = false;
+  const katanaHandle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.32), fpGunMat(0x1a1e2b));
+  katanaHandle.name = "fpKatanaHandle";
+  katanaHandle.position.set(0, -0.01, -0.12);
+  katanaHandle.visible = false;
   gun.add(body, barrel, grip, guard, scope);
-  gun.add(katanaBlade, katanaGuard);
+  gun.add(katanaBlade, katanaGuard, katanaHandle);
   gun.position.set(0.12, -0.06, 0.02);
   gun.rotation.set(0.02, 0.05, 0);
 
@@ -874,15 +885,17 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
   const id = weaponId || "rifle";
   const col = GUN_COLORS[id] || 0x888899;
   const gunBody = fpGunMesh.getObjectByName("fpGunBody");
+  const katanaGroup = fpGunMesh.getObjectByName("fpKatanaGroup");
   const katBlade = fpGunMesh.getObjectByName("fpKatanaBlade");
   const katGuard = fpGunMesh.getObjectByName("fpKatanaGuard");
-  if (gunBody) gunBody.visible = id !== "katana";
-  if (katBlade) katBlade.visible = id === "katana";
-  if (katGuard) katGuard.visible = id === "katana";
+  const katHandle = fpGunMesh.getObjectByName("fpKatanaHandle");
+  const isKatana = id === "katana";
+  if (gunBody) gunBody.visible = !isKatana;
+  if (katanaGroup) katanaGroup.visible = isKatana;
   fpGunMesh.traverse((c) => {
     if (!c.material?.color) return;
     if (c.name === "fpScope") {
-      c.visible = id === "sniper" || id === "rifle";
+      c.visible = !isKatana && (id === "sniper" || id === "rifle");
       c.material.color.setHex(id === "sniper" ? 0x6688aa : 0x445566);
       return;
     }
@@ -897,9 +910,10 @@ export function syncFpGunVisual(cam, weaponId, flash = 0) {
   if (id === "sniper") {
     fpGunMesh.position.set(0.32, -0.26, -0.44);
   } else if (id === "katana") {
-    if (katBlade?.material?.color) katBlade.material.color.setHex(flash > 0.15 ? 0xffd7a2 : 0xdde6f8);
-    fpGunMesh.position.set(0.56, -0.31, -0.18);
-    fpGunMesh.rotation.set(0.22, 0.38, -0.2);
+    if (katBlade?.material?.color) katBlade.material.color.setHex(flash > 0.15 ? 0xffd7a2 : 0xf2f6ff);
+    if (katGuard?.material?.color) katGuard.material.color.setHex(flash > 0.15 ? 0xffe8a8 : 0xe8c86a);
+    fpGunMesh.position.set(0.4, -0.27, -0.46);
+    fpGunMesh.rotation.set(0.04, 0.08, 0.02);
   } else {
     fpGunMesh.position.set(0.38, -0.28, -0.48);
     fpGunMesh.rotation.set(0.03, 0.05, 0);

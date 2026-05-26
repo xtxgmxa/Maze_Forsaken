@@ -187,11 +187,17 @@ export function cellCenter(ctx, gx, gz) {
 }
 
 export function worldToCell(ctx, x, z) {
-  const gx = Math.floor((x + (ctx.w * ctx.cell) / 2) / ctx.cell);
-  const gz = Math.floor((z + (ctx.h * ctx.cell) / 2) / ctx.cell);
+  const cell = Number(ctx?.cell);
+  const w = Math.max(1, Number(ctx?.w) || 1);
+  const h = Math.max(1, Number(ctx?.h) || 1);
+  const sx = Number.isFinite(x) ? x : 0;
+  const sz = Number.isFinite(z) ? z : 0;
+  const baseCell = cell > 0 ? cell : 9;
+  const gx = Math.floor((sx + (w * baseCell) / 2) / baseCell);
+  const gz = Math.floor((sz + (h * baseCell) / 2) / baseCell);
   return {
-    gx: Math.max(0, Math.min(ctx.w - 1, gx)),
-    gz: Math.max(0, Math.min(ctx.h - 1, gz)),
+    gx: Math.max(0, Math.min(w - 1, Number.isFinite(gx) ? gx : 0)),
+    gz: Math.max(0, Math.min(h - 1, Number.isFinite(gz) ? gz : 0)),
   };
 }
 
@@ -232,7 +238,9 @@ export function collides(ctx, maze, x, z, radius = 0.45, jumpY = 0, footElev = 0
   const r = (airy ? Math.min(radius, 0.14) : radius) * scale;
   const half = ctx.cell / 2 - r - (airy ? 1.1 : 0.18);
   const { gx, gz } = worldToCell(ctx, x, z);
-  const cell = maze[gz][gx];
+  const row = maze?.[gz];
+  const cell = row?.[gx];
+  if (!cell) return false;
   const c = cellCenter(ctx, gx, gz);
   if (cell.top && z < c.z - half) return true;
   if (cell.bottom && z > c.z + half) return true;

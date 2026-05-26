@@ -1624,6 +1624,10 @@ function syncShooterPlayerVisibility() {
   const split = isShooterSplitView();
   const showFp = human && !spectating && !isShooterPlayerDown(human) && !split;
   setFpGunVisible(showFp);
+  if (showFp && human?.weaponId && human.weaponId !== "pad") {
+    const cam = getShooterCameraForPlayer(human);
+    if (cam) syncFpGunVisual(cam, human.weaponId);
+  }
   for (const s of survivors) {
     if (!s.mesh) continue;
     const alive = (s.hp ?? 0) > 0 && !s._awaitingRespawn;
@@ -2906,6 +2910,7 @@ function hideLoading() {
 const yieldFrame = () => new Promise((r) => requestAnimationFrame(r));
 
 let startInProgress = false;
+let startLoadPhase = "";
 
 async function startGame() {
   if (startInProgress) return;
@@ -2919,13 +2924,23 @@ async function startGame() {
   }
   startInProgress = true;
   try {
+    startLoadPhase = "初始化";
     await runStartGame();
+    startLoadPhase = "";
+  } catch (err) {
+    const lv = selectedLevel?.name || String(selectedLevel?.id ?? "?");
+    const phase = startLoadPhase || "未知階段";
+    console.error("[startGame]", { mode: gameMode, level: lv, phase, err, stack: err?.stack });
+    alert(`開始遊戲失敗：${err?.message || err}（${gameMode}/${lv}/${phase}）`);
+    hideLoading();
+    returnToMenu();
   } finally {
     startInProgress = false;
   }
 }
 
 async function runStartGame() {
+  startLoadPhase = "準備 UI";
   document.getElementById("pausePanel")?.classList.remove("show");
   shooterScoreboardOpen = false;
   setShooterScoreboardVisible(false);
@@ -3048,6 +3063,7 @@ async function runStartGame() {
     showToast(`${selectedLevel.name} — ${mapId.tagline}`, 2800);
   }
 
+  startLoadPhase = "建立地圖";
   const mapSeed = getLevelMapSeed(selectedLevel, gameMode);
   const mapRng = createSeededRandom(mapSeed);
   const mapStyle = getMapStyle(selectedLevel, gameMode);
@@ -3077,6 +3093,7 @@ async function runStartGame() {
   platformerState = null;
   puzzleDoorState = null;
   shooterState = null;
+  startLoadPhase = "建立模式資料";
   if (isKeyHuntMode()) {
     keyHuntState = setupKeyHuntLevel(ctx, maze, selectedLevel);
   }
@@ -3092,6 +3109,7 @@ async function runStartGame() {
   await yieldFrame();
   loadStep("正在建立場景…");
   const shooterPal = isShooterMode() ? getShooterLayout(selectedLevel)?.palette : null;
+  startLoadPhase = "建立場景網格";
   buildMazeMeshes(ctx, maze, scene, {
     doorWalls: keyHuntState?.doors || puzzleDoorState?.doors || [],
     shooterPalette: shooterPal,
@@ -3110,6 +3128,7 @@ async function runStartGame() {
     realmZonesState = buildRealmZones(ctx, maze, scene, selectedLevel);
   }
   if (isShooterMode()) {
+    startLoadPhase = "槍戰競技場";
     loadStep("正在布置槍戰競技場…");
     const arena = buildShooterArena(ctx, maze, scene, selectedLevel);
     shooterArenaGroup = arena.group;
@@ -3127,6 +3146,7 @@ async function runStartGame() {
     };
     if (shooterState) shooterState.coverState = verticalWorldState;
   } else {
+    startLoadPhase = "立體世界";
     shooterArenaGroup = null;
     verticalWorldState = buildVerticalWorld(ctx, maze, scene, {
       ...selectedLevel,
@@ -3170,22 +3190,27 @@ async function runStartGame() {
   worldItems = spawnWorldItems(ctx, maze, ctx.items);
   buildItemMeshes(scene, worldItems);
   if (isKeyHuntMode()) {
+    startLoadPhase = "鑰匙關卡";
     keyHuntGroup = buildKeyHuntMeshes(scene, keyHuntState, ctx.cell);
     missionStations = [];
     missionGroup = null;
   } else if (isPlatformerMode()) {
+    startLoadPhase = "平台關卡";
     platformerGroup = buildPlatformerMeshes(scene, platformerState, ctx.cell);
     missionStations = spawnMissionStations(ctx, maze, ctx.missions ?? 4);
     missionGroup = buildMissionMeshes(scene, missionStations, { compact: isTouchUiEnabled() });
   } else if (isPuzzleDoorMode()) {
+    startLoadPhase = "謎題關卡";
     puzzleDoorGroup = buildPuzzleDoorMeshes(scene, puzzleDoorState, ctx.cell, ctx);
     missionStations = [];
     missionGroup = null;
   } else if (isShooterMode()) {
+    startLoadPhase = "槍戰任務";
     missionStations = [];
     missionGroup = null;
     puzzleDoorGroup = null;
   } else {
+    startLoadPhase = "一般任務";
     missionStations = spawnMissionStations(ctx, maze, ctx.missions);
     missionGroup = buildMissionMeshes(scene, missionStations, { compact: isTouchUiEnabled() });
   }
@@ -3341,6 +3366,7 @@ async function runStartGame() {
     }
   }
 
+  startLoadPhase = "完成進場";
   gameState = "play";
   hideLoading();
   if (window.__forsakenLanSession?.roomId && window.__forsakenLanClient?.connected) {

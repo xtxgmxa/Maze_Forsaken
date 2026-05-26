@@ -99,7 +99,8 @@ export function buildVerticalWorld(ctx, maze, scene, level = {}) {
   const isOpen = (gx, gz) => gx >= 0 && gz >= 0 && gx < w && gz < h;
   const cellOpen = (gx, gz, nx, nz) => {
     if (!isOpen(gx, gz) || !isOpen(nx, nz)) return false;
-    const c = maze[gz][gx];
+    const c = maze?.[gz]?.[gx];
+    if (!c) return false;
     if (nx === gx + 1) return !c.right;
     if (nx === gx - 1) return !c.left;
     if (nz === gz + 1) return !c.bottom;
@@ -227,7 +228,8 @@ export function buildVerticalWorld(ctx, maze, scene, level = {}) {
   const passages = [];
   for (let gz = 0; gz < h; gz++) {
     for (let gx = 0; gx < w; gx++) {
-      const c = maze[gz][gx];
+      const c = maze?.[gz]?.[gx];
+      if (!c) continue;
       if (gx < w - 1 && !c.right) {
         passages.push({ gx, gz, x: cellCenter(ctx, gx, gz).x + cell * 0.5, z: cellCenter(ctx, gx, gz).z, dir: "r" });
       }
