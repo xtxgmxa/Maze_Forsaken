@@ -1,5 +1,7 @@
 import * as THREE from "three";
-import { SURVIVORS, KILLERS, buildForsakenCharacter } from "./characters.js";
+import {
+  SURVIVORS, KILLERS, buildForsakenCharacter, cloneCharacterMaterials, restoreSurvivorMaterialState,
+} from "./characters.js";
 import {
   LEVELS, KEY_HUNT_LEVELS, PLATFORMER_LEVELS, PUZZLE_LEVELS, SHOOTER_LEVELS, getLevelTheme,
 } from "./levels.js";
@@ -40,6 +42,7 @@ import {
   isShooterMoleMode, clearShooterDownedState, SHOOTER_TEAMS,
   SHOOTER_WEAPONS, isShooterHeadshot, isShooterEnemy, getTargetHeadY,
   tryKatanaParry, isKatanaParryActive, getKatanaParryUi, computeShotgunMods,
+  KATANA_PARRY_DURATION,
 } from "./shooterMode.js";
 import { loadShooterSounds, preloadShooterSounds, warmShooterSounds, playShooterSfx } from "./shooterSounds.js";
 import { updateShooterLadderClimb } from "./shooterPhysics.js";
@@ -397,6 +400,7 @@ function updateCrosshair() {
     (playAsKiller || gameMode === "versus") &&
     keyDown(keys, prof, "slide")
   );
+  const splitShooterAim = isShooterMode() && gameState === "play" && isShooterSplitView() && !isSpectating();
   const shooterAim = isShooterMode() && gameState === "play" && !isShooterSplitView();
   ch.classList.toggle("show", killerAim || shooterAim);
   const human = getHumanSurvivor();
@@ -409,6 +413,63 @@ function updateCrosshair() {
   ch.classList.toggle("sniper-scope", sniper && shooterAds);
   if (scopeOv) scopeOv.classList.toggle("show", shooterAim && sniper && shooterAds);
   if (katanaRet) katanaRet.classList.toggle("show", hideCrosshair);
+  syncSplitCrosshairs(splitShooterAim);
+}
+
+function ensureSplitCrosshairLayer() {
+  let layer = document.getElementById("splitCrosshairLayer");
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "splitCrosshairLayer";
+    layer.style.position = "fixed";
+    layer.style.inset = "0";
+    layer.style.pointerEvents = "none";
+    layer.style.zIndex = "52";
+    layer.style.display = "none";
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+
+function syncSplitCrosshairs(active) {
+  const layer = ensureSplitCrosshairLayer();
+  if (!active) {
+    layer.style.display = "none";
+    layer.innerHTML = "";
+    return;
+  }
+  const viewports = getShooterLabelViewports(window.innerWidth, window.innerHeight);
+  layer.style.display = "block";
+  const used = new Set();
+  for (const vp of viewports) {
+    const viewer = vp.viewer;
+    if (!viewer || isShooterPlayerDown(viewer)) continue;
+    const wId = getShooterWeapon(viewer.weaponId)?.id;
+    if (wId === "katana") continue;
+    const key = viewer.profile || viewer.lanPlayerId || viewer.charDef?.id || `${vp.x}:${vp.y}`;
+    used.add(key);
+    let dot = layer.querySelector(`[data-k="${key}"]`);
+    if (!dot) {
+      dot = document.createElement("span");
+      dot.dataset.k = key;
+      dot.style.position = "absolute";
+      dot.style.width = "12px";
+      dot.style.height = "12px";
+      dot.style.marginLeft = "-6px";
+      dot.style.marginTop = "-6px";
+      dot.style.borderRadius = "50%";
+      dot.style.border = "2px solid #66ffcc";
+      dot.style.boxShadow = "0 0 10px #22ffaa";
+      dot.style.background = "rgba(255,255,255,0.22)";
+      layer.appendChild(dot);
+    }
+    dot.style.display = "block";
+    dot.style.left = `${Math.round(vp.x + vp.w * 0.5)}px`;
+    dot.style.top = `${Math.round(vp.y + vp.h * 0.5)}px`;
+  }
+  for (const el of [...layer.children]) {
+    if (!used.has(el.dataset.k || "")) el.remove();
+  }
 }
 
 const WEAPON_BAR_ICONS = { smg: "▮", rifle: "╬", shotgun: "▦", sniper: "◎", pad: "⌁", katana: "刀" };
@@ -974,6 +1035,26 @@ function initMenu() {
     });
   };
   bindPauseBtn(document.getElementById("btnHudPause"));
+  const btnMeshRepair = document.getElementById("btnMeshRepair");
+  if (btnMeshRepair) {
+    btnMeshRepair.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (gameState !== "play") return;
+      const n = repairAllSurvivorMeshes();
+      runSurvivorVisibilityAutoRepair();
+      showToast(n > 0 ? `已重建 ${n} 名角色模型` : "已掃描並修復角色顯示", 1800);
+    });
+  }
+  const btnPauseMeshRepair = document.getElementById("btnPauseMeshRepair");
+  if (btnPauseMeshRepair) {
+    btnPauseMeshRepair.addEventListener("click", (e) => {
+      e.preventDefault();
+      const n = repairAllSurvivorMeshes();
+      runSurvivorVisibilityAutoRepair();
+      showToast(n > 0 ? `已重建 ${n} 名角色模型` : "已修復角色顯示", 1800);
+    });
+  }
   refreshMenuForMode();
   updateMenuPreview();
   document.querySelectorAll(".menu-tab, #menuPrev, #menuNext").forEach((el) => {
@@ -1622,18 +1703,51 @@ function applyLookPitch(delta, sens = 0.0022) {
   camPitch = clampCamPitch(camPitch + mul * delta * sens);
 }
 
-function getShooterActiveFov() {
-  const p = getHumanSurvivor();
+function isPlayerShooterAds(p) {
+  if (!p) return false;
+  return !!(p._shooterAds ?? (p === getHumanSurvivor() && shooterAds));
+}
+
+function setPlayerShooterAds(p, on) {
+  if (!p) return;
+  const val = !!on;
+  p._shooterAds = val;
+  if (p === getHumanSurvivor() || p.profile === "p1") {
+    shooterAds = val;
+    document.body.classList.toggle("shooter-ads", val);
+  }
+}
+
+function getShooterFovForPlayer(p) {
   const w = getShooterWeapon(p?.weaponId);
-  if (shooterAds) {
+  if (isPlayerShooterAds(p) && w) {
     if (w.id === "sniper") return shooterSettings.scopeFov;
     return Math.max(62, Math.min(shooterSettings.fov - 6, Math.round(shooterSettings.fov * 0.88)));
   }
   return shooterSettings.fov;
 }
 
+function getShooterActiveFov() {
+  return getShooterFovForPlayer(getHumanSurvivor());
+}
+
 function updateShooterFov() {
   if (!camera || !isShooterMode()) return;
+  if (isShooterSplitView()) {
+    const locals = getLocalHumanPlayers();
+    const cams = [camera, camera2, camera3, camera4];
+    for (let i = 0; i < locals.length; i++) {
+      const cam = cams[i];
+      const p = locals[i];
+      if (!cam || !p) continue;
+      const fov = getShooterFovForPlayer(p);
+      if (Math.abs(cam.fov - fov) > 0.05) {
+        cam.fov = fov;
+        cam.updateProjectionMatrix();
+      }
+    }
+    return;
+  }
   const fov = getShooterActiveFov();
   if (Math.abs(camera.fov - fov) > 0.05) {
     camera.fov = fov;
@@ -1801,14 +1915,136 @@ function getShooterAimDir() {
 
 function ensureSurvivorBodyDrawn(s) {
   if (!s?.mesh) return;
+  cloneCharacterMaterials(s.mesh);
+  restoreSurvivorMaterialState(s.mesh);
   s.mesh.visible = true;
+  s.mesh.frustumCulled = false;
   s.mesh.traverse((c) => {
     if (!c.isMesh || c === s.gunMesh) return;
     c.visible = true;
-    if (c.material && c.material.opacity != null && c.material.opacity < 0.2) {
-      c.material.opacity = Math.max(c.material.opacity, 0.88);
+    c.frustumCulled = false;
+    const mats = Array.isArray(c.material) ? c.material : [c.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      if (mat.opacity != null && mat.opacity < 0.55) mat.opacity = mat.userData._baseOpacity ?? 1;
+      if (!s.effects?.invisible && mat.transparent && (mat.opacity ?? 1) >= 0.88) {
+        mat.transparent = mat.userData._baseTransparent ?? false;
+      }
     }
   });
+}
+
+function isSurvivorMeshBroken(s) {
+  if (!s?.mesh) return true;
+  if ((s.hp ?? 0) <= 0 || s._shooterDowned || s._awaitingRespawn) return false;
+  if (!s.mesh.visible) return true;
+  if (!s.mesh.parent) return true;
+  const parts = s.mesh.userData?.parts;
+  if (parts?.torso && !parts.torso.visible) return true;
+  let solidParts = 0;
+  let sharedMats = 0;
+  s.mesh.traverse((c) => {
+    if (!c.isMesh || c === s.gunMesh || !c.visible) return;
+    const mats = Array.isArray(c.material) ? c.material : [c.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      if (!mat.userData?._charOwned) sharedMats++;
+      const op = mat.opacity ?? 1;
+      if (op > 0.4) solidParts++;
+    }
+  });
+  return solidParts < 2 || sharedMats > 0;
+}
+
+function rebuildSurvivorMesh(s) {
+  if (!s?.charDef || !scene) return false;
+  const old = s.mesh;
+  if (old) {
+    if (s.gunMesh?.parent === old) s.gunMesh = null;
+    scene.remove(old);
+    old.traverse((c) => {
+      if (c.geometry) c.geometry.dispose?.();
+      const mats = Array.isArray(c.material) ? c.material : [c.material];
+      for (const mat of mats) mat?.dispose?.();
+    });
+  }
+  s.mesh = buildForsakenCharacter(s.charDef);
+  s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
+  s.mesh.rotation.y = s.yaw ?? 0;
+  scene.add(s.mesh);
+  applyPlasticToCharacter(s.mesh, s.charDef?.accent);
+  setCharacterRim(s.mesh, s.charDef?.accent, !s.isAI && perfTier !== "low");
+  if (isShooterMode()) {
+    const wid = s.weaponId || "rifle";
+    applyShooterLoadout(s, wid);
+    attachShooterGun(s);
+    syncGunVisual(s);
+    resetShooterCharacterPose(s);
+  }
+  ensureSurvivorBodyDrawn(s);
+  return true;
+}
+
+/** 硬修復：異常時重建 mesh；force 時強制重建 */
+function hardRepairSurvivorVisibility(s, opts = {}) {
+  if (!s) return false;
+  const broken = isSurvivorMeshBroken(s);
+  if (!broken && !opts.force) {
+    ensureSurvivorBodyDrawn(s);
+    if (isShooterMode() && (s.hp ?? 0) > 0 && !s._shooterDowned) {
+      s.mesh?.position.set(s.pos.x, worldHeight(s), s.pos.z);
+    }
+    return false;
+  }
+  rebuildSurvivorMesh(s);
+  return true;
+}
+
+function runSurvivorVisibilityAutoRepair() {
+  if (gameState !== "play" || !scene) return 0;
+  let fixed = 0;
+  for (const s of survivors) {
+    if ((s.hp ?? 0) <= 0 || s._shooterDowned || s._awaitingRespawn) continue;
+    if (!isSurvivorMeshBroken(s)) continue;
+    cloneCharacterMaterials(s.mesh);
+    restoreSurvivorMaterialState(s.mesh);
+    ensureSurvivorBodyDrawn(s);
+    if (!isSurvivorMeshBroken(s)) {
+      fixed++;
+      continue;
+    }
+    hardRepairSurvivorVisibility(s, { force: true });
+    fixed++;
+  }
+  if (fixed > 0 && isShooterMode()) syncShooterPlayerVisibility();
+  return fixed;
+}
+
+/** 修復身體網格被藏起但頭頂名字仍顯示（單機／手機恢復前景） */
+function repairAllSurvivorMeshes() {
+  if (!scene) return;
+  let rebuilt = 0;
+  for (const s of survivors) {
+    if (!s?.mesh) continue;
+    if (isSurvivorMeshBroken(s)) {
+      hardRepairSurvivorVisibility(s, { force: true });
+      rebuilt++;
+      continue;
+    }
+    ensureSurvivorBodyDrawn(s);
+    if (isShooterMode() && (s.hp ?? 0) > 0 && !s._shooterDowned) {
+      resetShooterCharacterPose(s);
+      if (!s.isLanPeer && !s.isAI) restoreHeldWeaponToBody(s);
+      else if (s.isLanPeer) {
+        hideFpHeldRig(s);
+        restoreHeldWeaponToBody(s);
+        syncGunVisual(s);
+      }
+      s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
+    }
+  }
+  if (isShooterMode()) syncShooterPlayerVisibility();
+  return rebuilt;
 }
 
 function syncShooterPlayerVisibility() {
@@ -1818,10 +2054,35 @@ function syncShooterPlayerVisibility() {
   const spectating = isSpectating();
   const split = isShooterSplitView();
   setFpGunVisible(false);
+
+  if (split && !spectating) {
+    for (const s of survivors) {
+      if (!s?.mesh) continue;
+      hideFpHeldRig(s);
+      if (s.isLanPeer) {
+        ensureSurvivorBodyDrawn(s);
+        restoreHeldWeaponToBody(s);
+        continue;
+      }
+      const alive = (s.hp ?? 0) > 0 && !s._awaitingRespawn;
+      if (s._shooterDowned) {
+        const hideAt = s._shooterBodyHideAt;
+        s.mesh.visible = hideAt == null || elapsed < hideAt;
+        continue;
+      }
+      if (!alive) {
+        s.mesh.visible = false;
+        continue;
+      }
+      ensureSurvivorBodyDrawn(s);
+      restoreHeldWeaponToBody(s);
+      syncGunVisual(s);
+    }
+    return;
+  }
+
   const fpTargets = !spectating
-    ? (split
-      ? locals.filter((s) => s && !isShooterPlayerDown(s))
-      : [human].filter((s) => s && !isShooterPlayerDown(s)))
+    ? [human].filter((s) => s && !isShooterPlayerDown(s))
     : [];
   for (const s of fpTargets) {
     const cam = getShooterCameraForPlayer(s);
@@ -1832,6 +2093,11 @@ function syncShooterPlayerVisibility() {
   }
   for (const s of survivors) {
     if (!s.mesh) continue;
+    if (s.isLanPeer) {
+      ensureSurvivorBodyDrawn(s);
+      restoreHeldWeaponToBody(s);
+      continue;
+    }
     const alive = (s.hp ?? 0) > 0 && !s._awaitingRespawn;
     if (s._shooterDowned) {
       const hideAt = s._shooterBodyHideAt;
@@ -2956,14 +3222,19 @@ function tryShooterWeaponSwitch(slot, who = null) {
   if (!p || !isShooterMode()) return;
   const w = SHOOTER_WEAPONS.find((x) => x.slot === slot);
   if (!w || p.weaponId === w.id) return;
-  if (w.id === "pad" || w.id === "katana") shooterAds = false;
-  document.body.classList.toggle("shooter-ads", shooterAds);
+  if (w.id === "pad" || w.id === "katana") setPlayerShooterAds(p, false);
+  else document.body.classList.toggle("shooter-ads", isPlayerShooterAds(p));
   applyShooterLoadout(p, w.id);
   syncGunVisual(p);
   const cam = getShooterCameraForPlayer(p);
-  if (!p.isAI && cam) {
-    detachFpGun(cam);
-    syncHeldWeaponOnCamera(p, cam, scene);
+  if (!p.isAI) {
+    if (isShooterSplitView()) {
+      restoreHeldWeaponToBody(p);
+      syncGunVisual(p);
+    } else if (cam) {
+      detachFpGun(cam);
+      syncHeldWeaponOnCamera(p, cam, scene);
+    }
   }
   if (p._padPreview) p._padPreview.visible = w.id === "pad";
   if (!p.isAI && isTouchUiEnabled()) updateTouchGunHighlight(w.slot);
@@ -3642,6 +3913,19 @@ async function runStartGame() {
       if (s.mesh) s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
     });
     if (isLanSession()) setupLanPeersFromRoster();
+    const couchLocals = getLocalHumanPlayers();
+    if (!isLanSession() && couchLocals.length >= 2) {
+      shooterPlayStyle = "ffa";
+      if (shooterState) shooterState.playStyle = "ffa";
+      couchLocals.forEach((s, i) => assignShooterPlayer(s, i, couchLocals.length, "ffa"));
+      showToast(`同機 ${couchLocals.length} 人 · 自由混戰 · 可看見彼此`, 3200);
+    }
+    for (const s of survivors) {
+      if (s.mesh) {
+        cloneCharacterMaterials(s.mesh);
+        restoreSurvivorMaterialState(s.mesh);
+      }
+    }
     document.body.classList.add("shooter-play");
     const sbBtn = document.getElementById("btnTouchScoreboard");
     if (sbBtn) sbBtn.hidden = !isTouchUiEnabled();
@@ -3752,6 +4036,7 @@ async function runStartGame() {
           clearLanPeerDowned,
           onLanCombatHit,
           onLanCombatAction,
+          tickLanPeerPresentation,
           tickLanPeerPose: (s, dt) => tickShooterDownedPose(s, elapsed, worldHeight),
           getElapsed: () => elapsed,
         });
@@ -4240,8 +4525,7 @@ function setupInput() {
         return;
       }
       if (human && id !== "pad" && id !== "katana") {
-        shooterAds = true;
-        document.body.classList.add("shooter-ads");
+        setPlayerShooterAds(human, true);
         updateShooterFov();
         updateCrosshair();
       }
@@ -4258,11 +4542,13 @@ function setupInput() {
     }
   });
   window.addEventListener("mouseup", (e) => {
-    if (e.button === 2 && shooterAds) {
-      shooterAds = false;
-      document.body.classList.remove("shooter-ads");
-      updateShooterFov();
-      updateCrosshair();
+    if (e.button === 2 && isShooterMode() && gameState === "play") {
+      const human = getHumanSurvivor();
+      if (human && isPlayerShooterAds(human)) {
+        setPlayerShooterAds(human, false);
+        updateShooterFov();
+        updateCrosshair();
+      }
     }
   });
   renderer.domElement.addEventListener("contextmenu", (e) => {
@@ -4694,11 +4980,8 @@ function updateEntity(p, dt, move) {
           mat.emissiveIntensity = isShooterMode() ? pulse : 0.6;
         }
       });
-    } else if (p.role === "survivor") {
-      p.mesh.traverse((c) => {
-        if (c === p.gunMesh) return;
-        if (c.material?.emissive) c.material.emissiveIntensity = 0;
-      });
+    } else if (p.role === "survivor" && (p._hitFlash ?? 0) <= 0) {
+      restoreSurvivorMaterialState(p.mesh);
     }
   }
 
@@ -4714,27 +4997,31 @@ function updateEntity(p, dt, move) {
         tickCloneDecoy(p, dt);
       }
     }
-    const invisible = p.effects.invisible > 0;
+    const invisible = (p.effects?.invisible ?? 0) > 0;
     const selfView = invisible && !p.isAI;
     p.mesh.visible = true;
-    p.mesh.traverse((c) => {
-      if (!c.material) return;
-      if (selfView) {
-        c.material.transparent = true;
-        c.material.opacity = 0.48;
-        if (c.material.emissive) {
-          c.material.emissive.setHex(0x4466aa);
-          c.material.emissiveIntensity = 0.35;
+    if (!invisible && (p._hitFlash ?? 0) <= 0) {
+      restoreSurvivorMaterialState(p.mesh);
+    } else {
+      p.mesh.traverse((c) => {
+        if (!c.isMesh || c === p.gunMesh) return;
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        for (const mat of mats) {
+          if (!mat) continue;
+          if (selfView) {
+            mat.transparent = true;
+            mat.opacity = 0.48;
+            if (mat.emissive) {
+              mat.emissive.setHex(0x4466aa);
+              mat.emissiveIntensity = 0.35;
+            }
+          } else if (invisible && p.isAI) {
+            mat.transparent = true;
+            mat.opacity = 0.12;
+          }
         }
-      } else if (invisible && p.isAI) {
-        c.material.transparent = true;
-        c.material.opacity = 0.12;
-      } else {
-        c.material.transparent = false;
-        c.material.opacity = 1;
-        if (c.material.emissive) c.material.emissiveIntensity = 0;
-      }
-    });
+      });
+    }
   }
 }
 
@@ -4915,6 +5202,10 @@ function updateSurvivors(dt) {
     if (!s.isAI) {
       const ctrlProfile = playAsKiller && s.profile === "p1" ? "p1" : profile;
       if (isShooterMode() && gp) {
+        const wId = getShooterWeapon(s.weaponId)?.id;
+        if (wId && wId !== "pad" && wId !== "katana") {
+          setPlayerShooterAds(s, !!gp.ads);
+        }
         const shootBtn = gp.sprint || gp.confirm;
         if (shootBtn && !s._gpShootHeld) tryShooterFire(s);
         s._gpShootHeld = !!shootBtn;
@@ -5097,7 +5388,7 @@ function syncProjectileMeshes() {
   });
 }
 
-function onKatanaParryStarted(p) {
+function spawnKatanaParryVfx(p) {
   if (!p || !scene) return;
   playParryStartSfx(0.1);
   const yaw = p.yaw ?? p.mesh?.rotation?.y ?? 0;
@@ -5105,6 +5396,11 @@ function onKatanaParryStarted(p) {
   const fx = Math.sin(yaw);
   const fz = Math.cos(yaw);
   spawnKatanaParryBurst(scene, p.pos.x + fx * 0.55, hy, p.pos.z + fz * 0.55, yaw);
+}
+
+function onKatanaParryStarted(p) {
+  spawnKatanaParryVfx(p);
+  if (isLanSession() && !p.isLanPeer && !p.isAI) sendLanCombatAction(p, "parry");
 }
 
 function tryDeflectProjectile(pr, i) {
@@ -5358,6 +5654,14 @@ function getLocalFpWeaponPlayers() {
 
 function syncLocalFpHeldWeapons(activePlayer = null, activeCam = null) {
   if (!scene) return;
+  if (isShooterSplitView()) {
+    for (const s of getLocalHumanPlayers()) {
+      hideFpHeldRig(s);
+      restoreHeldWeaponToBody(s);
+      syncGunVisual(s);
+    }
+    return;
+  }
   const locals = getLocalFpWeaponPlayers();
   for (const s of locals) {
     const cam = s === activePlayer && activeCam
@@ -5410,7 +5714,6 @@ function renderShooterSplitView(W, H) {
   ensureSplitCameras(locals.length);
   const bg = scene.background?.isColor ? scene.background.getHex() : 0x1a1228;
   const cams = [camera, camera2, camera3, camera4];
-  const fov = shooterSettings.fov;
   renderer.setScissorTest(true);
   syncShooterSplitGridLines(locals.length, W, H);
 
@@ -5425,7 +5728,7 @@ function renderShooterSplitView(W, H) {
     const a2 = getPlayerCamAngles(p2);
     updateCameraForPlayer(camera, p1, a1.yaw, a1.pitch);
     syncLocalFpHeldWeapons(p1, camera);
-    camera.fov = fov;
+    camera.fov = getShooterFovForPlayer(p1);
     camera.aspect = halfW / H;
     camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, halfW, H);
@@ -5439,7 +5742,7 @@ function renderShooterSplitView(W, H) {
     renderer.clear(true, true, true);
     updateCameraForPlayer(camera2, p2, a2.yaw, a2.pitch);
     syncLocalFpHeldWeapons(p2, camera2);
-    camera2.fov = fov;
+    camera2.fov = getShooterFovForPlayer(p2);
     camera2.aspect = rightW / H;
     camera2.updateProjectionMatrix();
     const x1 = halfW + COOP_SPLIT_GAP;
@@ -5466,7 +5769,7 @@ function renderShooterSplitView(W, H) {
       updateCameraForPlayer(cam, p, ang.yaw, ang.pitch);
       syncLocalFpHeldWeapons(p, cam);
       const slot = slots[i];
-      cam.fov = fov;
+      cam.fov = getShooterFovForPlayer(p);
       cam.aspect = slot.w / slot.h;
       cam.updateProjectionMatrix();
       renderer.setViewport(slot.x, slot.y, slot.w, slot.h);
@@ -6139,6 +6442,9 @@ function loopFrame(now) {
     updateSurvivors(dt);
     tickShooterSpawnUnstuck(dt);
     if (lanSync) lanSync.tick(dt);
+    if (isLanSession() && isShooterMode() && frameCount % 30 === 0) {
+      for (const peer of getLanPeers()) ensureSurvivorBodyDrawn(peer);
+    }
     if (frameCount % 60 === 0 && gameState === "play") {
       resumeGameAudio().catch(() => {});
     }
@@ -6203,7 +6509,7 @@ function loopFrame(now) {
         viewports: getShooterLabelViewports(window.innerWidth, window.innerHeight),
         playStyle: shooterState?.playStyle ?? shooterPlayStyle,
         state: shooterState,
-        active: gameState === "play",
+        active: gameState === "play" && !isShooterSplitView(),
       });
       if (shooterScoreboardOpen) {
         renderShooterScoreboard(getShooterScoreboardPlayers(), getHumanSurvivor(), shooterState?.playStyle ?? shooterPlayStyle);
@@ -6218,6 +6524,7 @@ function loopFrame(now) {
         if (s._shooterDowned) tickShooterDownedPose(s, elapsed, worldHeight);
       }
       syncShooterPlayerVisibility();
+      if (frameCount % 12 === 0) runSurvivorVisibilityAutoRepair();
       syncShooterRespawnUi();
       if (!isLanShooterPvP()) updateShooterBots(dt, survivors, ctx, maze, shooterState, {
         elapsed,
@@ -6448,10 +6755,13 @@ function applyLocalPlayerNames() {
 function refreshPlayUiAfterResume() {
   if (gameState !== "play") return;
   invalidateMinimapBase();
+  const rebuilt = repairAllSurvivorMeshes();
+  if (rebuilt > 0) showToast(`已修復 ${rebuilt} 名角色顯示`, 1600);
   if (isShooterMode()) drawShooterRadar();
   else drawMinimap();
   updateHUD();
   syncShooterPlayerVisibility();
+  if (renderer) renderer.render(scene, camera);
 }
 
 function isLanSession() {
@@ -6467,6 +6777,67 @@ function isLanShooterPvP() {
 
 function getLanPeers() {
   return survivors.filter((s) => s.isLanPeer && s.lanPlayerId);
+}
+
+function applyLanPeerSlidePose(s) {
+  const parts = s.mesh?.userData?.parts;
+  if (!parts) return;
+  parts.torso.rotation.x = 0.55;
+  parts.torso.position.y = (parts.baseTorsoY ?? 1.38) * 0.92;
+  parts.head.position.y = (parts.baseHeadY ?? 1.14) * 0.96;
+  parts.head.rotation.x = 0.12;
+  parts.leftArm.rotation.x = 0.45;
+  parts.rightArm.rotation.x = 0.45;
+  parts.leftLeg.rotation.x = -0.05;
+  parts.rightLeg.rotation.x = 1.25;
+  parts.leftLeg.position.z = -0.22;
+  parts.rightLeg.position.z = 0.48;
+}
+
+/** 區網對手：同步武器／滑壘／格擋與走路動畫（非僅座標插值） */
+function tickLanPeerPresentation(s, dt) {
+  if (!s?.isLanPeer || !s.mesh || !isShooterMode()) return;
+  ensureSurvivorBodyDrawn(s);
+  hideFpHeldRig(s);
+  restoreHeldWeaponToBody(s);
+
+  if (s._lanNetElev != null) s.elev = s._lanNetElev;
+  if (s._lanNetJumpY != null) s._jumpY = s._lanNetJumpY;
+
+  const wid = s._lanNetWeaponId || s.weaponId;
+  if (wid && wid !== s.weaponId) {
+    applyShooterLoadout(s, wid);
+    attachShooterGun(s);
+    syncGunVisual(s);
+  }
+
+  const parryT = s._lanNetKatanaParryT;
+  if (parryT != null) {
+    const was = s._katanaParryT ?? 0;
+    s._katanaParryT = parryT;
+    if (was <= 0.05 && parryT > 0.2) spawnKatanaParryVfx(s);
+  }
+
+  if (s._lanNetSliding) {
+    s.sliding = true;
+    applyLanPeerSlidePose(s);
+  } else if (s.sliding) {
+    s.sliding = false;
+    resetShooterCharacterPose(s);
+  }
+
+  if ((s._katanaSwingT ?? 0) > 0) s._katanaSwingT = Math.max(0, s._katanaSwingT - dt);
+  if ((s._fpRecoilT ?? 0) > 0) s._fpRecoilT = Math.max(0, s._fpRecoilT - dt);
+  if ((s._gunFlash ?? 0) > 0) s._gunFlash = Math.max(0, s._gunFlash - dt);
+  tickGunFlash(s, dt, null);
+
+  applyMeshAnim(s, dt);
+  const moveSpd = s._lanMoveSpd ?? 0;
+  if (moveSpd > 0.06 && !s._lanNetSliding) applyLocomotionAnim(s, dt);
+
+  s.mesh.position.set(s.pos.x, worldHeight(s), s.pos.z);
+  s.mesh.rotation.y = s.yaw ?? s.mesh.rotation.y;
+  syncGunVisual(s);
 }
 
 function ensureLanPeerSurvivor(playerId, name, rosterIndex = 1, rosterTotal = 2) {
@@ -6581,6 +6952,12 @@ function onLanCombatAction(msg) {
     );
   }
   if (!peer) return;
+  if (msg.kind === "parry") {
+    peer._katanaParryT = KATANA_PARRY_DURATION;
+    peer._lanNetKatanaParryT = KATANA_PARRY_DURATION;
+    spawnKatanaParryVfx(peer);
+    return;
+  }
   if (msg.kind === "katana") {
     startKatanaSwing(peer);
     muzzleFlash(peer);
@@ -6762,6 +7139,15 @@ function boot() {
       });
     }
   });
+  window.addEventListener("focus", () => {
+    if (gameState !== "play") return;
+    resumeGameAudio().then(() => {
+      warmGameSounds();
+      warmShooterSounds();
+      if (musicEl?.paused) musicEl.play().catch(() => {});
+      refreshPlayUiAfterResume();
+    });
+  });
   window.addEventListener("pagehide", () => {
     if (gameState === "menu" || gameState === "end") {
       stopGameMusic(musicEl);
@@ -6772,6 +7158,16 @@ function boot() {
     ensureGraphics();
     setupLights();
     syncGameCanvasVisibility();
+    const glEl = renderer?.domElement;
+    if (glEl) {
+      glEl.addEventListener("webglcontextlost", (e) => e.preventDefault(), false);
+      glEl.addEventListener("webglcontextrestored", () => {
+        if (gameState === "play") {
+          invalidateMinimapBase();
+          refreshPlayUiAfterResume();
+        }
+      }, false);
+    }
   } catch (err) {
     console.error(err);
   }
@@ -6816,8 +7212,7 @@ function boot() {
           updateCrosshair();
           return;
         }
-        shooterAds = !shooterAds;
-        document.body.classList.toggle("shooter-ads", shooterAds);
+        setPlayerShooterAds(h, !isPlayerShooterAds(h));
         updateShooterFov();
         updateCrosshair();
         updateTouchGunHighlight(getShooterWeapon(h.weaponId)?.slot ?? 2);

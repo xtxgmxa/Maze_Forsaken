@@ -75,11 +75,20 @@ export function syncShooterOverheadLabels({
       if (!target?.mesh || target === viewer) continue;
       if (target._shooterDowned || target._awaitingRespawn || (target.hp ?? 0) <= 0) continue;
       if (!target.mesh.visible) continue;
+      const parts = target.mesh.userData?.parts;
+      if (parts?.torso && !parts.torso.visible) continue;
       let bodyVisible = false;
       target.mesh.traverse((c) => {
         if (c.isMesh && c.visible && c !== target.gunMesh) {
-          const op = c.material?.opacity;
-          if (op == null || op > 0.35) bodyVisible = true;
+          const mats = Array.isArray(c.material) ? c.material : [c.material];
+          for (const mat of mats) {
+            if (!mat) continue;
+            const op = mat.opacity;
+            if (op == null || op > 0.35) {
+              bodyVisible = true;
+              break;
+            }
+          }
         }
       });
       if (!bodyVisible) continue;

@@ -3017,6 +3017,31 @@
       border-color: #ffaa44;
     }
     #btnHudPause { display: none; }
+    #btnMeshRepair {
+      display: none;
+      position: fixed;
+      z-index: 31;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid #66aacc;
+      background: rgba(12, 24, 40, 0.88);
+      color: #a8eeff;
+      font-size: 1rem;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    body.shooter-play #btnMeshRepair { display: flex; align-items: center; justify-content: center; }
+    body.shooter-play:not(.touch-ui) #btnMeshRepair {
+      top: max(6px, env(safe-area-inset-top, 6px));
+      right: max(46px, calc(42px + env(safe-area-inset-right, 0px)));
+    }
+    body.touch-ui.shooter-play #btnMeshRepair {
+      top: max(6px, env(safe-area-inset-top, 6px));
+      right: max(88px, calc(84px + env(safe-area-inset-right, 0px)));
+    }
+    body.shooter-play.split-2p-h #btnMeshRepair,
+    body.shooter-play.split-4p #btnMeshRepair { display: none !important; }
   </style>
 </head>
 <body>
@@ -3260,6 +3285,7 @@
   </div>
   <button type="button" id="btnTouchScoreboard" class="touch-only" hidden title="戰績">戰績</button>
   <button type="button" id="btnHudPause" title="暫停 · 選單" aria-label="暫停選單">⏸</button>
+  <button type="button" id="btnMeshRepair" hidden title="修復角色顯示（偵測異常時自動重建模型）" aria-label="修復角色顯示">🔧</button>
   <button type="button" id="btnTouchRespawn" class="touch-only" hidden>重生</button>
   <button type="button" id="btnRespawn" hidden title="重生 (R)">重生 (R)</button>
   <div id="puzzleWaypoint" hidden></div>
@@ -3390,6 +3416,7 @@
       <p class="pause-touch-hint touch-only">設定含音量與手機視角 · 或回主選單重新選角</p>
       <p class="pause-desktop-hint" style="font-size:0.85rem;color:#9988bb;margin-bottom:12px">按 ESC 可開關此選單 · 下方離開回主選單</p>
       <button type="button" id="btnResume">繼續遊戲</button>
+      <button type="button" id="btnPauseMeshRepair">修復角色顯示（重建模型）</button>
       <button type="button" id="btnPauseSettings">設定與音量</button>
       <button type="button" id="btnQuitMenu">離開 · 回主選單</button>
     </div>

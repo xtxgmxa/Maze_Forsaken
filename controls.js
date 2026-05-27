@@ -142,6 +142,7 @@ export function pollGamepad(gpIndex) {
     lookX: Math.abs(lookX) > LOOK_DEAD ? lookX : 0,
     lookY: Math.abs(lookY) > LOOK_DEAD ? lookY : 0,
     sprint: btn(GP_BTN.R2) || btn(GP_BTN.R1),
+    ads: btn(GP_BTN.L2),
     jump: btn(GP_BTN.A),
     slide: btn(GP_BTN.L1),
     ab1: btn(GP_BTN.X),

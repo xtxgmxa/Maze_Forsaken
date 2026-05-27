@@ -348,5 +348,49 @@ export function buildForsakenCharacter(def, scale = 1) {
       c.receiveShadow = true;
     }
   });
+  cloneCharacterMaterials(root);
   return root;
+}
+
+/**
+ * plasticPBR 使用全域快取 — 若直接改 opacity/emissive 會讓「同色」角色一起變透明或消失。
+ * 建立角色後為每個 mesh 複製一份專用材質。
+ */
+export function cloneCharacterMaterials(root) {
+  if (!root) return;
+  root.traverse((c) => {
+    if (!c.isMesh || !c.material) return;
+    const own = (mat) => {
+      if (!mat) return mat;
+      if (mat.userData?._charOwned) return mat;
+      const m = mat.clone();
+      m.userData._charOwned = true;
+      m.userData._baseOpacity = mat.opacity ?? 1;
+      m.userData._baseTransparent = !!mat.transparent;
+      m.userData._baseEI = mat.emissiveIntensity ?? 0.1;
+      if (mat.emissive?.getHex) m.userData._baseEmissive = mat.emissive.getHex();
+      return m;
+    };
+    if (Array.isArray(c.material)) c.material = c.material.map(own);
+    else c.material = own(c.material);
+  });
+}
+
+/** 還原受擊閃光／隱形後的材質（僅影響此角色） */
+export function restoreSurvivorMaterialState(root) {
+  if (!root) return;
+  root.traverse((c) => {
+    if (!c.isMesh || !c.material) return;
+    const mats = Array.isArray(c.material) ? c.material : [c.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.transparent = mat.userData._baseTransparent ?? false;
+      mat.opacity = mat.userData._baseOpacity ?? 1;
+      if (mat.emissive && mat.userData._baseEmissive != null) {
+        mat.emissive.setHex(mat.userData._baseEmissive);
+      }
+      mat.emissiveIntensity = mat.userData._baseEI ?? 0.1;
+      mat.needsUpdate = true;
+    }
+  });
 }
